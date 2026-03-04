@@ -35,3 +35,9 @@ backend/data/*-backup*/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Internal docs (do not publish)
+AGENTS.md
+GOAL.md
+agent网络雏形.md
+交易决策台实施计划-20260304.md

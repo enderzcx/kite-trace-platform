@@ -46,13 +46,11 @@ If needed, set `NEXT_PUBLIC_BACKEND_URL` in frontend runtime env.
 
 ## Security and publishing notes
 
-This repo intentionally excludes sensitive/runtime files:
+This repository excludes secrets and runtime artifacts by default.
 
-- `重要信息.md` (must never be uploaded)
-- `backend/.env`
-- runtime DB/log/temp artifacts under `backend/data`, `backend/logs`, and build folders
-
-Use `backend/.env.example` as the template.
+- Keep private keys and credentials out of git.
+- Use `backend/.env.example` as the environment template.
+- Runtime databases/logs/temp outputs are ignored by `.gitignore`.
 
 ## Status
 
