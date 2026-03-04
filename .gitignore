@@ -1,0 +1,37 @@
+﻿# Must not upload
+重要信息.md
+**/重要信息.md
+
+# Secrets
+backend/.env
+*.pem
+*.key
+
+# Dependencies / build
+**/node_modules/
+agent-network/.next/
+agent-network/out/
+
+# Logs / temp
+backend/logs/
+backend/tmp-*.mjs
+backend/tmp-*.ps1
+backend/tmp-*.cmd
+backend/tmp-*.log
+backend/tmp-*.json
+agent-network/tmp-*.log
+*.pid
+
+# Runtime data (keep placeholder only)
+backend/data/*
+!backend/data/.gitkeep
+
+# XMTP runtime db artifacts
+backend/data/xmtp-db/
+backend/data/xmtp-db-*/
+backend/data/*-backup*/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/

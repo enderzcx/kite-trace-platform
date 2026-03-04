@@ -1,0 +1,28 @@
+{
+  "name": "kite-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "start:one": "powershell -ExecutionPolicy Bypass -File .\\scripts\\start-backend-one.ps1",
+    "start:one:dry": "powershell -ExecutionPolicy Bypass -File .\\scripts\\start-backend-one.ps1 -NoRun",
+    "verify:agent001:intent": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-agent001-intent-modes.ps1",
+    "probe:erc8004": "node scripts/probe-erc8004-kite.js",
+    "erc8004:register": "node scripts/erc8004-register-kiteclaw.js",
+    "erc8004:read": "node scripts/erc8004-read-agent.js",
+    "aa:ensure": "node scripts/aa-ensure-account.js",
+    "aa:session:router": "node scripts/aa-create-router-session.js",
+    "aa:preflight": "node scripts/aa-preflight.js",
+    "aa:upgrade": "node scripts/aa-upgrade.js",
+    "parity:hopledger": "node scripts/parity-hopledger-reference.mjs --rounds 5"
+  },
+  "dependencies": {
+    "@nktkas/hyperliquid": "^0.31.0",
+    "@xmtp/agent-sdk": "^2.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
+    "ethers": "^6.16.0",
+    "express": "^4.19.2",
+    "pg": "^8.16.3"
+  }
+}

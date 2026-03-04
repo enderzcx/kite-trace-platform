@@ -1,0 +1,146 @@
+[
+  {
+    "id": "router-agent",
+    "name": "AGENT001",
+    "role": "router",
+    "mode": "a2a",
+    "xmtpAddress": "",
+    "aaAddress": "",
+    "inboxId": "",
+    "ownerWallet": "",
+    "identityRegistry": "",
+    "identityAgentId": "",
+    "description": "AGENT001 orchestrator: direct DM entry for task routing and A2A coordination.",
+    "capabilities": [
+      "route-task",
+      "dispatch-a2a"
+    ],
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.062Z",
+    "updatedAt": "2026-02-26T14:06:02.062Z"
+  },
+  {
+    "id": "risk-agent",
+    "name": "Risk Agent",
+    "role": "provider",
+    "mode": "a2a",
+    "xmtpAddress": "",
+    "aaAddress": "",
+    "inboxId": "",
+    "ownerWallet": "",
+    "identityRegistry": "",
+    "identityAgentId": "",
+    "description": "Computes risk-score feed through agent capability.",
+    "capabilities": [
+      "risk-score-feed",
+      "volatility-snapshot",
+      "technical-analysis-feed"
+    ],
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.062Z",
+    "updatedAt": "2026-02-26T14:06:02.062Z"
+  },
+  {
+    "id": "technical-agent",
+    "name": "Technical Agent",
+    "role": "provider",
+    "mode": "a2a",
+    "xmtpAddress": "",
+    "aaAddress": "",
+    "inboxId": "",
+    "ownerWallet": "",
+    "identityRegistry": "",
+    "identityAgentId": "",
+    "description": "Single technical facade over risk/price sub-analysis outputs.",
+    "capabilities": [
+      "technical-analysis-feed",
+      "risk-score-feed",
+      "market-quote"
+    ],
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.062Z",
+    "updatedAt": "2026-02-26T14:06:02.062Z"
+  },
+  {
+    "id": "reader-agent",
+    "name": "Reader Agent",
+    "role": "provider",
+    "mode": "a2api",
+    "xmtpAddress": "",
+    "aaAddress": "",
+    "inboxId": "",
+    "ownerWallet": "",
+    "identityRegistry": "",
+    "identityAgentId": "",
+    "description": "Runs x-reader digest for URLs via ATAPI adapter.",
+    "capabilities": [
+      "x-reader-feed",
+      "url-digest",
+      "info-analysis-feed"
+    ],
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.062Z",
+    "updatedAt": "2026-02-26T14:06:02.062Z"
+  },
+  {
+    "id": "message-agent",
+    "name": "Message Agent",
+    "role": "provider",
+    "mode": "a2api",
+    "xmtpAddress": "",
+    "aaAddress": "",
+    "inboxId": "",
+    "ownerWallet": "",
+    "identityRegistry": "",
+    "identityAgentId": "",
+    "description": "Message/news sentiment facade over reader runtime.",
+    "capabilities": [
+      "info-analysis-feed",
+      "url-digest",
+      "x-reader-feed"
+    ],
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.062Z",
+    "updatedAt": "2026-02-26T14:06:02.062Z"
+  },
+  {
+    "id": "price-agent",
+    "name": "Price Agent",
+    "role": "provider",
+    "mode": "a2api",
+    "xmtpAddress": "",
+    "aaAddress": "",
+    "inboxId": "",
+    "ownerWallet": "",
+    "identityRegistry": "",
+    "identityAgentId": "",
+    "description": "Fetches BTC/market quote feeds.",
+    "capabilities": [
+      "btc-price-feed",
+      "market-quote"
+    ],
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.062Z",
+    "updatedAt": "2026-02-26T14:06:02.062Z"
+  },
+  {
+    "id": "executor-agent",
+    "name": "Executor Agent",
+    "role": "executor",
+    "mode": "a2a",
+    "xmtpAddress": "",
+    "aaAddress": "",
+    "inboxId": "",
+    "ownerWallet": "",
+    "identityRegistry": "",
+    "identityAgentId": "",
+    "description": "Executes final orchestration and result aggregation.",
+    "capabilities": [
+      "execute-plan",
+      "result-aggregation"
+    ],
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.062Z",
+    "updatedAt": "2026-02-26T14:06:02.062Z"
+  }
+]

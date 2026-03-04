@@ -1,0 +1,165 @@
+[
+  {
+    "id": "svc_btcusd_minute",
+    "name": "BTCUSD Quote (ATAPI)",
+    "description": "Agent-to-API BTCUSD quote via ERC8004 + x402 payment.",
+    "action": "btc-price-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "providerAgentId": "2",
+    "recipient": "0xed335560178b85f0524ffff3372e9bf45ab42ac8",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
+    "price": "0.00015",
+    "tags": [
+      "atapi",
+      "x402",
+      "btc",
+      "price-feed"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0.06,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "pair": "BTCUSDT",
+      "source": "hyperliquid"
+    },
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.061Z",
+    "updatedAt": "2026-03-03T11:50:30.865Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "svc_btc_risk_score",
+    "name": "BTC Risk Score (A2A)",
+    "description": "Agent-to-agent risk score derived from paid BTC quote and recent volatility.",
+    "action": "risk-score-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": 60,
+    "providerAgentId": "3",
+    "recipient": "0xed335560178b85f0524ffff3372e9bf45ab42ac8",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
+    "price": "0.00015",
+    "tags": [
+      "a2a",
+      "x402",
+      "risk"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 10,
+    "budgetPerDay": 0.08,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "symbol": "BTCUSDT",
+      "horizonMin": 60,
+      "source": "hyperliquid"
+    },
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.061Z",
+    "updatedAt": "2026-03-03T11:50:30.865Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "svc_hyperliquid_order_testnet",
+    "name": "Hyperliquid Order (Testnet)",
+    "description": "Agent-to-API Hyperliquid testnet order execution via x402 payment.",
+    "action": "hyperliquid-order-testnet",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid-testnet",
+    "sourceRequested": "hyperliquid-testnet",
+    "providerAgentId": "executor-agent",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
+    "price": "0.00015",
+    "tags": [
+      "atapi",
+      "x402",
+      "hyperliquid",
+      "order"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 8,
+    "budgetPerDay": 0.08,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "symbol": "BTCUSDT",
+      "side": "buy",
+      "orderType": "limit",
+      "tif": "Gtc",
+      "size": 0.001
+    },
+    "active": true,
+    "createdAt": "2026-02-26T14:06:02.061Z",
+    "updatedAt": "2026-03-03T11:50:30.865Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "svc_technical_analysis",
+    "name": "Technical Analysis (A2A)",
+    "description": "Agent-to-agent technical analysis feed with strict x402 settlement evidence.",
+    "action": "technical-analysis-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": 60,
+    "providerAgentId": "technical-agent",
+    "recipient": "0xed335560178b85f0524ffff3372e9bf45ab42ac8",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
+    "price": "0.00015",
+    "tags": [
+      "a2a",
+      "x402",
+      "technical-analysis"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 10,
+    "budgetPerDay": 0.08,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "symbol": "BTCUSDT",
+      "horizonMin": 60,
+      "source": "hyperliquid"
+    },
+    "active": true,
+    "createdAt": "2026-02-27T02:59:23.942Z",
+    "updatedAt": "2026-03-03T11:50:30.865Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "svc_info_analysis",
+    "name": "Message Info Analysis (A2A)",
+    "description": "Agent-to-agent message-side info analysis via market-data + x402 payment.",
+    "action": "info-analysis-feed",
+    "pair": "",
+    "source": "auto",
+    "sourceRequested": "auto",
+    "resourceUrl": "",
+    "maxChars": 1200,
+    "providerAgentId": "message-agent",
+    "recipient": "0xed335560178b85f0524ffff3372e9bf45ab42ac8",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
+    "price": "0.00015",
+    "tags": [
+      "a2a",
+      "x402",
+      "message",
+      "info-analysis"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 8,
+    "budgetPerDay": 0.05,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "topic": "BTC market sentiment today",
+      "mode": "auto",
+      "maxChars": 1200
+    },
+    "active": true,
+    "createdAt": "2026-02-27T02:59:23.942Z",
+    "updatedAt": "2026-03-03T11:50:30.865Z",
+    "publishedBy": "system"
+  }
+]
