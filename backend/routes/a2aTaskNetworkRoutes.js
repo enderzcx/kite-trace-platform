@@ -2007,6 +2007,7 @@
     res.json({
       ok: true,
       traceId: req.traceId,
+      role: req.authRole || '',
       authDisabled: AUTH_DISABLED,
       authConfigured: authConfigured(),
       acceptedHeaders: ['x-api-key', 'Authorization: Bearer <key>'],

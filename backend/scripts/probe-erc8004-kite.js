@@ -1,4 +1,12 @@
+import { config as loadEnv } from 'dotenv';
 import { ethers } from 'ethers';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { identityRegistryProbeAbi } from '../lib/contracts/identityRegistryAbi.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+loadEnv({ path: path.resolve(__dirname, '..', '.env') });
 
 const KITE_RPC_URL = process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/';
 const KITE_CHAIN_ID = 2368;
@@ -8,11 +16,6 @@ const KITE_CHAIN_ID = 2368;
 const OFFICIAL_IDENTITY_REGISTRY_ADDRESSES = [
   { network: 'ethereum-mainnet', address: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' },
   { network: 'sepolia', address: '0x8004A818b30DF2b6fBa1f59d9EdA2A215e674ecD' }
-];
-
-const IDENTITY_REGISTRY_ABI = [
-  'function registerFee() view returns (uint256)',
-  'function metadataUpdateFee() view returns (uint256)'
 ];
 
 async function probeAddress(provider, label, address) {
@@ -29,7 +32,7 @@ async function probeAddress(provider, label, address) {
   if (!hasCode) return result;
 
   try {
-    const contract = new ethers.Contract(address, IDENTITY_REGISTRY_ABI, provider);
+    const contract = new ethers.Contract(address, identityRegistryProbeAbi, provider);
     const regFee = await contract.registerFee();
     result.registerFee = regFee.toString();
   } catch {
@@ -37,7 +40,7 @@ async function probeAddress(provider, label, address) {
   }
 
   try {
-    const contract = new ethers.Contract(address, IDENTITY_REGISTRY_ABI, provider);
+    const contract = new ethers.Contract(address, identityRegistryProbeAbi, provider);
     const updateFee = await contract.metadataUpdateFee();
     result.metadataUpdateFee = updateFee.toString();
   } catch {

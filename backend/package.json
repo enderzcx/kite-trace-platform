@@ -1,15 +1,62 @@
 {
-  "name": "kite-backend",
+  "name": "@kite-trace/ktrace",
   "version": "1.0.0",
+  "description": "CLI for onboarding providers and using the Kite Trace platform.",
   "type": "module",
+  "preferGlobal": true,
+  "bin": {
+    "ktrace": "./bin/ktrace.js"
+  },
+  "files": [
+    "README.md",
+    "bin/",
+    "cli/",
+    "scripts/start-backend-one.ps1",
+    "scripts/start-backend-fresh.ps1"
+  ],
+  "keywords": [
+    "kite-trace",
+    "ktrace",
+    "cli",
+    "web3",
+    "agent",
+    "x402",
+    "erc8004",
+    "erc8183"
+  ],
+  "homepage": "https://github.com/enderzcx/OnchainClaw/tree/main/backend",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enderzcx/OnchainClaw.git",
+    "directory": "backend"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
+    "ktrace": "node ./bin/ktrace.js",
     "start": "node server.js",
     "start:one": "powershell -ExecutionPolicy Bypass -File .\\scripts\\start-backend-one.ps1",
     "start:one:dry": "powershell -ExecutionPolicy Bypass -File .\\scripts\\start-backend-one.ps1 -NoRun",
+    "start:fresh": "powershell -ExecutionPolicy Bypass -File .\\scripts\\start-backend-fresh.ps1",
+    "start:fresh:dry": "powershell -ExecutionPolicy Bypass -File .\\scripts\\start-backend-fresh.ps1 -NoRun",
     "verify:agent001:intent": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-agent001-intent-modes.ps1",
+    "verify:ktrace:smoke": "node .\\scripts\\verify-ktrace-cli-smoke.mjs",
     "probe:erc8004": "node scripts/probe-erc8004-kite.js",
+    "erc8004:compile": "node scripts/erc8004-compile-identity.js",
+    "erc8004:compile:trust-anchor": "node scripts/erc8004-compile-trust-anchor.js",
+    "erc8004:deploy": "node scripts/erc8004-deploy-identity.js",
+    "erc8004:deploy:trust-anchor": "node scripts/erc8004-deploy-trust-anchor.js",
+    "erc8004:agent-uri": "node scripts/erc8004-build-agent-uri.js",
     "erc8004:register": "node scripts/erc8004-register-kiteclaw.js",
     "erc8004:read": "node scripts/erc8004-read-agent.js",
+    "erc8004:read:trust-anchor": "node scripts/erc8004-read-trust-anchor.js",
+    "erc8183:compile:job-anchor": "node scripts/erc8183-compile-job-anchor.js",
+    "erc8183:deploy:job-anchor": "node scripts/erc8183-deploy-job-anchor.js",
+    "erc8183:read:job-anchor": "node scripts/erc8183-read-job-anchor.js",
     "aa:ensure": "node scripts/aa-ensure-account.js",
     "aa:session:router": "node scripts/aa-create-router-session.js",
     "aa:preflight": "node scripts/aa-preflight.js",
@@ -18,11 +65,13 @@
   },
   "dependencies": {
     "@nktkas/hyperliquid": "^0.31.0",
+    "@openzeppelin/contracts": "^5.6.1",
     "@xmtp/agent-sdk": "^2.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.3.1",
     "ethers": "^6.16.0",
     "express": "^4.19.2",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "solc": "^0.8.34"
   }
 }

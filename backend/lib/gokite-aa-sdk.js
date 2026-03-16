@@ -239,7 +239,14 @@ export class GokiteAASDK {
       let signature = await signFunction(userOpHash);
       userOp.signature = signature;
 
-      const estimatedGas = await this.estimateUserOperationGas(userOp);
+      let estimatedGas = null;
+      try {
+        estimatedGas = await this.estimateUserOperationGas(userOp);
+      } catch (estimateError) {
+        // Some bundlers intermittently revert on eth_estimateUserOperationGas for valid
+        // AA session transfers. Keep the explicit fallback gas values and try submit anyway.
+        estimatedGas = null;
+      }
       if (estimatedGas) {
         const estCallGas = ethers.getBigInt(estimatedGas.callGasLimit || userOp.callGasLimit);
         const estVerificationGas = ethers.getBigInt(

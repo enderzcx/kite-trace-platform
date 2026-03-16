@@ -26,6 +26,31 @@ export function createIdentityVerificationHelpers(deps = {}) {
     return Number.isFinite(n) && n >= 0 ? n : null;
   }
 
+  function sleep(ms = 0) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
+  }
+
+  function createIdentityRpcProvider() {
+    const request = new ethers.FetchRequest(BACKEND_RPC_URL);
+    request.timeout = 120_000;
+    return new ethers.JsonRpcProvider(request);
+  }
+
+  function isRetryableIdentityRpcError(error = null) {
+    const code = String(error?.code || '').trim().toLowerCase();
+    const message = String(error?.message || error || '').trim().toLowerCase();
+    return (
+      code === 'timeout' ||
+      message.includes('econnreset') ||
+      message.includes('fetch failed') ||
+      message.includes('socket hang up') ||
+      message.includes('etimedout') ||
+      message.includes('request timeout') ||
+      message.includes('code=timeout') ||
+      message.includes('this operation was aborted')
+    );
+  }
+
   function isIdentitySignatureRequired() {
     return !['registry', 'registry_only', 'service', 'service_registry'].includes(IDENTITY_VERIFY_MODE);
   }
@@ -124,6 +149,155 @@ export function createIdentityVerificationHelpers(deps = {}) {
     writeIdentityChallenges(normalizeIdentityChallengeRows(rows));
   }
 
+  function issueIdentityChallenge({ traceId = '', identityInput = {} } = {}) {
+    return readIdentityProfile({
+      registry: identityInput?.identityRegistry || identityInput?.registry,
+      agentId: identityInput?.identityAgentId || identityInput?.agentId
+    }).then((profile) => {
+      if (!profile?.available) {
+        throw new Error(profile?.reason || 'identity_unavailable');
+      }
+      const now = Date.now();
+      const ttl = Number.isFinite(IDENTITY_CHALLENGE_TTL_MS) && IDENTITY_CHALLENGE_TTL_MS > 0
+        ? IDENTITY_CHALLENGE_TTL_MS
+        : 120_000;
+      const challengeId = createTraceId('idv');
+      const nonce = `0x${crypto.randomBytes(16).toString('hex')}`;
+      const expiresAt = now + ttl;
+      const message = createIdentityChallengeMessage({
+        challengeId,
+        traceId,
+        nonce,
+        issuedAt: now,
+        expiresAt,
+        profile
+      });
+      const rows = normalizeIdentityChallengeRows(readIdentityChallenges());
+      rows.unshift({
+        challengeId,
+        traceId: String(traceId || '').trim(),
+        nonce,
+        message,
+        signature: '',
+        issuedAt: now,
+        expiresAt,
+        usedAt: 0,
+        verifiedAt: 0,
+        recoveredAddress: '',
+        status: 'issued',
+        verifyMode: isIdentitySignatureRequired() ? 'signature' : 'registry',
+        identity: buildIdentityPayload(profile)
+      });
+      writeIdentityChallenges(normalizeIdentityChallengeRows(rows));
+      return {
+        challengeId,
+        traceId: String(traceId || '').trim(),
+        issuedAt: new Date(now).toISOString(),
+        expiresAt: new Date(expiresAt).toISOString(),
+        signatureRequired: isIdentitySignatureRequired(),
+        message,
+        identity: buildIdentityPayload(profile),
+        profile: buildIdentitySummary(profile)
+      };
+    });
+  }
+
+  async function verifyIdentityChallengeResponse({
+    challengeId = '',
+    signature = '',
+    traceId = ''
+  } = {}) {
+    const normalizedChallengeId = String(challengeId || '').trim();
+    if (!normalizedChallengeId) {
+      throw new Error('identity_challenge_id_required');
+    }
+    const rows = normalizeIdentityChallengeRows(readIdentityChallenges());
+    const index = rows.findIndex((item) => String(item?.challengeId || '').trim() === normalizedChallengeId);
+    if (index < 0) {
+      throw new Error('identity_challenge_not_found');
+    }
+    const row = rows[index];
+    const now = Date.now();
+    if (Number(row?.expiresAt || 0) > 0 && now > Number(row.expiresAt)) {
+      throw new Error('identity_challenge_expired');
+    }
+    if (Number(row?.usedAt || 0) > 0) {
+      throw new Error('identity_challenge_already_used');
+    }
+
+    const profile = await readIdentityProfile({
+      registry: row?.identity?.registry,
+      agentId: row?.identity?.agentId
+    });
+    if (!profile?.available) {
+      throw new Error(profile?.reason || 'identity_unavailable');
+    }
+
+    if (!isIdentitySignatureRequired()) {
+      rows[index] = {
+        ...row,
+        status: 'verified_registry',
+        usedAt: now,
+        verifiedAt: now,
+        traceId: String(traceId || row?.traceId || '').trim()
+      };
+      writeIdentityChallenges(normalizeIdentityChallengeRows(rows));
+      return {
+        verifyMode: 'registry',
+        signerType: 'registry',
+        verifiedAt: new Date(now).toISOString(),
+        identity: buildIdentityPayload(profile, {
+          verifyMode: 'registry',
+          verifiedAt: new Date(now).toISOString()
+        }),
+        profile: buildIdentitySummary(profile)
+      };
+    }
+
+    const normalizedSignature = String(signature || '').trim();
+    if (!normalizedSignature) {
+      throw new Error('identity_signature_required');
+    }
+
+    const recoveredAddress = normalizeAddress(ethers.verifyMessage(String(row?.message || ''), normalizedSignature));
+    const ownerAddress = normalizeAddress(profile?.ownerAddress || '');
+    const agentWallet = normalizeAddress(profile?.agentWallet || '');
+    let signerType = '';
+    if (recoveredAddress && recoveredAddress === ownerAddress) {
+      signerType = 'owner';
+    } else if (recoveredAddress && recoveredAddress === agentWallet) {
+      signerType = 'agent_wallet';
+    } else {
+      throw new Error(
+        `identity_signature_invalid: recovered=${recoveredAddress || '-'} expected_owner=${ownerAddress || '-'} expected_agent_wallet=${agentWallet || '-'}`
+      );
+    }
+
+    rows[index] = {
+      ...row,
+      signature: normalizedSignature,
+      recoveredAddress,
+      status: 'verified',
+      usedAt: now,
+      verifiedAt: now,
+      traceId: String(traceId || row?.traceId || '').trim(),
+      verifyMode: 'signature'
+    };
+    writeIdentityChallenges(normalizeIdentityChallengeRows(rows));
+
+    return {
+      verifyMode: 'signature',
+      signerType,
+      verifiedAt: new Date(now).toISOString(),
+      identity: buildIdentityPayload(profile, {
+        verifyMode: 'signature',
+        verifiedAt: new Date(now).toISOString(),
+        challengeId: normalizedChallengeId
+      }),
+      profile: buildIdentitySummary(profile)
+    };
+  }
+
   function getLatestIdentityChallengeSnapshot() {
     const rows = normalizeIdentityChallengeRows(readIdentityChallenges());
     if (!rows.length) return null;
@@ -178,23 +352,34 @@ export function createIdentityVerificationHelpers(deps = {}) {
       };
     }
 
-    const provider = new ethers.JsonRpcProvider(BACKEND_RPC_URL);
-    const network = await provider.getNetwork();
-    const contract = new ethers.Contract(configured.registry, ERC8004_IDENTITY_ABI, provider);
-    const [ownerAddress, tokenURI, agentWallet] = await Promise.all([
-      contract.ownerOf(resolvedAgentId),
-      contract.tokenURI(resolvedAgentId),
-      contract.getAgentWallet(resolvedAgentId)
-    ]);
+    const maxAttempts = 5;
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const provider = createIdentityRpcProvider();
+        const network = await provider.getNetwork();
+        const contract = new ethers.Contract(configured.registry, ERC8004_IDENTITY_ABI, provider);
+        const ownerAddress = await contract.ownerOf(resolvedAgentId);
+        const tokenURI = await contract.tokenURI(resolvedAgentId);
+        const agentWallet = await contract.getAgentWallet(resolvedAgentId);
 
-    return {
-      configured,
-      available: true,
-      chainId: String(network.chainId),
-      ownerAddress,
-      tokenURI,
-      agentWallet
-    };
+        return {
+          configured,
+          available: true,
+          chainId: String(network.chainId),
+          ownerAddress,
+          tokenURI,
+          agentWallet
+        };
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxAttempts || !isRetryableIdentityRpcError(error)) {
+          throw error;
+        }
+        await sleep(500 * attempt);
+      }
+    }
+    throw lastError || new Error('identity_profile_unavailable');
   }
 
   async function ensureWorkflowIdentityVerified({ traceId = '', identityInput = {} } = {}) {
@@ -313,6 +498,8 @@ export function createIdentityVerificationHelpers(deps = {}) {
     assertBackendSigner,
     ensureWorkflowIdentityVerified,
     getLatestIdentityChallengeSnapshot,
-    readIdentityProfile
+    issueIdentityChallenge,
+    readIdentityProfile,
+    verifyIdentityChallengeResponse
   };
 }

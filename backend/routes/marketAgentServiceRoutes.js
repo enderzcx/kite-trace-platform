@@ -1,8 +1,24 @@
+import {
+  fetchDexMarket,
+  fetchKolMonitor,
+  fetchListingAlert,
+  fetchMemeSentiment,
+  fetchNewsSignal,
+  fetchSmartMoneySignal,
+  fetchTokenAnalysis,
+  fetchTrenchesScan,
+  fetchWalletPnl,
+  fetchWhaleAlert
+} from '../lib/externalFeeds.js';
+
 export function registerMarketAgentServiceRoutes(app, deps) {
   const {
     ANALYSIS_PROVIDER,
+    appendWorkflowStep,
     buildServiceStatus,
+    broadcastEvent,
     computeServiceReputation,
+    createX402Request,
     createTraceId,
     ensureServiceCatalog,
     evaluateServiceInvokeGuard,
@@ -18,6 +34,8 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     normalizeRiskScoreParams,
     normalizeXReaderParams,
     PORT,
+    postSessionPayWithRetry,
+    readRecords,
     readServiceInvocations,
     readSessionRuntime,
     readWorkflows,
@@ -30,9 +48,13 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     sanitizeServiceRecord,
     SETTLEMENT_TOKEN,
     startXmtpRuntimes,
+    upsertWorkflow,
     upsertAgent001ResultRecord,
     upsertServiceInvocation,
-    workflowPath,
+    validatePaymentProof,
+    verifyProofOnChain,
+    writeX402Requests,
+    writeRecords,
     writePublishedServices,
     X_READER_MAX_CHARS_DEFAULT,
     X402_BTC_PRICE,
@@ -64,6 +86,197 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
     if (['0', 'false', 'no', 'off'].includes(raw)) return false;
     return fallback;
+  }
+
+  function buildExternalFeedSummary(service = {}, result = null) {
+    const serviceName = normalizeText(service?.name || service?.id || 'external feed');
+    const source = normalizeText(result?.source || '');
+    const data = result?.data;
+    let count = 0;
+    if (Array.isArray(data)) {
+      count = data.length;
+    } else if (data && typeof data === 'object') {
+      const firstArray = Object.values(data).find((value) => Array.isArray(value));
+      count = Array.isArray(firstArray) ? firstArray.length : 0;
+    }
+    const countText = count > 0 ? ` (${count} items)` : '';
+    const sourceText = source ? ` via ${source}` : '';
+    return `${serviceName} completed${countText}${sourceText}`.trim();
+  }
+
+  const appendServiceWorkflowStep =
+    typeof appendWorkflowStep === 'function'
+      ? appendWorkflowStep
+      : (workflow, name, status, details = {}) => {
+          if (!workflow.steps) workflow.steps = [];
+          workflow.steps.push({
+            name,
+            status,
+            at: new Date().toISOString(),
+            details
+          });
+        };
+
+  function upsertX402RequestRecord(record = {}) {
+    const requestId = normalizeText(record?.requestId || '');
+    if (!requestId) return null;
+    const rows = Array.isArray(readX402Requests()) ? readX402Requests() : [];
+    const nextRecord = {
+      ...record,
+      requestId,
+      updatedAt: Number(record?.updatedAt || Date.now())
+    };
+    const idx = rows.findIndex((item) => normalizeText(item?.requestId || '') === requestId);
+    if (idx >= 0) rows[idx] = nextRecord;
+    else rows.unshift(nextRecord);
+    writeX402Requests(rows);
+    return nextRecord;
+  }
+
+  function appendValidationRecord({
+    requestId = '',
+    txHash = '',
+    userOpHash = '',
+    tokenAddress = '',
+    recipient = '',
+    amount = '',
+    action = '',
+    payer = '',
+    signerMode = 'aa-session'
+  } = {}) {
+    if (typeof readRecords !== 'function' || typeof writeRecords !== 'function') return null;
+    const normalizedTxHash = normalizeText(txHash);
+    if (!normalizedTxHash) return null;
+    const rows = Array.isArray(readRecords()) ? readRecords() : [];
+    rows.unshift({
+      time: new Date().toISOString(),
+      type: 'aa-session-payment',
+      amount: String(amount || ''),
+      token: String(tokenAddress || ''),
+      recipient: String(recipient || ''),
+      txHash: normalizedTxHash,
+      userOpHash: String(userOpHash || ''),
+      status: 'success',
+      requestId: String(requestId || ''),
+      signerMode,
+      relaySender: '',
+      agentId: '',
+      identityRegistry: '',
+      aaWallet: String(payer || ''),
+      sessionAddress: '',
+      sessionId: '',
+      action: String(action || '')
+    });
+    writeRecords(rows);
+    return rows[0];
+  }
+
+  function buildExternalFeedRequest({ service = {}, invocation = {}, traceId = '', input = {} } = {}) {
+    return createX402Request(
+      `${normalizeText(service?.name || service?.id)} ${normalizeText(service?.action || invocation?.action)}`.trim(),
+      invocation?.payer || '',
+      normalizeText(service?.id || invocation?.action || 'external-feed'),
+      {
+        amount: invocation?.amount || service?.price || X402_BTC_PRICE || '',
+        tokenAddress: invocation?.tokenAddress || service?.tokenAddress || SETTLEMENT_TOKEN || '',
+        recipient: invocation?.recipient || service?.recipient || '',
+        a2a: {
+          sourceAgentId: invocation?.sourceAgentId || '',
+          targetAgentId: invocation?.targetAgentId || '',
+          capability: normalizeText(service?.id || invocation?.action || ''),
+          taskType: normalizeText(service?.action || invocation?.action || ''),
+          traceId
+        },
+        actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {}
+      }
+    );
+  }
+
+  function buildExternalFeedWorkflow({ service = {}, invocation = {}, traceId = '', input = {}, request = {} } = {}) {
+    return {
+      traceId,
+      type: normalizeText(service?.action || invocation?.action || 'external-feed'),
+      state: 'running',
+      sourceAgentId: invocation?.sourceAgentId || '',
+      targetAgentId: invocation?.targetAgentId || '',
+      payer: invocation?.payer || '',
+      input: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
+      requestId: normalizeText(request?.requestId || ''),
+      txHash: '',
+      userOpHash: '',
+      steps: [],
+      createdAt: invocation?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  function buildFailedServiceWorkflow({ service = {}, invocation = {}, traceId = '', input = {}, reason = '' } = {}) {
+    return {
+      traceId,
+      type: normalizeText(service?.action || invocation?.action || 'service-invoke'),
+      state: 'failed',
+      sourceAgentId: invocation?.sourceAgentId || '',
+      targetAgentId: invocation?.targetAgentId || '',
+      payer: invocation?.payer || '',
+      input: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
+      requestId: normalizeText(invocation?.requestId || ''),
+      txHash: normalizeText(invocation?.txHash || ''),
+      userOpHash: normalizeText(invocation?.userOpHash || ''),
+      steps: [
+        {
+          name: 'failed',
+          status: 'error',
+          at: new Date().toISOString(),
+          details: {
+            reason: normalizeText(reason || 'service invoke failed')
+          }
+        }
+      ],
+      createdAt: invocation?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      error: normalizeText(reason || 'service invoke failed')
+    };
+  }
+
+  function sleep(ms = 0) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
+  }
+
+  function isRetryableInternalFetchError(error = null) {
+    const message = normalizeText(error?.message || error || '').toLowerCase();
+    return (
+      message.includes('econnreset') ||
+      message.includes('fetch failed') ||
+      message.includes('socket hang up') ||
+      message.includes('und_err_socket') ||
+      message.includes('etimedout')
+    );
+  }
+
+  async function postInternalWorkflowWithRetry(pathname = '', headers = {}, body = {}) {
+    const targetPath = normalizeText(pathname);
+    const maxAttempts = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const resp = await fetch(`http://127.0.0.1:${PORT}${targetPath}`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body)
+        });
+        const payload = await resp.json().catch(() => ({}));
+        return { resp, payload };
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxAttempts || !isRetryableInternalFetchError(error)) {
+          throw error;
+        }
+        await sleep(250 * attempt);
+      }
+    }
+
+    throw lastError || new Error('internal workflow invoke failed');
   }
 
   async function fetchBinanceKlines(symbol = 'BTCUSDT', interval = '1m', limit = 200) {
@@ -773,6 +986,15 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     }
     const action = String(service.action || '').trim().toLowerCase();
     const effectiveAction = action === 'x-reader-feed' ? 'info-analysis-feed' : action;
+    const effectiveProvider = normalizeText(service?.providerKey || service?.providerAgentId || '').toLowerCase();
+    const capabilityId = normalizeText(service?.id || '').toLowerCase();
+    const isFundamentalExternalCapability =
+      effectiveProvider === 'fundamental-agent-real' &&
+      ['cap-listing-alert', 'cap-whale-alert', 'cap-news-signal', 'cap-meme-sentiment', 'cap-kol-monitor'].includes(capabilityId);
+    const isTechnicalExternalCapability =
+      effectiveProvider === 'technical-agent-real' &&
+      ['cap-smart-money-signal', 'cap-trenches-scan', 'cap-token-analysis', 'cap-wallet-pnl', 'cap-dex-market'].includes(capabilityId);
+    const isExternalFeedCapability = isFundamentalExternalCapability || isTechnicalExternalCapability;
     const supportedServiceActions = [
       'btc-price-feed',
       'risk-score-feed',
@@ -781,7 +1003,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       'info-analysis-feed',
       'hyperliquid-order-testnet'
     ];
-    if (!supportedServiceActions.includes(action)) {
+    if (!supportedServiceActions.includes(action) && !isExternalFeedCapability) {
       return res.status(400).json({
         ok: false,
         error: 'unsupported_service_action',
@@ -791,6 +1013,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
   
     const runtime = readSessionRuntime();
     const body = req.body || {};
+    const input =
+      body?.input && typeof body.input === 'object' && !Array.isArray(body.input)
+        ? body.input
+        : body;
     const traceId = resolveWorkflowTraceId(body.traceId || createTraceId('service'));
     const payer = normalizeAddress(body.payer || runtime.aaWallet || '');
     const sourceAgentId = String(body.sourceAgentId || KITE_AGENT1_ID).trim();
@@ -833,6 +1059,9 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       updatedAt: now
     };
     upsertServiceInvocation(invocation);
+    let evidenceWorkflow = null;
+    let evidenceRequest = null;
+    let externalResult = null;
   
     try {
       const internalApiKey = getInternalAgentApiKey();
@@ -840,15 +1069,220 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       if (internalApiKey) headers['x-api-key'] = internalApiKey;
       const isTechnicalServiceAction = effectiveAction === 'risk-score-feed' || effectiveAction === 'technical-analysis-feed';
       const isInfoServiceAction = effectiveAction === 'info-analysis-feed';
+      if (isExternalFeedCapability) {
+        evidenceRequest = buildExternalFeedRequest({
+          service,
+          invocation,
+          traceId,
+          input
+        });
+        evidenceRequest = upsertX402RequestRecord({
+          ...evidenceRequest,
+          status: 'pending',
+          actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
+          a2a: {
+            sourceAgentId,
+            targetAgentId,
+            capability: capabilityId,
+            taskType: effectiveAction,
+            traceId
+          }
+        });
+        evidenceWorkflow = buildExternalFeedWorkflow({
+          service,
+          invocation,
+          traceId,
+          input,
+          request: evidenceRequest
+        });
+        appendServiceWorkflowStep(evidenceWorkflow, 'challenge_issued', 'ok', {
+          requestId: evidenceRequest?.requestId || '',
+          amount: evidenceRequest?.amount || '',
+          recipient: evidenceRequest?.recipient || ''
+        });
+        evidenceWorkflow.updatedAt = new Date().toISOString();
+        upsertWorkflow(evidenceWorkflow);
+        if (typeof broadcastEvent === 'function') {
+          broadcastEvent('challenge_issued', {
+            traceId,
+            requestId: evidenceRequest?.requestId || '',
+            amount: evidenceRequest?.amount || '',
+            recipient: evidenceRequest?.recipient || '',
+            serviceId,
+            capabilityId
+          });
+        }
+
+        if (isFundamentalExternalCapability) {
+          if (capabilityId === 'cap-listing-alert') externalResult = await fetchListingAlert(input);
+          else if (capabilityId === 'cap-whale-alert') externalResult = await fetchWhaleAlert(input);
+          else if (capabilityId === 'cap-news-signal') externalResult = await fetchNewsSignal(input);
+          else if (capabilityId === 'cap-meme-sentiment') externalResult = await fetchMemeSentiment(input);
+          else if (capabilityId === 'cap-kol-monitor') externalResult = await fetchKolMonitor(input);
+        } else if (isTechnicalExternalCapability) {
+          if (capabilityId === 'cap-smart-money-signal') externalResult = await fetchSmartMoneySignal(input);
+          else if (capabilityId === 'cap-trenches-scan') externalResult = await fetchTrenchesScan(input);
+          else if (capabilityId === 'cap-token-analysis') externalResult = await fetchTokenAnalysis(input);
+          else if (capabilityId === 'cap-wallet-pnl') externalResult = await fetchWalletPnl(input);
+          else if (capabilityId === 'cap-dex-market') externalResult = await fetchDexMarket(input);
+        }
+        if (externalResult) {
+          if (!externalResult.ok) {
+            throw new Error(normalizeText(externalResult.error || 'external_feed_failed') || 'external_feed_failed');
+          }
+          const pay = await postSessionPayWithRetry(
+            {
+              tokenAddress: evidenceRequest?.tokenAddress || invocation.tokenAddress || '',
+              recipient: evidenceRequest?.recipient || invocation.recipient || '',
+              amount: evidenceRequest?.amount || invocation.amount || '',
+              requestId: evidenceRequest?.requestId || '',
+              action: capabilityId || effectiveAction,
+              query: normalizeText(evidenceRequest?.query || `${service?.name || serviceId} ${effectiveAction}`)
+            },
+            { maxAttempts: 5, timeoutMs: 210_000 }
+          );
+          const payBody = pay?.body || {};
+          const txHash = normalizeText(payBody?.payment?.txHash || '');
+          const userOpHash = normalizeText(payBody?.payment?.userOpHash || '');
+          if (!txHash) {
+            throw new Error('session pay returned empty txHash.');
+          }
+          const paymentProof = {
+            requestId: evidenceRequest?.requestId || '',
+            txHash,
+            payer,
+            tokenAddress: evidenceRequest?.tokenAddress || '',
+            recipient: evidenceRequest?.recipient || '',
+            amount: evidenceRequest?.amount || ''
+          };
+          const paymentValidationError = validatePaymentProof(evidenceRequest, paymentProof);
+          if (paymentValidationError) {
+            throw new Error(paymentValidationError);
+          }
+          evidenceWorkflow.txHash = txHash;
+          evidenceWorkflow.userOpHash = userOpHash;
+          appendServiceWorkflowStep(evidenceWorkflow, 'payment_sent', 'ok', {
+            txHash,
+            userOpHash
+          });
+          evidenceWorkflow.updatedAt = new Date().toISOString();
+          upsertWorkflow(evidenceWorkflow);
+          if (typeof broadcastEvent === 'function') {
+            broadcastEvent('payment_sent', {
+              traceId,
+              requestId: evidenceRequest?.requestId || '',
+              txHash,
+              userOpHash,
+              serviceId,
+              capabilityId
+            });
+          }
+
+          const verification = await verifyProofOnChain(evidenceRequest, paymentProof);
+          if (!verification?.ok) {
+            throw new Error(`on-chain proof verification failed: ${normalizeText(verification?.reason || 'unknown')}`);
+          }
+          evidenceRequest = upsertX402RequestRecord({
+            ...evidenceRequest,
+            status: 'paid',
+            paidAt: Date.now(),
+            paymentTxHash: txHash,
+            paymentProof,
+            proofVerification: {
+              mode: 'on-chain',
+              verifiedAt: Date.now(),
+              details: verification?.details || {}
+            },
+            actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
+            a2a: {
+              sourceAgentId,
+              targetAgentId,
+              capability: capabilityId,
+              taskType: effectiveAction,
+              traceId
+            },
+            result: {
+              summary: buildExternalFeedSummary(service, externalResult)
+            }
+          });
+          appendValidationRecord({
+            requestId: evidenceRequest?.requestId || '',
+            txHash,
+            userOpHash,
+            tokenAddress: evidenceRequest?.tokenAddress || '',
+            recipient: evidenceRequest?.recipient || '',
+            amount: evidenceRequest?.amount || '',
+            action: capabilityId || effectiveAction,
+            payer
+          });
+          appendServiceWorkflowStep(evidenceWorkflow, 'proof_submitted', 'ok', {
+            verified: true,
+            mode: 'on-chain'
+          });
+          appendServiceWorkflowStep(evidenceWorkflow, 'unlocked', 'ok', {
+            result: buildExternalFeedSummary(service, externalResult)
+          });
+          evidenceWorkflow.state = 'unlocked';
+          evidenceWorkflow.result = {
+            summary: buildExternalFeedSummary(service, externalResult),
+            external: externalResult
+          };
+          evidenceWorkflow.updatedAt = new Date().toISOString();
+          upsertWorkflow(evidenceWorkflow);
+          if (typeof broadcastEvent === 'function') {
+            broadcastEvent('proof_submitted', {
+              traceId,
+              requestId: evidenceRequest?.requestId || '',
+              verified: true
+            });
+            broadcastEvent('unlocked', {
+              traceId,
+              requestId: evidenceRequest?.requestId || '',
+              txHash,
+              summary: buildExternalFeedSummary(service, externalResult)
+            });
+          }
+          const next = {
+            ...invocation,
+            traceId,
+            requestId: normalizeText(evidenceRequest?.requestId || ''),
+            state: 'success',
+            summary: buildExternalFeedSummary(service, externalResult),
+            error: '',
+            txHash,
+            userOpHash,
+            updatedAt: new Date().toISOString()
+          };
+          upsertServiceInvocation(next);
+
+          return res.json({
+            ok: true,
+            traceId,
+            requestId: evidenceRequest?.requestId || '',
+            state: 'unlocked',
+            txHash,
+            userOpHash,
+            workflow: evidenceWorkflow || null,
+            receipt: {
+              result: {
+                summary: buildExternalFeedSummary(service, externalResult)
+              }
+            },
+            result: externalResult,
+            serviceId,
+            invocationId
+          });
+        }
+      }
       const invokePayload =
         isTechnicalServiceAction
           ? {
               traceId,
               sourceAgentId,
               targetAgentId,
-              symbol: service.pair || 'BTCUSDT',
-              horizonMin: Number(service.horizonMin || 60),
-              source: service.source || 'hyperliquid',
+              symbol: body.symbol || body.pair || service.pair || 'BTCUSDT',
+              horizonMin: Number(body.horizonMin ?? service.horizonMin ?? 60),
+              source: body.source || service.source || 'hyperliquid',
               action: effectiveAction,
               payer
             }
@@ -859,8 +1293,8 @@ export function registerMarketAgentServiceRoutes(app, deps) {
                 targetAgentId,
                 url: service.resourceUrl || service.exampleInput?.url || body.url || '',
                 topic: body.topic || service.exampleInput?.topic || '',
-                mode: service.source || service.mode || 'auto',
-                maxChars: Number(service.maxChars || service.exampleInput?.maxChars || X_READER_MAX_CHARS_DEFAULT),
+                mode: body.mode || body.source || service.source || service.mode || 'auto',
+                maxChars: Number(body.maxChars ?? service.maxChars ?? service.exampleInput?.maxChars ?? X_READER_MAX_CHARS_DEFAULT),
                 action: effectiveAction,
                 payer
               }
@@ -887,8 +1321,8 @@ export function registerMarketAgentServiceRoutes(app, deps) {
               traceId,
               sourceAgentId,
               targetAgentId,
-              pair: service.pair || 'BTCUSDT',
-              source: service.source || 'hyperliquid',
+              pair: body.pair || body.symbol || service.pair || 'BTCUSDT',
+              source: body.source || service.source || 'hyperliquid',
               payer
             };
       const workflowPath =
@@ -900,12 +1334,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
               ? '/api/workflow/hyperliquid-order/run'
               : '/api/workflow/btc-price/run';
   
-      const resp = await fetch(`http://127.0.0.1:${PORT}${workflowPath}`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(invokePayload)
-      });
-      const payload = await resp.json().catch(() => ({}));
+      const { resp, payload } = await postInternalWorkflowWithRetry(workflowPath, headers, invokePayload);
       const workflow = payload?.workflow || null;
       const next = {
         ...invocation,
@@ -926,10 +1355,57 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         invocationId
       });
     } catch (error) {
+      const failureReason = String(error?.message || 'service invoke failed').trim();
+      if (evidenceRequest) {
+        evidenceRequest = upsertX402RequestRecord({
+          ...evidenceRequest,
+          status: 'failed',
+          paymentTxHash: normalizeText(evidenceWorkflow?.txHash || evidenceRequest?.paymentTxHash || ''),
+          paymentProof: evidenceRequest?.paymentProof || null,
+          proofVerification: evidenceRequest?.proofVerification || null,
+          failure: {
+            reason: failureReason,
+            at: new Date().toISOString()
+          }
+        });
+      }
+      if (!evidenceWorkflow) {
+        evidenceWorkflow = buildFailedServiceWorkflow({
+          service,
+          invocation,
+          traceId,
+          input,
+          reason: failureReason
+        });
+      } else {
+        appendServiceWorkflowStep(evidenceWorkflow, 'failed', 'error', { reason: failureReason });
+        evidenceWorkflow.state = 'failed';
+        evidenceWorkflow.error = failureReason;
+        if (externalResult) {
+          evidenceWorkflow.result = {
+            summary: buildExternalFeedSummary(service, externalResult),
+            external: externalResult
+          };
+        }
+        evidenceWorkflow.updatedAt = new Date().toISOString();
+      }
+      upsertWorkflow(evidenceWorkflow);
+      if (typeof broadcastEvent === 'function') {
+        broadcastEvent('failed', {
+          traceId,
+          state: 'failed',
+          reason: failureReason,
+          serviceId,
+          capabilityId
+        });
+      }
       const failed = {
         ...invocation,
         state: 'failed',
-        error: String(error?.message || 'service invoke failed').trim(),
+        requestId: normalizeText(evidenceRequest?.requestId || invocation?.requestId || ''),
+        error: failureReason,
+        txHash: normalizeText(evidenceWorkflow?.txHash || invocation?.txHash || ''),
+        userOpHash: normalizeText(evidenceWorkflow?.userOpHash || invocation?.userOpHash || ''),
         updatedAt: new Date().toISOString()
       };
       upsertServiceInvocation(failed);
@@ -939,7 +1415,8 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         reason: failed.error,
         serviceId,
         invocationId,
-        traceId
+        traceId,
+        workflow: evidenceWorkflow
       });
     }
   });
@@ -1061,6 +1538,76 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       service,
       total: rows.length,
       items: rows
+    });
+  });
+
+  app.get('/api/service-invocations', requireRole('viewer'), (req, res) => {
+    const limit = Math.max(1, Math.min(Number(req.query.limit || 50), 300));
+    const traceId = String(req.query.traceId || '').trim();
+    const requestId = String(req.query.requestId || '').trim();
+    const serviceId = String(req.query.serviceId || '').trim();
+    const provider = String(req.query.provider || '').trim().toLowerCase();
+    const capability = String(req.query.capability || '').trim().toLowerCase();
+    const state = String(req.query.state || '').trim().toLowerCase();
+
+    const services = ensureServiceCatalog();
+    const serviceById = new Map(services.map((item) => [String(item?.id || '').trim(), item]));
+    const workflows = readWorkflows();
+    const workflowByTraceId = new Map(workflows.map((item) => [String(item?.traceId || '').trim(), item]));
+    const requests = readX402Requests();
+    const requestById = new Map(requests.map((item) => [String(item?.requestId || '').trim(), item]));
+
+    const items = readServiceInvocations()
+      .filter((item) => {
+        const rowServiceId = String(item?.serviceId || '').trim();
+        const rowTraceId = String(item?.traceId || '').trim();
+        const rowRequestId = String(item?.requestId || '').trim();
+        const service = serviceById.get(rowServiceId) || null;
+        const rowProvider = String(service?.providerAgentId || '').trim().toLowerCase();
+        const rowCapability = String(service?.action || item?.action || '').trim().toLowerCase();
+        const rowState = String(item?.state || '').trim().toLowerCase();
+        if (serviceId && rowServiceId !== serviceId) return false;
+        if (traceId && rowTraceId !== traceId) return false;
+        if (requestId && rowRequestId !== requestId) return false;
+        if (provider && rowProvider !== provider) return false;
+        if (capability && rowCapability !== capability) return false;
+        if (state && rowState !== state) return false;
+        return true;
+      })
+      .sort((a, b) => Date.parse(b?.updatedAt || b?.createdAt || 0) - Date.parse(a?.updatedAt || a?.createdAt || 0))
+      .slice(0, limit)
+      .map((item) => {
+        const rowServiceId = String(item?.serviceId || '').trim();
+        const service = serviceById.get(rowServiceId) || null;
+        const receipt = mapServiceReceipt(item, workflowByTraceId, requestById);
+        return {
+          invocationId: String(item?.invocationId || '').trim(),
+          serviceId: rowServiceId,
+          serviceName: String(service?.name || '').trim(),
+          providerAgentId: String(service?.providerAgentId || '').trim(),
+          capability: String(service?.action || item?.action || '').trim().toLowerCase(),
+          traceId: String(item?.traceId || '').trim(),
+          requestId: String(item?.requestId || '').trim(),
+          state: String(item?.state || '').trim().toLowerCase(),
+          payer: String(item?.payer || '').trim(),
+          amount: String(item?.amount || '').trim(),
+          tokenAddress: String(item?.tokenAddress || '').trim(),
+          recipient: String(item?.recipient || '').trim(),
+          summary: String(item?.summary || '').trim(),
+          error: String(item?.error || '').trim(),
+          txHash: String(item?.txHash || '').trim(),
+          userOpHash: String(item?.userOpHash || '').trim(),
+          createdAt: String(item?.createdAt || '').trim(),
+          updatedAt: String(item?.updatedAt || '').trim(),
+          receipt
+        };
+      });
+
+    return res.json({
+      ok: true,
+      traceId: req.traceId || '',
+      total: items.length,
+      items
     });
   });
   

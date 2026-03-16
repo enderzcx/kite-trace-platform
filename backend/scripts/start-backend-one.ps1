@@ -8,6 +8,52 @@ $ErrorActionPreference = "Stop"
 
 $backendDir = Resolve-Path (Join-Path $PSScriptRoot "..")
 $repoRoot = Resolve-Path (Join-Path $backendDir "..")
+$envFile = Join-Path $backendDir ".env"
+
+function Unquote-EnvValue {
+  param(
+    [Parameter(Mandatory = $false)][string]$Value
+  )
+
+  $text = "$Value".Trim()
+  if ($text.Length -ge 2) {
+    $first = $text.Substring(0, 1)
+    $last = $text.Substring($text.Length - 1, 1)
+    if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) {
+      return $text.Substring(1, $text.Length - 2)
+    }
+  }
+  return $text
+}
+
+function Import-DotEnvFile {
+  param(
+    [Parameter(Mandatory = $true)][string]$FilePath
+  )
+
+  if (-not (Test-Path -Path $FilePath -PathType Leaf)) {
+    return $false
+  }
+
+  foreach ($line in Get-Content -Path $FilePath) {
+    $raw = "$line"
+    if ($raw -match '^\s*$') { continue }
+    if ($raw -match '^\s*#') { continue }
+    if ($raw -match '^\s*export\s+') {
+      $raw = $raw -replace '^\s*export\s+', ''
+    }
+    $parts = $raw -split '=', 2
+    if ($parts.Length -ne 2) { continue }
+    $name = $parts[0].Trim()
+    if (-not $name) { continue }
+    $existing = [Environment]::GetEnvironmentVariable($name, 'Process')
+    if ("$existing".Trim()) { continue }
+    $value = Unquote-EnvValue $parts[1]
+    [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+  }
+
+  return $true
+}
 
 function Resolve-TokenFile {
   param(
@@ -71,24 +117,35 @@ function Read-SharedToken {
   return $token
 }
 
+$envImported = Import-DotEnvFile -FilePath $envFile
 $infoFile = Resolve-TokenFile -RepoRoot $repoRoot -ExplicitFile $TokenFile
-$token = ""
+$sharedToken = ""
 if ($infoFile) {
-  $token = Read-SharedToken -FilePath $infoFile
+  $sharedToken = Read-SharedToken -FilePath $infoFile
 }
 
-if (-not $token) {
-  $token = String($env:OPENNEWS_TOKEN).Trim()
+if (-not "$env:OPENNEWS_TOKEN".Trim()) {
+  $env:OPENNEWS_TOKEN = $sharedToken
 }
-if (-not $token) {
-  $token = String($env:TWITTER_TOKEN).Trim()
+if (-not "$env:TWITTER_TOKEN".Trim()) {
+  $env:TWITTER_TOKEN = $sharedToken
 }
-if (-not $token) {
-  throw "No token available. Please set OPENNEWS_TOKEN/TWITTER_TOKEN in env or add OPENNEWS_TOKEN/TWITTER_TOKEN=... to a markdown file in $repoRoot"
+$openNewsToken = "$env:OPENNEWS_TOKEN".Trim()
+$twitterToken = "$env:TWITTER_TOKEN".Trim()
+
+if (-not $openNewsToken -and $twitterToken) {
+  $openNewsToken = $twitterToken
+}
+if (-not $twitterToken -and $openNewsToken) {
+  $twitterToken = $openNewsToken
+}
+
+if (-not $openNewsToken -or -not $twitterToken) {
+  throw "No token available. Please set OPENNEWS_TOKEN/TWITTER_TOKEN in env or backend/.env, or add OPENNEWS_TOKEN/TWITTER_TOKEN=... to a markdown file in $repoRoot"
 }
 
 if ($Port) {
-  $env:PORT = String($Port).Trim()
+  $env:PORT = "$Port".Trim()
 }
 elseif (-not $env:PORT) {
   $env:PORT = "3399"
@@ -98,8 +155,8 @@ if (-not $env:KITECLAW_AUTH_DISABLED) {
   $env:KITECLAW_AUTH_DISABLED = "1"
 }
 
-$env:OPENNEWS_TOKEN = $token
-$env:TWITTER_TOKEN = $token
+$env:OPENNEWS_TOKEN = $openNewsToken
+$env:TWITTER_TOKEN = $twitterToken
 if (-not $env:OPENNEWS_API_BASE) { $env:OPENNEWS_API_BASE = "https://ai.6551.io" }
 if (-not $env:TWITTER_API_BASE) { $env:TWITTER_API_BASE = "https://ai.6551.io" }
 
@@ -108,6 +165,9 @@ Set-Location $backendDir
 Write-Host "[start-backend-one] backend=$backendDir port=$($env:PORT) authDisabled=$($env:KITECLAW_AUTH_DISABLED)"
 if ($infoFile) {
   Write-Host "[start-backend-one] OPENNEWS_TOKEN/TWITTER_TOKEN loaded from $([System.IO.Path]::GetFileName($infoFile))"
+}
+elseif ($envImported -and (Test-Path -Path $envFile -PathType Leaf)) {
+  Write-Host "[start-backend-one] OPENNEWS_TOKEN/TWITTER_TOKEN loaded from backend/.env"
 }
 else {
   Write-Host "[start-backend-one] OPENNEWS_TOKEN/TWITTER_TOKEN loaded from environment variables"

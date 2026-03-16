@@ -1,3 +1,19 @@
+function buildLatestWorkflowByRequestId(rows = []) {
+  const map = new Map();
+  const items = Array.isArray(rows) ? rows : [];
+  for (const workflow of items) {
+    const requestId = String(workflow?.requestId || '').trim();
+    if (!requestId) continue;
+    const existing = map.get(requestId);
+    const nextTime = Number(workflow?.updatedAt || workflow?.createdAt || 0);
+    const currentTime = Number(existing?.updatedAt || existing?.createdAt || 0);
+    if (!existing || nextTime >= currentTime) {
+      map.set(requestId, workflow);
+    }
+  }
+  return map;
+}
+
 export function registerReceiptEvidenceRoutes(app, deps) {
   const {
     aaWallet,
@@ -142,6 +158,8 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     readAgent001Results,
     reader,
     readIdentityProfile,
+    readJobs,
+    readPurchases,
     readRecords,
     readSessionRuntime,
     readWorkflows,
@@ -237,6 +255,297 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     XMTP_ENV,
     xmtpRuntime,
   } = deps;
+
+  const normalizeExecutionState = (value = '', fallback = 'unknown') => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return fallback;
+    if (['success', 'completed', 'unlocked', 'paid', 'settled'].includes(raw)) return 'completed';
+    if (['failed', 'error', 'rejected', 'expired'].includes(raw)) return 'failed';
+    if (['pending', 'payment_pending', 'payment_required'].includes(raw)) return 'pending';
+    if (['running', 'processing', 'submitted', 'funded'].includes(raw)) return 'running';
+    return raw;
+  };
+
+  const mapX402Item = (reqItem = {}, workflow = null) => ({
+    requestId: String(reqItem?.requestId || workflow?.requestId || '').trim(),
+    traceId: String(workflow?.traceId || reqItem?.a2a?.traceId || '').trim(),
+    state: normalizeExecutionState(reqItem?.status || workflow?.state || '', 'pending'),
+    action: String(reqItem?.action || workflow?.type || '').trim(),
+    amount: String(reqItem?.amount || '').trim(),
+    payer: String(reqItem?.payer || workflow?.payer || '').trim(),
+    recipient: String(reqItem?.recipient || '').trim(),
+    tokenAddress: String(reqItem?.tokenAddress || '').trim(),
+    txHash: String(reqItem?.paymentTxHash || reqItem?.paymentProof?.txHash || workflow?.txHash || '').trim(),
+    summary: String(workflow?.result?.summary || reqItem?.result?.summary || '').trim()
+  });
+
+  const buildA2AReceipt = (reqItem = {}, workflow = null, extras = {}) => ({
+    traceId: String(extras?.traceId || workflow?.traceId || reqItem?.a2a?.traceId || '').trim(),
+    requestId: String(reqItem?.requestId || workflow?.requestId || '').trim(),
+    sourceAgentId: String(reqItem?.a2a?.sourceAgentId || workflow?.sourceAgentId || '').trim(),
+    targetAgentId: String(reqItem?.a2a?.targetAgentId || workflow?.targetAgentId || '').trim(),
+    capability: String(reqItem?.a2a?.capability || reqItem?.action || workflow?.type || '').trim(),
+    state: normalizeExecutionState(reqItem?.status || workflow?.state || '', 'pending'),
+    summary: String(workflow?.result?.summary || reqItem?.result?.summary || '').trim()
+  });
+
+  const buildTraceXmtpEvidence = ({ traceId = '', requestId = '' } = {}) => {
+    const runtimes =
+      typeof getAllXmtpRuntimeStatuses === 'function'
+        ? Object.entries(getAllXmtpRuntimeStatuses() || {}).map(([runtimeName, runtimeStatus]) => ({
+            runtimeName: String(runtimeName || '').trim(),
+            enabled: Boolean(runtimeStatus?.enabled),
+            running: Boolean(runtimeStatus?.running),
+            inboxId: String(runtimeStatus?.inboxId || '').trim(),
+            walletAddress: String(runtimeStatus?.walletAddress || '').trim(),
+            environment: String(runtimeStatus?.environment || XMTP_ENV || '').trim()
+          }))
+        : [];
+    const auditEvents =
+      typeof listNetworkAuditEventsByTraceId === 'function' && traceId
+        ? listNetworkAuditEventsByTraceId(traceId)
+        : [];
+    const digestInput = {
+      traceId: String(traceId || '').trim(),
+      requestId: String(requestId || '').trim(),
+      runtimes: runtimes.map((item) => ({
+        runtimeName: item.runtimeName,
+        enabled: item.enabled,
+        running: item.running,
+        inboxId: item.inboxId,
+        walletAddress: item.walletAddress,
+        environment: item.environment
+      })),
+      auditCount: Array.isArray(auditEvents) ? auditEvents.length : 0
+    };
+    const digest =
+      typeof digestStableObject === 'function'
+        ? digestStableObject(digestInput)
+        : { algorithm: 'none', canonicalization: 'none', value: JSON.stringify(digestInput) };
+
+    return {
+      traceId: String(traceId || '').trim(),
+      requestId: String(requestId || '').trim(),
+      total: runtimes.length,
+      runtimes,
+      auditCount: Array.isArray(auditEvents) ? auditEvents.length : 0,
+      digest: {
+        algorithm: String(digest?.algorithm || 'unknown').trim(),
+        canonicalization: String(digest?.canonicalization || '').trim(),
+        value: String(digest?.value || '').trim()
+      }
+    };
+  };
+
+  const buildRuntimeSnapshot = (runtime = {}) => ({
+    aaWallet: runtime.aaWallet || '',
+    sessionAddress: runtime.sessionAddress || '',
+    sessionId: runtime.sessionId || '',
+    maxPerTx: runtime.maxPerTx || 0,
+    dailyLimit: runtime.dailyLimit || 0,
+    gatewayRecipient: runtime.gatewayRecipient || '',
+    authorizedBy: runtime.authorizedBy || '',
+    authorizedAt: runtime.authorizedAt || 0,
+    authorizationMode: runtime.authorizationMode || '',
+    authorizationPayloadHash: runtime.authorizationPayloadHash || '',
+    authorizationNonce: runtime.authorizationNonce || '',
+    authorizationExpiresAt: runtime.authorizationExpiresAt || 0,
+    authorizedAgentId: runtime.authorizedAgentId || '',
+    authorizedAgentWallet: runtime.authorizedAgentWallet || '',
+    authorizationAudience: runtime.authorizationAudience || '',
+    allowedCapabilities: Array.isArray(runtime.allowedCapabilities) ? runtime.allowedCapabilities : []
+  });
+
+  const synthesizeWorkflowFromPurchase = (traceId = '') => {
+    const normalizedTraceId = String(traceId || '').trim();
+    if (!normalizedTraceId || typeof readPurchases !== 'function') return null;
+    const purchase = readPurchases().find((item) => String(item?.traceId || '').trim() === normalizedTraceId);
+    if (!purchase) return null;
+    return {
+      traceId: normalizedTraceId,
+      type: String(purchase?.capabilityId || purchase?.serviceId || 'direct-buy').trim(),
+      state: normalizeExecutionState(String(purchase?.state || '').trim(), 'failed'),
+      sourceAgentId: '',
+      targetAgentId: String(purchase?.providerAgentId || '').trim(),
+      payer: String(purchase?.payer || '').trim(),
+      input: {},
+      requestId: String(purchase?.paymentId || '').trim(),
+      txHash: String(purchase?.paymentTxHash || '').trim(),
+      userOpHash: '',
+      steps: [
+        {
+          name: 'failed',
+          status: 'error',
+          at: String(purchase?.updatedAt || purchase?.createdAt || new Date().toISOString()).trim(),
+          details: {
+            reason: String(purchase?.error || purchase?.summary || 'purchase failed').trim()
+          }
+        }
+      ],
+      createdAt: String(purchase?.createdAt || new Date().toISOString()).trim(),
+      updatedAt: String(purchase?.updatedAt || purchase?.createdAt || new Date().toISOString()).trim(),
+      result: String(purchase?.summary || '').trim() ? { summary: String(purchase.summary).trim() } : null,
+      error: String(purchase?.error || '').trim()
+    };
+  };
+
+  const buildEvidenceExportPayloadForTrace = (traceId = '') => {
+    const normalizedTraceId = String(traceId || '').trim();
+    if (!normalizedTraceId) {
+      return { ok: false, statusCode: 400, error: 'traceId_required' };
+    }
+
+    const workflows = readWorkflows();
+    const workflow =
+      workflows.find((w) => String(w.traceId || '') === normalizedTraceId) ||
+      synthesizeWorkflowFromPurchase(normalizedTraceId);
+    if (!workflow) {
+      return { ok: false, statusCode: 404, error: 'workflow_not_found', traceId: normalizedTraceId };
+    }
+
+    const requests = readX402Requests();
+    const reqItem = requests.find((r) => String(r.requestId || '') === String(workflow.requestId || ''));
+    const records = readRecords();
+    const paymentRecord = records.find(
+      (r) => String(r.txHash || '').toLowerCase() === String(workflow.txHash || '').toLowerCase()
+    );
+    const runtime = readSessionRuntime();
+    const xmtp = buildTraceXmtpEvidence({
+      traceId: normalizedTraceId,
+      requestId: String(workflow?.requestId || reqItem?.requestId || '').trim()
+    });
+    const networkAuditEvents = listNetworkAuditEventsByTraceId(normalizedTraceId);
+    const networkAuditRef = {
+      traceId: normalizedTraceId,
+      total: networkAuditEvents.length,
+      auditEndpoint: `/api/network/audit/${encodeURIComponent(normalizedTraceId)}`,
+      runsEndpoint: '/api/network/runs'
+    };
+    const runtimeSnapshot = buildRuntimeSnapshot(runtime);
+
+    const evidenceSchemaVersion = 'kiteclaw-evidence-v1.1.0';
+    const digestInput = {
+      scope: 'evidence-core-v1',
+      schemaVersion: evidenceSchemaVersion,
+      traceId: normalizedTraceId,
+      workflow: {
+        traceId: String(workflow?.traceId || '').trim(),
+        type: String(workflow?.type || '').trim(),
+        state: String(workflow?.state || '').trim().toLowerCase(),
+        requestId: String(workflow?.requestId || '').trim(),
+        txHash: String(workflow?.txHash || '').trim(),
+        userOpHash: String(workflow?.userOpHash || '').trim()
+      },
+      x402: reqItem
+        ? {
+            requestId: String(reqItem.requestId || '').trim(),
+            status: String(reqItem.status || '').trim().toLowerCase(),
+            action: String(reqItem.action || '').trim().toLowerCase(),
+            amount: String(reqItem.amount || '').trim(),
+            payer: String(reqItem.payer || '').trim(),
+            recipient: String(reqItem.recipient || '').trim(),
+            tokenAddress: String(reqItem.tokenAddress || '').trim(),
+            paymentTxHash: String(reqItem.paymentTxHash || reqItem?.paymentProof?.txHash || '').trim()
+          }
+        : null,
+      xmtp: {
+        total: Number(xmtp?.total || 0),
+        digest: String(xmtp?.digest?.value || '').trim()
+      },
+      paymentRecord: paymentRecord
+        ? {
+            txHash: String(paymentRecord.txHash || '').trim(),
+            status: String(paymentRecord.status || '').trim().toLowerCase(),
+            requestId: String(paymentRecord.requestId || '').trim()
+          }
+        : null,
+      runtimeSnapshot
+    };
+    const evidenceDigest = digestStableObject(digestInput);
+
+    const exportPayload = {
+      schemaVersion: evidenceSchemaVersion,
+      traceId: normalizedTraceId,
+      exportedAt: new Date().toISOString(),
+      digest: {
+        algorithm: evidenceDigest.algorithm,
+        canonicalization: evidenceDigest.canonicalization,
+        scope: 'evidence-core-v1',
+        value: evidenceDigest.value
+      },
+      integrity: {
+        digestInput
+      },
+      workflow: workflow || null,
+      a2aReceipt: reqItem?.a2a ? buildA2AReceipt(reqItem, workflow, { traceId: normalizedTraceId }) : null,
+      x402: reqItem
+        ? {
+            requestId: reqItem.requestId || '',
+            status: reqItem.status || '',
+            action: reqItem.action || '',
+            amount: reqItem.amount || '',
+            payer: reqItem.payer || '',
+            recipient: reqItem.recipient || '',
+            tokenAddress: reqItem.tokenAddress || '',
+            paymentTxHash: reqItem.paymentTxHash || reqItem?.paymentProof?.txHash || '',
+            paymentProof: reqItem.paymentProof || null,
+            proofVerification: reqItem.proofVerification || null,
+            policy: reqItem.policy || null,
+            identity: reqItem.identity || null,
+            actionParams: reqItem.actionParams || null,
+            a2a: reqItem.a2a || null
+          }
+        : null,
+      xmtp,
+      networkAuditRef,
+      paymentRecord: paymentRecord || null,
+      runtimeSnapshot
+    };
+
+    return {
+      ok: true,
+      traceId: normalizedTraceId,
+      workflow,
+      reqItem,
+      paymentRecord,
+      runtime,
+      exportPayload
+    };
+  };
+
+  const buildPublicEvidenceView = ({ traceId = '', workflow = null, reqItem = null, exportPayload = null } = {}) => {
+    const jobs = typeof readJobs === 'function' ? readJobs() : [];
+    const purchases = typeof readPurchases === 'function' ? readPurchases() : [];
+    const job = jobs.find((item) => String(item?.traceId || '').trim() === String(traceId || '').trim()) || null;
+    const purchase =
+      purchases.find((item) => String(item?.traceId || '').trim() === String(traceId || '').trim()) || null;
+    const runtimeSnapshot = exportPayload?.runtimeSnapshot || {};
+    const x402 = exportPayload?.x402 || null;
+    const jobAnchorTxHash =
+      String(job?.outcomeAnchorTxHash || job?.fundingAnchorTxHash || job?.createAnchorTxHash || '').trim();
+    const anchorContract = String(job?.anchorRegistry || process.env.ERC8183_JOB_ANCHOR_REGISTRY || '').trim();
+
+    return {
+      schemaVersion: 'kiteclaw-public-evidence-v1',
+      traceId: String(traceId || '').trim(),
+      state: normalizeExecutionState(
+        workflow?.state || reqItem?.status || job?.state || purchase?.state || '',
+        'unknown'
+      ),
+      sourceLane: job ? 'job' : purchase ? 'buy' : 'workflow',
+      paymentProof: reqItem?.paymentProof || x402?.proofVerification || null,
+      paymentTxHash: String(x402?.paymentTxHash || workflow?.txHash || '').trim(),
+      authorizedBy: String(runtimeSnapshot.authorizedBy || '').trim(),
+      authorizationMode: String(runtimeSnapshot.authorizationMode || '').trim(),
+      jobAnchorTxHash,
+      anchorContract,
+      anchorNetwork: 'kite-testnet',
+      issuedAt: String(exportPayload?.exportedAt || new Date().toISOString()).trim(),
+      evidenceRef: `/api/public/evidence/${encodeURIComponent(String(traceId || '').trim())}`,
+      receiptRef: String(job?.receiptRef || purchase?.receiptRef || '').trim(),
+      requestId: String(x402?.requestId || workflow?.requestId || '').trim()
+    };
+  };
 
   app.get('/api/demo/trace/:traceId', requireRole('viewer'), (req, res) => {
     const traceId = String(req.params.traceId || '').trim();
@@ -377,126 +686,15 @@ export function registerReceiptEvidenceRoutes(app, deps) {
   });
   
   app.get('/api/evidence/export', requireRole('viewer'), (req, res) => {
-    const traceId = String(req.query.traceId || '').trim();
-    if (!traceId) {
-      return res.status(400).json({ ok: false, error: 'traceId_required' });
+    const result = buildEvidenceExportPayloadForTrace(req.query.traceId);
+    if (!result?.ok) {
+      return res.status(Number(result?.statusCode || 400)).json({
+        ok: false,
+        error: String(result?.error || 'evidence_export_failed').trim(),
+        traceId: String(result?.traceId || '').trim()
+      });
     }
-  
-    const workflows = readWorkflows();
-    const workflow = workflows.find((w) => String(w.traceId || '') === traceId);
-    if (!workflow) {
-      return res.status(404).json({ ok: false, error: 'workflow_not_found', traceId });
-    }
-  
-    const requests = readX402Requests();
-    const reqItem = requests.find((r) => String(r.requestId || '') === String(workflow.requestId || ''));
-    const records = readRecords();
-    const paymentRecord = records.find((r) => String(r.txHash || '').toLowerCase() === String(workflow.txHash || '').toLowerCase());
-    const runtime = readSessionRuntime();
-    const xmtp = buildTraceXmtpEvidence({
-      traceId,
-      requestId: String(workflow?.requestId || reqItem?.requestId || '').trim()
-    });
-    const networkAuditEvents = listNetworkAuditEventsByTraceId(traceId);
-    const networkAuditRef = {
-      traceId,
-      total: networkAuditEvents.length,
-      auditEndpoint: `/api/network/audit/${encodeURIComponent(traceId)}`,
-      runsEndpoint: '/api/network/runs'
-    };
-  
-    const evidenceSchemaVersion = 'kiteclaw-evidence-v1.1.0';
-    const digestInput = {
-      scope: 'evidence-core-v1',
-      schemaVersion: evidenceSchemaVersion,
-      traceId,
-      workflow: {
-        traceId: String(workflow?.traceId || '').trim(),
-        type: String(workflow?.type || '').trim(),
-        state: String(workflow?.state || '').trim().toLowerCase(),
-        requestId: String(workflow?.requestId || '').trim(),
-        txHash: String(workflow?.txHash || '').trim(),
-        userOpHash: String(workflow?.userOpHash || '').trim()
-      },
-      x402: reqItem
-        ? {
-            requestId: String(reqItem.requestId || '').trim(),
-            status: String(reqItem.status || '').trim().toLowerCase(),
-            action: String(reqItem.action || '').trim().toLowerCase(),
-            amount: String(reqItem.amount || '').trim(),
-            payer: String(reqItem.payer || '').trim(),
-            recipient: String(reqItem.recipient || '').trim(),
-            tokenAddress: String(reqItem.tokenAddress || '').trim(),
-            paymentTxHash: String(reqItem.paymentTxHash || reqItem?.paymentProof?.txHash || '').trim()
-          }
-        : null,
-      xmtp: {
-        total: Number(xmtp?.total || 0),
-        digest: String(xmtp?.digest?.value || '').trim()
-      },
-      paymentRecord: paymentRecord
-        ? {
-            txHash: String(paymentRecord.txHash || '').trim(),
-            status: String(paymentRecord.status || '').trim().toLowerCase(),
-            requestId: String(paymentRecord.requestId || '').trim()
-          }
-        : null,
-      runtimeSnapshot: {
-        aaWallet: runtime.aaWallet || '',
-        sessionAddress: runtime.sessionAddress || '',
-        sessionId: runtime.sessionId || '',
-        maxPerTx: runtime.maxPerTx || 0,
-        dailyLimit: runtime.dailyLimit || 0,
-        gatewayRecipient: runtime.gatewayRecipient || ''
-      }
-    };
-    const evidenceDigest = digestStableObject(digestInput);
-  
-    const exportPayload = {
-      schemaVersion: evidenceSchemaVersion,
-      traceId,
-      exportedAt: new Date().toISOString(),
-      digest: {
-        algorithm: evidenceDigest.algorithm,
-        canonicalization: evidenceDigest.canonicalization,
-        scope: 'evidence-core-v1',
-        value: evidenceDigest.value
-      },
-      integrity: {
-        digestInput
-      },
-      workflow: workflow || null,
-      a2aReceipt: reqItem?.a2a ? buildA2AReceipt(reqItem, workflow, { traceId }) : null,
-      x402: reqItem
-        ? {
-            requestId: reqItem.requestId || '',
-            status: reqItem.status || '',
-            action: reqItem.action || '',
-            amount: reqItem.amount || '',
-            payer: reqItem.payer || '',
-            recipient: reqItem.recipient || '',
-            tokenAddress: reqItem.tokenAddress || '',
-            paymentTxHash: reqItem.paymentTxHash || reqItem?.paymentProof?.txHash || '',
-            proofVerification: reqItem.proofVerification || null,
-            policy: reqItem.policy || null,
-            identity: reqItem.identity || null,
-            actionParams: reqItem.actionParams || null,
-            a2a: reqItem.a2a || null
-          }
-        : null,
-      xmtp,
-      networkAuditRef,
-      paymentRecord: paymentRecord || null,
-      runtimeSnapshot: {
-        aaWallet: runtime.aaWallet || '',
-        sessionAddress: runtime.sessionAddress || '',
-        sessionId: runtime.sessionId || '',
-        maxPerTx: runtime.maxPerTx || 0,
-        dailyLimit: runtime.dailyLimit || 0,
-        gatewayRecipient: runtime.gatewayRecipient || ''
-      }
-    };
-  
+    const { traceId, exportPayload } = result;
     const shouldDownload = /^(1|true|yes|download)$/i.test(String(req.query.download || '').trim());
     if (shouldDownload) {
       const fileName = `kiteclaw_evidence_${traceId}.json`;
@@ -505,6 +703,23 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     }
   
     return res.json({ ok: true, traceId, evidence: exportPayload });
+  });
+
+  app.get('/api/public/evidence/:traceId', (req, res) => {
+    const result = buildEvidenceExportPayloadForTrace(req.params.traceId);
+    if (!result?.ok) {
+      return res.status(Number(result?.statusCode || 400)).json({
+        ok: false,
+        error: String(result?.error || 'public_evidence_failed').trim(),
+        traceId: String(result?.traceId || req.params.traceId || '').trim()
+      });
+    }
+    const publicEvidence = buildPublicEvidenceView(result);
+    return res.json({
+      ok: true,
+      traceId: String(result.traceId || '').trim(),
+      evidence: publicEvidence
+    });
   });
   
   app.get('/api/receipt/:requestId', requireRole('viewer'), async (req, res) => {

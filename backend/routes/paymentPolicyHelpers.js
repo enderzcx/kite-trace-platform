@@ -5,6 +5,8 @@ export function createPaymentPolicyHelpers(deps = {}) {
     KITE_AGENT2_AA_ADDRESS,
     KITE_AGENT2_ID,
     MERCHANT_ADDRESS,
+    PROOF_RECEIPT_POLL_INTERVAL_MS,
+    PROOF_RECEIPT_WAIT_MS,
     PROOF_RPC_RETRIES,
     PROOF_RPC_TIMEOUT_MS,
     SETTLEMENT_TOKEN,
@@ -542,25 +544,79 @@ export function createPaymentPolicyHelpers(deps = {}) {
         throw new Error(json.error?.message || 'rpc returned error');
       }
       return json?.result;
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`rpc timeout after ${PROOF_RPC_TIMEOUT_MS}ms`);
+      }
+      throw error;
     } finally {
       clearTimeout(timer);
     }
   }
 
+  function isTransientProofRpcError(error) {
+    const text = String(error?.message || error || '').trim().toLowerCase();
+    if (!text) return false;
+    return (
+      text.includes('timeout') ||
+      text.includes('aborted') ||
+      text.includes('econnreset') ||
+      text.includes('etimedout') ||
+      text.includes('socket hang up') ||
+      text.includes('und_err_socket') ||
+      text.includes('und_err_connect_timeout') ||
+      text.includes('rpc http 429') ||
+      text.includes('rpc http 502') ||
+      text.includes('rpc http 503') ||
+      text.includes('rpc http 504')
+    );
+  }
+
   async function fetchReceiptWithRetry(txHash) {
     const retries = Number.isFinite(PROOF_RPC_RETRIES) && PROOF_RPC_RETRIES > 0 ? PROOF_RPC_RETRIES : 1;
+    const totalWaitMs =
+      Number.isFinite(PROOF_RECEIPT_WAIT_MS) && PROOF_RECEIPT_WAIT_MS > 0
+        ? Math.max(5_000, Math.min(PROOF_RECEIPT_WAIT_MS, 180_000))
+        : 45_000;
+    const pollIntervalMs =
+      Number.isFinite(PROOF_RECEIPT_POLL_INTERVAL_MS) && PROOF_RECEIPT_POLL_INTERVAL_MS > 0
+        ? Math.max(500, Math.min(PROOF_RECEIPT_POLL_INTERVAL_MS, 10_000))
+        : 2_500;
+    const deadline = Date.now() + totalWaitMs;
     let lastError = null;
-    for (let i = 0; i < retries; i += 1) {
-      try {
-        return await callRpc('eth_getTransactionReceipt', [txHash]);
-      } catch (error) {
-        lastError = error;
-        if (i < retries - 1) {
-          await waitMs(300 * (i + 1));
+
+    while (Date.now() <= deadline) {
+      for (let i = 0; i < retries; i += 1) {
+        try {
+          const receipt = await callRpc('eth_getTransactionReceipt', [txHash]);
+          if (receipt) {
+            return receipt;
+          }
+          lastError = null;
+          break;
+        } catch (error) {
+          lastError = error;
+          const transient = isTransientProofRpcError(error);
+          const hasMoreAttempts = i < retries - 1;
+          if (!transient) {
+            throw error;
+          }
+          if (hasMoreAttempts) {
+            await waitMs(Math.min(1_500 * (i + 1), pollIntervalMs));
+          }
         }
       }
+      if (Date.now() + pollIntervalMs > deadline) break;
+      await waitMs(pollIntervalMs);
     }
-    throw lastError || new Error('rpc receipt lookup failed');
+
+    if (lastError && !isTransientProofRpcError(lastError)) {
+      throw lastError;
+    }
+    if (lastError && isTransientProofRpcError(lastError)) {
+      throw new Error(`${lastError.message}; receipt wait window ${totalWaitMs}ms exhausted`);
+    }
+    return null;
   }
 
   return {

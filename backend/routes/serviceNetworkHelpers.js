@@ -2,6 +2,7 @@
   const {
     ERC8004_AGENT_ID,
     ERC8004_IDENTITY_REGISTRY,
+    ethers,
     HYPERLIQUID_ORDER_RECIPIENT,
     KITE_AGENT2_AA_ADDRESS,
     KITE_AGENT2_ID,
@@ -519,6 +520,14 @@
       identityAgentIdRaw === '' || identityAgentIdRaw === null || identityAgentIdRaw === undefined
         ? ''
         : String(identityAgentIdRaw).trim();
+    const identityVerifyMode = String(source.identityVerifyMode || fallback.identityVerifyMode || '').trim().toLowerCase();
+    const identityVerifiedAt = String(source.identityVerifiedAt || fallback.identityVerifiedAt || '').trim();
+    const identitySignerType = String(source.identitySignerType || fallback.identitySignerType || '').trim().toLowerCase();
+    const importedFromIdentityAt = String(source.importedFromIdentityAt || fallback.importedFromIdentityAt || '').trim();
+    const onboardingSource = String(source.onboardingSource || fallback.onboardingSource || '').trim().toLowerCase();
+    const approvalStatus = String(source.approvalStatus || fallback.approvalStatus || '').trim().toLowerCase();
+    const approvedAt = String(source.approvedAt || fallback.approvedAt || '').trim();
+    const suspendedAt = String(source.suspendedAt || fallback.suspendedAt || '').trim();
     const description = String(source.description || fallback.description || '').trim();
     const capabilitiesRaw = Array.isArray(source.capabilities)
       ? source.capabilities
@@ -546,6 +555,14 @@
       ownerWallet,
       identityRegistry,
       identityAgentId,
+      identityVerifyMode,
+      identityVerifiedAt,
+      identitySignerType,
+      importedFromIdentityAt,
+      onboardingSource,
+      approvalStatus,
+      approvedAt,
+      suspendedAt,
       description,
       capabilities,
       active,
@@ -677,16 +694,88 @@
     return { rows: list, changed };
   }
 
+  function normalizeDuplicateNetworkAgentIdentities(rows = []) {
+    const list = Array.isArray(rows) ? [...rows] : [];
+    const groups = new Map();
+    let changed = false;
+
+    function toTimestamp(value = '') {
+      const normalized = String(value || '').trim();
+      if (!normalized) return 0;
+      const parsed = Date.parse(normalized);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function rankRecord(item = {}) {
+      return [
+        toTimestamp(item.identityVerifiedAt),
+        toTimestamp(item.importedFromIdentityAt),
+        toTimestamp(item.updatedAt),
+        toTimestamp(item.createdAt)
+      ];
+    }
+
+    function compareRank(a = {}, b = {}) {
+      const left = rankRecord(a);
+      const right = rankRecord(b);
+      for (let idx = 0; idx < left.length; idx += 1) {
+        if (left[idx] === right[idx]) continue;
+        return right[idx] - left[idx];
+      }
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    }
+
+    for (const item of list) {
+      const identityRegistry = normalizeAddress(item?.identityRegistry || '');
+      const identityAgentId = String(item?.identityAgentId || '').trim();
+      if (!identityRegistry || !identityAgentId) continue;
+      const key = `${identityRegistry}:${identityAgentId}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    }
+
+    for (const items of groups.values()) {
+      if (!Array.isArray(items) || items.length < 2) continue;
+      const ranked = [...items].sort(compareRank);
+      const winnerId = String(ranked[0]?.id || '').trim().toLowerCase();
+      for (const item of ranked.slice(1)) {
+        const itemId = String(item?.id || '').trim().toLowerCase();
+        const idx = list.findIndex((row) => String(row?.id || '').trim().toLowerCase() === itemId);
+        if (idx < 0 || itemId === winnerId) continue;
+        const current = sanitizeNetworkAgentRecord(list[idx], list[idx]);
+        const normalized = sanitizeNetworkAgentRecord(
+          {
+            ...current,
+            identityRegistry: '',
+            identityAgentId: '',
+            identityVerifyMode: '',
+            identityVerifiedAt: '',
+            identitySignerType: '',
+            importedFromIdentityAt: ''
+          },
+          current
+        );
+        if (JSON.stringify(current) !== JSON.stringify(normalized)) {
+          list[idx] = normalized;
+          changed = true;
+        }
+      }
+    }
+
+    return { rows: list, changed };
+  }
+
   function ensureNetworkAgents() {
     const rows = readNetworkAgents();
     const normalized = (Array.isArray(rows) ? rows : [])
       .map((item) => sanitizeNetworkAgentRecord(item))
       .filter((item) => item.id);
     if (normalized.length > 0) {
-      const merged = mergeBuiltinNetworkAgents(normalized);
+      const deduped = normalizeDuplicateNetworkAgentIdentities(normalized);
+      const merged = mergeBuiltinNetworkAgents(deduped.rows);
       const before = JSON.stringify(Array.isArray(rows) ? rows : []);
       const after = JSON.stringify(merged.rows);
-      if (before !== after || merged.changed) writeNetworkAgents(merged.rows);
+      if (before !== after || deduped.changed || merged.changed) writeNetworkAgents(merged.rows);
       return merged.rows;
     }
     const seeded = createDefaultNetworkAgents();
