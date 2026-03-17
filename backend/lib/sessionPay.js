@@ -106,7 +106,9 @@ export function createSessionPayHelpers({
       text.includes('replacement fee too low') ||
       text.includes('replacement underpriced') ||
       text.includes('cannot be replaced') ||
-      text.includes('replacement transaction underpriced')
+      text.includes('replacement transaction underpriced') ||
+      text.includes('invalid account nonce') ||
+      text.includes('aa25 invalid account nonce')
     ) {
       return 'replacement_fee';
     }
@@ -227,7 +229,10 @@ export function createSessionPayHelpers({
 
   async function postSessionPayWithRetry(payload = {}, options = {}) {
     const maxAttempts = Math.max(1, Math.min(Number(options.maxAttempts || KITE_SESSION_PAY_RETRIES), 8));
-    const timeoutMs = Math.max(30_000, Math.min(Number(options.timeoutMs || 210_000), 300_000));
+    // `/api/session/pay` already performs its own AA/bundler retry loop and receipt wait.
+    // Keep the outer loopback HTTP timeout comfortably above that internal window so we
+    // don't abort a valid payment attempt mid-flight and surface a false "This operation was aborted".
+    const timeoutMs = Math.max(30_000, Math.min(Number(options.timeoutMs || 420_000), 900_000));
     const internalApiKey = getInternalAgentApiKey();
     const headers = { 'Content-Type': 'application/json' };
     if (internalApiKey) headers['x-api-key'] = internalApiKey;

@@ -163,6 +163,16 @@ export async function resolveRuntimeConfig(cliOptions = {}) {
       : DEFAULT_CONFIG.timeoutMs;
   resolved.apiKey = normalizeText(resolved.apiKey, '');
   resolved.apiKeyConfigured = Boolean(resolved.apiKey);
+  resolved.localSessionRuntime =
+    profileConfig?.sessionRuntime && typeof profileConfig.sessionRuntime === 'object' && !Array.isArray(profileConfig.sessionRuntime)
+      ? profileConfig.sessionRuntime
+      : null;
+  resolved.localApprovalRequests =
+    profileConfig?.approvalRequests &&
+    typeof profileConfig.approvalRequests === 'object' &&
+    !Array.isArray(profileConfig.approvalRequests)
+      ? profileConfig.approvalRequests
+      : {};
 
   return {
     config: resolved,

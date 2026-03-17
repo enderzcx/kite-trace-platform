@@ -5,8 +5,20 @@ import { lookupCommand } from './commandCatalog.js';
 import { createEnvelope, maskApiKey, writeEnvelope } from './output.js';
 import { resolveRuntimeConfig, writeLocalProfileConfig } from './runtimeConfig.js';
 import { parseGlobalArgs } from './parsers/globalParsers.js';
-import { parseAuthSessionArgs, parseSessionAuthorizeArgs } from './parsers/authParsers.js';
+import {
+  parseAuthSessionArgs,
+  parseSessionApproveArgs,
+  parseSessionAuthorizeArgs,
+  parseSessionRequestArgs,
+  parseSessionWaitArgs
+} from './parsers/authParsers.js';
+import {
+  parseApprovalListArgs,
+  parseApprovalShowArgs,
+  parseApprovalDecisionArgs
+} from './parsers/approvalParsers.js';
 import { parseBuyRequestArgs, parseBuyDirectArgs } from './parsers/buyParsers.js';
+import { parseAgentInvokeArgs } from './parsers/agentParsers.js';
 import { parseTemplateListArgs, parseTemplateResolveArgs, parseTemplatePublishArgs } from './parsers/templateParsers.js';
 import {
   parseProviderListArgs,
@@ -15,7 +27,14 @@ import {
   parseCapabilityPublishArgs
 } from './parsers/providerParsers.js';
 import { parseDiscoverySelectArgs, parseDiscoveryRecommendArgs } from './parsers/discoveryParsers.js';
-import { parseJobCreateArgs, parseJobSubmitArgs, parseJobCompleteArgs, parseJobRejectArgs } from './parsers/jobParsers.js';
+import {
+  parseJobCreateArgs,
+  parseJobSubmitArgs,
+  parseJobCompleteArgs,
+  parseJobRejectArgs,
+  parseJobValidateArgs,
+  parseJobAuditArgs
+} from './parsers/jobParsers.js';
 import {
   parseFlowHistoryArgs,
   parseTrustReputationArgs,
@@ -35,7 +54,9 @@ import { createTrustCommandHandlers } from './commands/trustCommands.js';
 import { createSystemCommandHandlers } from './commands/systemCommands.js';
 import { createJobCommandHandlers } from './commands/jobCommands.js';
 import { createAuthCommandHandlers } from './commands/authCommands.js';
+import { createApprovalCommandHandlers } from './commands/approvalCommands.js';
 import { createBuyCommandHandlers } from './commands/buyCommands.js';
+import { createAgentCommandHandlers } from './commands/agentCommands.js';
 import { createCommandExecutor } from './lib/commandDispatcher.js';
 import { createCliError } from './lib/errors.js';
 import {
@@ -66,14 +87,18 @@ import {
 } from './lib/presentation.js';
 import { resolveFlowReference } from './lib/flowRuntime.js';
 import {
+  buildLocalSessionRuntime,
   buildSessionSnapshot,
+  createSelfCustodialSession,
   createSessionAuthorizationMessage,
   ensureUsableSession,
   normalizeSessionGrantAddress,
   normalizeSessionGrantPayload,
+  normalizePrivateKey,
   normalizeWalletAddress,
   readCurrentIdentityProfile,
-  readSessionSnapshot
+  readSessionSnapshot,
+  sendLocalSessionPayment
 } from './lib/sessionRuntime.js';
 
 const {
@@ -192,8 +217,11 @@ const {
 const {
   handleJobCreate,
   handleJobFund,
+  handleJobAccept,
   handleJobSubmit,
   handleJobShow,
+  handleJobAudit,
+  handleJobValidate,
   handleJobComplete,
   handleJobReject,
   handleJobExpire
@@ -202,6 +230,8 @@ const {
   parseJobSubmitArgs,
   parseJobCompleteArgs,
   parseJobRejectArgs,
+  parseJobValidateArgs,
+  parseJobAuditArgs,
   requestJson,
   resolveAgentTransportApiKey,
   createEnvelope,
@@ -217,10 +247,16 @@ const {
   handleAuthLogin,
   handleAuthWhoami,
   handleAuthSession,
-  handleSessionAuthorize
+  handleSessionAuthorize,
+  handleSessionRequest,
+  handleSessionWait,
+  handleSessionApprove
 } = createAuthCommandHandlers({
   parseAuthSessionArgs,
+  parseSessionApproveArgs,
   parseSessionAuthorizeArgs,
+  parseSessionRequestArgs,
+  parseSessionWaitArgs,
   requestJson,
   writeLocalProfileConfig,
   normalizeWalletAddress,
@@ -232,11 +268,32 @@ const {
   readCurrentIdentityProfile,
   readSessionSnapshot,
   buildSessionSnapshot,
+  buildLocalSessionRuntime,
+  createSelfCustodialSession,
   normalizeSessionGrantPayload,
   createSessionAuthorizationMessage,
+  normalizePrivateKey,
+  resolveAgentTransportApiKey,
   resolveAdminTransportApiKey,
   randomBytes,
   ethers
+});
+
+const {
+  handleApprovalList,
+  handleApprovalShow,
+  handleApprovalApprove,
+  handleApprovalReject
+} = createApprovalCommandHandlers({
+  parseApprovalListArgs,
+  parseApprovalShowArgs,
+  parseApprovalDecisionArgs,
+  requestJson,
+  buildQueryPath,
+  resolveAgentTransportApiKey,
+  resolveAdminTransportApiKey,
+  createEnvelope,
+  ensureReference
 });
 
 const { handleBuyRequest, handleBuyDirect } = createBuyCommandHandlers({
@@ -255,6 +312,21 @@ const { handleBuyRequest, handleBuyDirect } = createBuyCommandHandlers({
   normalizeBuyState
 });
 
+const { handleAgentInvoke } = createAgentCommandHandlers({
+  parseAgentInvokeArgs,
+  requestJson,
+  buildQueryPath,
+  resolveAgentTransportApiKey,
+  createEnvelope,
+  createCliError,
+  normalizeCapability,
+  handleBuyDirect,
+  readStructuredInput,
+  selectBuyService,
+  sendLocalSessionPayment,
+  ensureUsableSession
+});
+
 const executeCommand = createCommandExecutor({
   createConfigEnvelope,
   createNotImplementedEnvelope,
@@ -263,8 +335,16 @@ const executeCommand = createCommandExecutor({
     handleAuthWhoami,
     handleAuthSession,
     handleSessionAuthorize,
+    handleSessionRequest,
+    handleSessionWait,
+    handleSessionApprove,
+    handleApprovalList,
+    handleApprovalShow,
+    handleApprovalApprove,
+    handleApprovalReject,
     handleBuyRequest,
     handleBuyDirect,
+    handleAgentInvoke,
     handleTemplateList,
     handleTemplateResolve,
     handleTemplateShow,
@@ -289,8 +369,11 @@ const executeCommand = createCommandExecutor({
     handleSystemStartFresh,
     handleJobCreate,
     handleJobFund,
-    handleJobSubmit,
-    handleJobShow,
+    handleJobAccept,
+  handleJobSubmit,
+  handleJobShow,
+  handleJobAudit,
+  handleJobValidate,
     handleJobComplete,
     handleJobReject,
     handleJobExpire,

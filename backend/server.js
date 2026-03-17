@@ -1,4 +1,15 @@
-import { startServer, shutdownServer } from './app.js';
+if (
+  !String(process.env.NODE_USE_ENV_PROXY || '').trim() &&
+  (
+    String(process.env.HTTP_PROXY || '').trim() ||
+    String(process.env.HTTPS_PROXY || '').trim() ||
+    String(process.env.ALL_PROXY || '').trim()
+  )
+) {
+  process.env.NODE_USE_ENV_PROXY = '1';
+}
+
+const { startServer, shutdownServer } = await import('./app.js');
 
 startServer().catch((error) => {
   console.error(`Backend startup failed: ${error?.message || error}`);

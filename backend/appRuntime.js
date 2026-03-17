@@ -35,6 +35,7 @@ import { createSessionPayHelpers } from './lib/sessionPay.js';
 import { createEnsureAAAccountDeployment } from './lib/aaAccount.js';
 import { createAutoXmtpNetworkLoop } from './lib/loops/xmtpLoop.js';
 import { createAutoTradePlanLoop } from './lib/loops/tradePlanLoop.js';
+import { createAutoJobExpiryLoop } from './lib/loops/jobExpiryLoop.js';
 import {
   createPolicyConfigHelpers,
   deriveAddressFromPrivateKey,
@@ -50,6 +51,7 @@ import { createMarketAnalysisHelpers } from './lib/marketAnalysisHelpers.js';
 import { createMarketAnalysisRuntime } from './lib/marketAnalysisRuntime.js';
 import { createCatalogHelpers, createRecordMutationHelpers, isAgent001TaskSuccessful } from './lib/appRecordHelpers.js';
 import { createOnchainAnchorHelpers } from './lib/onchainAnchors.js';
+import { createEscrowHelpers } from './lib/escrowHelpers.js';
 import { createXReaderDigestFetcher, fetchTextWithTimeout } from './lib/httpFetch.js';
 import { createServiceRoutingHelpers, isInfoAnalysisAction, isTechnicalAnalysisAction } from './lib/serviceRouting.js';
 import { createWorkflowHelpers } from './lib/workflowHelpers.js';
@@ -107,12 +109,24 @@ hydrateMessageProviderTokenFromLocalDocs();
 
 const app = express();
 const PORT = String(process.env.PORT || 3001).trim() || '3001';
+const PACKAGE_VERSION = (() => {
+  try {
+    const raw = fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8');
+    return String(JSON.parse(raw || '{}')?.version || '0.0.0').trim() || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
+const STARTED_AT_MS = Date.now();
+const KITE_NETWORK_NAME = 'kite-testnet';
 const dataPath = path.resolve('data', 'records.json');
 const x402Path = path.resolve('data', 'x402_requests.json');
 const policyFailurePath = path.resolve('data', 'policy_failures.json');
 const policyConfigPath = path.resolve('data', 'policy_config.json');
 const sessionRuntimePath = path.resolve('data', 'session_runtime.json');
+const sessionRuntimeIndexPath = path.resolve('data', 'session_runtimes.json');
 const sessionAuthorizationsPath = path.resolve('data', 'session_authorizations.json');
+const sessionApprovalRequestsPath = path.resolve('data', 'session_approval_requests.json');
 const workflowPath = path.resolve('data', 'workflows.json');
 const identityChallengePath = path.resolve('data', 'identity_challenges.json');
 const servicesPath = path.resolve('data', 'services.json');
@@ -161,6 +175,9 @@ const POLICY_ALLOWED_RECIPIENTS_DEFAULT = String(
   .filter(Boolean);
 
 const BACKEND_SIGNER_PRIVATE_KEY = process.env.KITECLAW_BACKEND_SIGNER_PRIVATE_KEY || '';
+const ERC8183_REQUESTER_PRIVATE_KEY = process.env.ERC8183_REQUESTER_PRIVATE_KEY || '';
+const ERC8183_EXECUTOR_PRIVATE_KEY = process.env.ERC8183_EXECUTOR_PRIVATE_KEY || '';
+const ERC8183_VALIDATOR_PRIVATE_KEY = process.env.ERC8183_VALIDATOR_PRIVATE_KEY || '';
 const ENV_SESSION_PRIVATE_KEY = process.env.KITECLAW_SESSION_KEY || '';
 const ENV_SESSION_ADDRESS = process.env.KITECLAW_SESSION_ADDRESS || '';
 const ENV_SESSION_ID = process.env.KITECLAW_SESSION_ID || '';
@@ -195,7 +212,7 @@ const KITE_BUNDLER_RPC_BACKOFF_JITTER_MS = toBoundedIntEnv(
 );
 const KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS = toBoundedIntEnv(
   process.env.KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS,
-  3_000,
+  1_000,
   800,
   15_000
 );
@@ -242,6 +259,24 @@ const KITE_SESSION_PAY_REPLACEMENT_BACKOFF_JITTER_MS = toBoundedIntEnv(
   0,
   10_000
 );
+const KTRACE_JOB_APPROVAL_THRESHOLD = (() => {
+  const value = Number(String(process.env.KTRACE_JOB_APPROVAL_THRESHOLD || '0').trim());
+  return Number.isFinite(value) && value > 0 ? value : 0;
+})();
+const KTRACE_JOB_APPROVAL_TTL_MS = toBoundedIntEnv(
+  process.env.KTRACE_JOB_APPROVAL_TTL_MS,
+  24 * 60 * 60 * 1000,
+  60_000,
+  7 * 24 * 60 * 60 * 1000
+);
+const KTRACE_ADMIN_KEY = String(process.env.KTRACE_ADMIN_KEY || '').trim();
+const ERC8183_DEFAULT_JOB_TIMEOUT_SEC = toBoundedIntEnv(
+  process.env.ERC8183_DEFAULT_JOB_TIMEOUT_SEC,
+  3600,
+  60,
+  7 * 24 * 60 * 60
+);
+const ERC8183_EXECUTOR_STAKE_DEFAULT = String(process.env.ERC8183_EXECUTOR_STAKE_DEFAULT || '0').trim();
 const KITE_SESSION_PAY_REPLACEMENT_BACKOFF_FACTOR = toBoundedIntEnv(
   process.env.KITE_SESSION_PAY_REPLACEMENT_BACKOFF_FACTOR,
   2,
@@ -351,6 +386,10 @@ const ERC8004_AGENT_ID = Number.isFinite(Number(ERC8004_AGENT_ID_RAW))
   : null;
 const ERC8004_TRUST_ANCHOR_REGISTRY = process.env.ERC8004_TRUST_ANCHOR_REGISTRY || '';
 const ERC8183_JOB_ANCHOR_REGISTRY = process.env.ERC8183_JOB_ANCHOR_REGISTRY || '';
+const ERC8183_ESCROW_ADDRESS = process.env.ERC8183_ESCROW_ADDRESS || '';
+const ERC8183_REQUESTER_AA_ADDRESS = process.env.ERC8183_REQUESTER_AA_ADDRESS || '';
+const ERC8183_EXECUTOR_AA_ADDRESS = process.env.ERC8183_EXECUTOR_AA_ADDRESS || '';
+const ERC8183_VALIDATOR_AA_ADDRESS = process.env.ERC8183_VALIDATOR_AA_ADDRESS || '';
 const API_KEY_ADMIN = String(process.env.KITECLAW_API_KEY_ADMIN || '').trim();
 const API_KEY_AGENT = String(process.env.KITECLAW_API_KEY_AGENT || '').trim();
 const API_KEY_VIEWER = String(process.env.KITECLAW_API_KEY_VIEWER || '').trim();
@@ -365,6 +404,13 @@ const AUTO_TRADE_PLAN_INTERVAL_MS = Math.max(60_000, Number(process.env.AUTO_TRA
 const AUTO_TRADE_PLAN_SYMBOL = String(process.env.AUTO_TRADE_PLAN_SYMBOL || 'BTCUSDT').trim().toUpperCase() || 'BTCUSDT';
 const AUTO_TRADE_PLAN_HORIZON_MIN = Math.max(5, Math.min(Number(process.env.AUTO_TRADE_PLAN_HORIZON_MIN || 60), 1440));
 const AUTO_TRADE_PLAN_PROMPT = String(process.env.AUTO_TRADE_PLAN_PROMPT || '').trim();
+const KTRACE_AUTO_JOB_EXPIRY_ENABLED = /^(1|true|yes|on)$/i.test(
+  String(process.env.KTRACE_AUTO_JOB_EXPIRY_ENABLED || '').trim()
+);
+const KTRACE_AUTO_JOB_EXPIRY_INTERVAL_MS = Math.max(
+  5_000,
+  Number(process.env.KTRACE_AUTO_JOB_EXPIRY_INTERVAL_MS || 30_000)
+);
 const X_READER_MAX_CHARS_DEFAULT = Math.max(200, Math.min(8000, Number(process.env.X_READER_MAX_CHARS_DEFAULT || 1200)));
 const XMTP_ROUTER_KEY_AVAILABLE = Boolean(
   String(process.env.XMTP_ROUTER_WALLET_KEY || process.env.XMTP_WALLET_KEY || '').trim()
@@ -537,11 +583,12 @@ const PERSIST_ARRAY_PATHS = [
   xmtpEventsPath,
   xmtpGroupsPath,
   sessionAuthorizationsPath,
+  sessionApprovalRequestsPath,
   networkCommandsPath,
   networkAuditPath,
   agent001ResultsPath
 ];
-const PERSIST_OBJECT_PATHS = [policyConfigPath, sessionRuntimePath];
+const PERSIST_OBJECT_PATHS = [policyConfigPath, sessionRuntimePath, sessionRuntimeIndexPath];
 const persistArrayCache = new Map();
 const persistObjectCache = new Map();
 const { readJsonArray, writeJsonArray, readJsonObject, writeJsonObject, queuePersistWrite } = createJsonPersistenceHelpers({
@@ -589,6 +636,20 @@ const autoTradePlanState = {
   orderRuns: 0,
   noOrderRuns: 0,
   failedRuns: 0
+};
+
+const autoJobExpiryState = {
+  enabled: false,
+  intervalMs: KTRACE_AUTO_JOB_EXPIRY_INTERVAL_MS,
+  startedAt: '',
+  lastTickAt: '',
+  lastStatus: '',
+  lastError: '',
+  lastExpiredJobId: '',
+  lastExpiredTraceId: '',
+  scannedCount: 0,
+  expiredCount: 0,
+  failedCount: 0
 };
 const {
   readRecords,
@@ -663,6 +724,11 @@ const {
 const {
   sanitizeSessionRuntime,
   readSessionRuntime,
+  readSessionRuntimeByOwner,
+  readSessionRuntimeIndex,
+  writeSessionRuntimeIndex,
+  listSessionRuntimes,
+  resolveSessionRuntime,
   writeSessionRuntime,
   sanitizeSessionAuthorizationRecord,
   readSessionAuthorizations,
@@ -674,11 +740,14 @@ const {
   readJsonArray,
   writeJsonArray,
   sessionRuntimePath,
+  sessionRuntimeIndexPath,
   sessionAuthorizationsPath,
   envSessionPrivateKey: ENV_SESSION_PRIVATE_KEY,
   envSessionAddress: ENV_SESSION_ADDRESS,
   envSessionId: ENV_SESSION_ID
 });
+const readSessionApprovalRequests = () => readJsonArray(sessionApprovalRequestsPath);
+const writeSessionApprovalRequests = (rows = []) => writeJsonArray(sessionApprovalRequestsPath, rows);
 const {
   toAuditText,
   sanitizeAuditRefs,
@@ -737,11 +806,17 @@ const RISK_WALLET_KEY_NORMALIZED = normalizePrivateKey(XMTP_RISK_WALLET_KEY);
 const READER_WALLET_KEY_NORMALIZED = normalizePrivateKey(XMTP_READER_WALLET_KEY);
 const PRICE_WALLET_KEY_NORMALIZED = normalizePrivateKey(XMTP_PRICE_WALLET_KEY);
 const EXECUTOR_WALLET_KEY_NORMALIZED = normalizePrivateKey(XMTP_EXECUTOR_WALLET_KEY);
+const ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED = normalizePrivateKey(ERC8183_REQUESTER_PRIVATE_KEY);
+const ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED = normalizePrivateKey(ERC8183_EXECUTOR_PRIVATE_KEY);
+const ERC8183_VALIDATOR_PRIVATE_KEY_NORMALIZED = normalizePrivateKey(ERC8183_VALIDATOR_PRIVATE_KEY);
 const XMTP_ROUTER_DERIVED_ADDRESS = deriveAddressFromPrivateKey(ROUTER_WALLET_KEY_NORMALIZED);
 const XMTP_RISK_DERIVED_ADDRESS = deriveAddressFromPrivateKey(RISK_WALLET_KEY_NORMALIZED);
 const XMTP_READER_DERIVED_ADDRESS = deriveAddressFromPrivateKey(READER_WALLET_KEY_NORMALIZED);
 const XMTP_PRICE_DERIVED_ADDRESS = deriveAddressFromPrivateKey(PRICE_WALLET_KEY_NORMALIZED);
 const XMTP_EXECUTOR_DERIVED_ADDRESS = deriveAddressFromPrivateKey(EXECUTOR_WALLET_KEY_NORMALIZED);
+const ERC8183_REQUESTER_OWNER_ADDRESS = deriveAddressFromPrivateKey(ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED);
+const ERC8183_EXECUTOR_OWNER_ADDRESS = deriveAddressFromPrivateKey(ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED);
+const ERC8183_VALIDATOR_OWNER_ADDRESS = deriveAddressFromPrivateKey(ERC8183_VALIDATOR_PRIVATE_KEY_NORMALIZED);
 const XMTP_ROUTER_RESOLVED_ADDRESS = normalizeAddress(XMTP_ROUTER_AGENT_ADDRESS || XMTP_ROUTER_DERIVED_ADDRESS || '');
 const XMTP_RISK_RESOLVED_ADDRESS = normalizeAddress(XMTP_RISK_AGENT_ADDRESS || XMTP_RISK_DERIVED_ADDRESS || '');
 const XMTP_READER_RESOLVED_ADDRESS = normalizeAddress(XMTP_READER_AGENT_ADDRESS || XMTP_READER_DERIVED_ADDRESS || '');
@@ -754,6 +829,61 @@ const XMTP_RISK_DB_DIRECTORY = path.resolve(XMTP_DB_DIRECTORY, 'risk-agent');
 const XMTP_READER_DB_DIRECTORY = path.resolve(XMTP_DB_DIRECTORY, 'reader-agent');
 const XMTP_PRICE_DB_DIRECTORY = path.resolve(XMTP_DB_DIRECTORY, 'price-agent');
 const XMTP_EXECUTOR_DB_DIRECTORY = path.resolve(XMTP_DB_DIRECTORY, 'executor-agent');
+
+const sessionOwnerPrivateKeyByAddress = (() => {
+  const pairs = new Map();
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!/(PRIVATE_KEY|WALLET_KEY)$/i.test(String(name || '').trim())) continue;
+    const normalized = normalizePrivateKey(value || '');
+    const derivedAddress = deriveAddressFromPrivateKey(normalized);
+    if (!normalized || !derivedAddress) continue;
+    pairs.set(normalizeAddress(derivedAddress), normalized);
+  }
+  for (const normalized of [
+    ROUTER_WALLET_KEY_NORMALIZED,
+    normalizePrivateKey(BACKEND_SIGNER_PRIVATE_KEY),
+    ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED,
+    ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED,
+    ERC8183_VALIDATOR_PRIVATE_KEY_NORMALIZED
+  ]) {
+    const derivedAddress = deriveAddressFromPrivateKey(normalized);
+    if (!normalized || !derivedAddress) continue;
+    pairs.set(normalizeAddress(derivedAddress), normalized);
+  }
+  return pairs;
+})();
+
+function resolveSessionOwnerPrivateKey(owner = '') {
+  const normalizedOwner = normalizeAddress(owner || '');
+  if (!normalizedOwner) return '';
+  return sessionOwnerPrivateKeyByAddress.get(normalizedOwner) || '';
+}
+
+const sessionOwnerByAaWallet = (() => {
+  const pairs = new Map();
+  for (const [aaWallet, owner] of [
+    [ERC8183_REQUESTER_AA_ADDRESS, ERC8183_REQUESTER_OWNER_ADDRESS],
+    [ERC8183_EXECUTOR_AA_ADDRESS, ERC8183_EXECUTOR_OWNER_ADDRESS],
+    [ERC8183_VALIDATOR_AA_ADDRESS, ERC8183_VALIDATOR_OWNER_ADDRESS],
+    [XMTP_ROUTER_AGENT_AA_ADDRESS, XMTP_ROUTER_DERIVED_ADDRESS],
+    [XMTP_RISK_AGENT_AA_ADDRESS, XMTP_RISK_DERIVED_ADDRESS],
+    [XMTP_READER_AGENT_AA_ADDRESS, XMTP_READER_DERIVED_ADDRESS],
+    [XMTP_PRICE_AGENT_AA_ADDRESS, XMTP_PRICE_DERIVED_ADDRESS],
+    [XMTP_EXECUTOR_AGENT_AA_ADDRESS, XMTP_EXECUTOR_DERIVED_ADDRESS]
+  ]) {
+    const normalizedAaWallet = normalizeAddress(aaWallet || '');
+    const normalizedOwner = normalizeAddress(owner || '');
+    if (!normalizedAaWallet || !normalizedOwner) continue;
+    pairs.set(normalizedAaWallet, normalizedOwner);
+  }
+  return pairs;
+})();
+
+function resolveSessionOwnerByAaWallet(aaWallet = '') {
+  const normalizedAaWallet = normalizeAddress(aaWallet || '');
+  if (!normalizedAaWallet) return '';
+  return sessionOwnerByAaWallet.get(normalizedAaWallet) || '';
+}
 
 function getInternalAgentApiKey() {
   return API_KEY_AGENT || API_KEY_ADMIN || '';
@@ -845,6 +975,33 @@ app.use((req, res, next) => {
   res.setHeader('x-trace-id', traceId);
   next();
 });
+
+app.get('/health', (req, res) => {
+  res.json({
+    ok: true,
+    version: PACKAGE_VERSION,
+    uptime: Math.max(0, Math.round(process.uptime())),
+    network: KITE_NETWORK_NAME,
+    publicUrl: String(process.env.BACKEND_PUBLIC_URL || '').trim(),
+    startedAt: new Date(STARTED_AT_MS).toISOString(),
+    traceId: String(req.traceId || '').trim(),
+    autoJobExpiry: getAutoJobExpiryStatus?.() || null
+  });
+});
+
+app.get('/api/public/health', (req, res) => {
+  res.json({
+    ok: true,
+    version: PACKAGE_VERSION,
+    uptime: Math.max(0, Math.round(process.uptime())),
+    network: KITE_NETWORK_NAME,
+    publicUrl: String(process.env.BACKEND_PUBLIC_URL || '').trim(),
+    startedAt: new Date(STARTED_AT_MS).toISOString(),
+    traceId: String(req.traceId || '').trim(),
+    autoJobExpiry: getAutoJobExpiryStatus?.() || null
+  });
+});
+
 app.use('/api', apiRateLimit);
 
 function broadcastEvent(eventName, payload = {}) {
@@ -1161,6 +1318,16 @@ const { publishTrustPublicationOnChain, publishJobLifecycleAnchorOnChain } = cre
   jobLifecycleAnchorAbi,
   trustPublicationAnchorAbi
 });
+const escrowHelpers = createEscrowHelpers({
+  backendSigner,
+  ethers,
+  escrowAddress: ERC8183_ESCROW_ADDRESS,
+  settlementToken: SETTLEMENT_TOKEN,
+  requesterPrivateKey: ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED,
+  executorPrivateKey: ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED,
+  validatorPrivateKey: ERC8183_VALIDATOR_PRIVATE_KEY_NORMALIZED
+});
+const { lockEscrowFunds, acceptEscrowJob, submitEscrowResult, validateEscrowJob, expireEscrowJob, getEscrowJob } = escrowHelpers;
 
 const {
   buildServiceStatus,
@@ -1491,6 +1658,18 @@ const {
   prompt: AUTO_TRADE_PLAN_PROMPT,
   handleRouterRuntimeTextMessage
 });
+const {
+  getAutoJobExpiryStatus,
+  runAutoJobExpiryTick,
+  startAutoJobExpiryLoop,
+  stopAutoJobExpiryLoop
+} = createAutoJobExpiryLoop({
+  state: autoJobExpiryState,
+  intervalMs: KTRACE_AUTO_JOB_EXPIRY_INTERVAL_MS,
+  port: PORT,
+  getInternalAgentApiKey,
+  readJobs
+});
 
 const {
   handleExecutorRuntimeTaskEnvelope,
@@ -1633,6 +1812,14 @@ export async function startServer() {
         `[auto-trade-plan] enabled intervalMs=${AUTO_TRADE_PLAN_INTERVAL_MS} symbol=${AUTO_TRADE_PLAN_SYMBOL} horizon=${AUTO_TRADE_PLAN_HORIZON_MIN}m`
       );
     }
+    if (KTRACE_AUTO_JOB_EXPIRY_ENABLED) {
+      startAutoJobExpiryLoop({
+        intervalMs: KTRACE_AUTO_JOB_EXPIRY_INTERVAL_MS,
+        immediate: true,
+        reason: 'startup'
+      });
+      console.log(`[auto-job-expiry] enabled intervalMs=${KTRACE_AUTO_JOB_EXPIRY_INTERVAL_MS}`);
+    }
   });
   if (XMTP_ANY_RUNTIME_ENABLED) {
     const status = await startXmtpRuntimes();
@@ -1659,6 +1846,7 @@ export async function startServer() {
 
 export async function shutdownServer() {
   stopAutoTradePlanLoop();
+  stopAutoJobExpiryLoop();
   stopAutoXmtpNetworkLoop();
   await stopXmtpRuntimes();
   try {

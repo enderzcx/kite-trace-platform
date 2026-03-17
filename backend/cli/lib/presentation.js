@@ -19,6 +19,9 @@ ktrace ${version}
 Usage:
   ktrace <family> <action> [command-options]
 
+Recommended external-agent entrypoint:
+  ktrace agent invoke --capability <capability-id> --input <json-or-path>
+
 Families:
 ${familyLines.join('\n')}
 
@@ -30,7 +33,7 @@ Global flags:
   --chain <name>         Override chain label
   --session-strategy <managed|external>
                          Control whether ktrace may create/renew backend sessions
-  --api-key <key>        Override transport auth key
+  --api-key <key>        Override transport auth key (usually saved in profile/env)
   --config <path>        Override local config file path
   -h, --help             Show help
   -v, --version          Show version
@@ -40,9 +43,17 @@ Implemented:
   auth login             Save wallet/baseUrl/apiKey locally and verify backend auth
   auth whoami            Show backend auth role and current AA session readiness
   auth session           Ensure AA wallet + session runtime on the backend
-  session authorize      Record a user EOA grant for backend-managed session execution
+  session authorize      Record a user EOA grant for managed or self-custodial session execution
+  session request        Create an agent-first approval request and local pending session key
+  session wait           Poll an approval request and sync the finished local session runtime
+  session approve        Complete an approval request from the user side
+  approval list          List operator-visible approval requests
+  approval show          Load a unified approval envelope
+  approval approve       Approve a pending approval request
+  approval reject        Reject a pending approval request
   buy request            Resolve a service and invoke the negotiated-buy lane
   buy direct             Buy from a published template without renegotiation (capability id or action)
+  agent invoke           Discover, buy, and fetch evidence in one CLI-only call
   template list          List reusable templates
   template resolve       Resolve the active template for a provider/capability pair
   template show          Show template detail
@@ -68,10 +79,13 @@ Implemented:
   discovery compare      Compare ranked provider-capability candidates
   discovery recommend-buy
                          Return the top direct-buy-ready candidate with an active template
-  job create             Create a minimal ERC-8183-aware job record
-  job fund               Mark a job funded after AA session preflight
-  job submit             Submit a funded job into the backend service lane
+  job create             Create an escrow-backed ERC-8183 job record
+  job fund               Lock requester funds into job escrow
+  job accept             Mark the funded job accepted
+  job submit             Execute the job and submit its result hash for validation
   job show               Inspect a job lane record
+  job audit              Load the lifecycle/audit view for a job lane record or public trace
+  job validate           Validator approves payout or rejects for refund
   job complete           Mark a funded/submitted job completed with evaluator output
   job reject             Reject a funded/submitted job with evaluator output
   job expire             Expire a non-terminal job
@@ -88,8 +102,18 @@ Implemented:
   system start-fresh     Kill stale listeners on a target port and launch a fresh backend process
 
 Examples:
+  ktrace auth login --base-url http://127.0.0.1:3102 --api-key agent-local-dev-key
+  ktrace agent invoke --capability cap-listing-alert --input data/ktrace-job-input.json
+  ktrace artifact evidence <trace-id>
   ktrace --base-url http://127.0.0.1:3102 auth session
   ktrace --base-url http://127.0.0.1:3102 session authorize --eoa 0x1234...abcd --single-limit 7 --daily-limit 21
+  ktrace --base-url http://127.0.0.1:3102 --session-strategy external session request --eoa 0x1234...abcd --single-limit 1 --daily-limit 5
+  ktrace --base-url http://127.0.0.1:3102 session wait apr_123... --token sgt_123...
+  ktrace --base-url http://127.0.0.1:3102 session approve "http://127.0.0.1:3102/api/session/approval/apr_123?token=sgt_123" --owner-key 0xabc...
+  ktrace --base-url http://127.0.0.1:3102 --session-strategy external session authorize --owner-key 0xabc... --single-limit 1 --daily-limit 5
+  ktrace --base-url http://127.0.0.1:3102 approval list --kind job --state pending
+  ktrace --base-url http://127.0.0.1:3102 approval show apr_123
+  ktrace --base-url http://127.0.0.1:3102 approval approve apr_123 --note "approved by operator"
   ktrace --base-url http://127.0.0.1:3102 provider list --role provider --verified true --q external
   ktrace --base-url http://127.0.0.1:3102 provider identity-challenge --input data/provider-identity-challenge.json
   ktrace --base-url http://127.0.0.1:3102 provider register-identity --input data/provider-register-identity.json
@@ -105,12 +129,31 @@ Examples:
   ktrace --base-url http://127.0.0.1:3102 template list --active true
   ktrace --base-url http://127.0.0.1:3102 template resolve --provider fundamental-agent-real --capability cap-listing-alert
   ktrace --base-url http://127.0.0.1:3102 buy direct --provider fundamental-agent-real --capability cap-listing-alert --input data/ktrace-job-input.json
-  ktrace --base-url http://127.0.0.1:3102 job create --provider 2 --capability btc-price-feed --budget 0.00015 --expires-at 2026-03-16T12:00:00Z --input data/ktrace-job-input.json
+  ktrace --base-url http://127.0.0.1:3102 job create --provider 2 --capability btc-price-feed --budget 0.00015 --executor 0xExecutor --validator 0xValidator --escrow-amount 0.00015 --expires-at 2026-03-16T12:00:00Z --input data/ktrace-job-input.json
+  ktrace --base-url http://127.0.0.1:3102 job accept <job-id>
   ktrace --base-url http://127.0.0.1:3102 --session-strategy external job submit <job-id> --input data/ktrace-job-input.json
-  ktrace --base-url http://127.0.0.1:3102 job reject <job-id> --input '{\"reason\":\"quality check failed\",\"evaluator\":\"risk-agent\"}'
+  ktrace --base-url http://127.0.0.1:3102 job audit <job-id>
+  ktrace --base-url http://127.0.0.1:3102 job audit <job-id> --public
+  ktrace --base-url http://127.0.0.1:3102 job audit <trace-id> --public --trace
+  ktrace --base-url http://127.0.0.1:3102 job validate <job-id> --approve
+  ktrace --base-url http://127.0.0.1:3102 job validate <job-id> --reject --reason "quality check failed"
   ktrace --base-url http://127.0.0.1:3102 trust reputation --agent price-agent
   ktrace --base-url http://127.0.0.1:3102 trust publish --input data/trust-publication.json
   ktrace system start-fresh --port 3399 --dry-run
+
+External-agent quickstart:
+  1. Save base URL and auth once:
+     ktrace auth login --base-url https://kiteclaw.duckdns.org --api-key <agent-key>
+  2. For the local desktop-wallet approval flow:
+     ktrace --base-url http://127.0.0.1:3399 --session-strategy external session request --eoa 0x1234...abcd --single-limit 1 --daily-limit 5
+     Open the returned approvalUrl in a desktop browser with MetaMask or another injected wallet.
+     After the user approves in-browser, run:
+     ktrace session wait <approvalRequestId> --token <approvalToken>
+  2. Discover or invoke a capability:
+     ktrace discovery select --capability cap-listing-alert
+     ktrace agent invoke --capability cap-listing-alert --input '{"exchange":"all","limit":3}'
+  3. Audit the finished trace:
+     ktrace artifact evidence <trace-id>
 `;
 }
 

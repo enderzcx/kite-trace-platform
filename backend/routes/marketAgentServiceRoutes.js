@@ -2,13 +2,15 @@ import {
   fetchDexMarket,
   fetchKolMonitor,
   fetchListingAlert,
+  fetchMarketPriceFeed,
   fetchMemeSentiment,
   fetchNewsSignal,
   fetchSmartMoneySignal,
+  fetchTechBuzzSignal,
   fetchTokenAnalysis,
   fetchTrenchesScan,
   fetchWalletPnl,
-  fetchWhaleAlert
+  fetchWeatherContext
 } from '../lib/externalFeeds.js';
 
 export function registerMarketAgentServiceRoutes(app, deps) {
@@ -58,6 +60,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     writePublishedServices,
     X_READER_MAX_CHARS_DEFAULT,
     X402_BTC_PRICE,
+    buildPaymentRequiredResponse
   } = deps;
 
   function normalizeText(value = '') {
@@ -102,6 +105,40 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     const countText = count > 0 ? ` (${count} items)` : '';
     const sourceText = source ? ` via ${source}` : '';
     return `${serviceName} completed${countText}${sourceText}`.trim();
+  }
+
+  function getExternalFeedItemCount(result = null) {
+    const data = result?.data;
+    if (Array.isArray(data)) return data.length;
+    if (data && typeof data === 'object') {
+      let arrayCount = 0;
+      for (const value of Object.values(data)) {
+        if (Array.isArray(value)) {
+          arrayCount += value.length;
+        }
+      }
+      if (arrayCount > 0) return arrayCount;
+      const metadataKeys = new Set([
+        'sourceUrl',
+        'sourceName',
+        'publishedAt',
+        'fetchedAt',
+        'txHash',
+        'explorerUrl',
+        'raw'
+      ]);
+      const hasMeaningfulScalar = Object.entries(data).some(([key, value]) => {
+        if (metadataKeys.has(String(key || '').trim())) return false;
+        if (Array.isArray(value)) return false;
+        if (value === null || value === undefined) return false;
+        if (typeof value === 'boolean' || typeof value === 'number') return true;
+        if (typeof value === 'string') return value.trim().length > 0;
+        if (typeof value === 'object') return Object.keys(value).length > 0;
+        return false;
+      });
+      if (hasMeaningfulScalar) return 1;
+    }
+    return 0;
   }
 
   const appendServiceWorkflowStep =
@@ -207,6 +244,37 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       steps: [],
       createdAt: invocation?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
+    };
+  }
+
+  function buildExternalFeedPaymentRequiredResponse(request = {}, reason = '') {
+    if (typeof buildPaymentRequiredResponse === 'function') {
+      return {
+        ...buildPaymentRequiredResponse(request, reason),
+        ok: false,
+        requestId: normalizeText(request?.requestId || '')
+      };
+    }
+    return {
+      ok: false,
+      error: 'payment_required',
+      reason,
+      requestId: normalizeText(request?.requestId || ''),
+      x402: {
+        version: '0.1-demo',
+        requestId: normalizeText(request?.requestId || ''),
+        expiresAt: request?.expiresAt || 0,
+        accepts: [
+          {
+            scheme: 'kite-aa-erc20',
+            network: 'kite_testnet',
+            tokenAddress: normalizeText(request?.tokenAddress || ''),
+            amount: String(request?.amount || ''),
+            recipient: normalizeText(request?.recipient || ''),
+            decimals: 18
+          }
+        ]
+      }
     };
   }
 
@@ -990,24 +1058,32 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     const capabilityId = normalizeText(service?.id || '').toLowerCase();
     const isFundamentalExternalCapability =
       effectiveProvider === 'fundamental-agent-real' &&
-      ['cap-listing-alert', 'cap-whale-alert', 'cap-news-signal', 'cap-meme-sentiment', 'cap-kol-monitor'].includes(capabilityId);
+      ['cap-listing-alert', 'cap-news-signal', 'cap-meme-sentiment', 'cap-kol-monitor'].includes(capabilityId);
     const isTechnicalExternalCapability =
       effectiveProvider === 'technical-agent-real' &&
       ['cap-smart-money-signal', 'cap-trenches-scan', 'cap-token-analysis', 'cap-wallet-pnl', 'cap-dex-market'].includes(capabilityId);
-    const isExternalFeedCapability = isFundamentalExternalCapability || isTechnicalExternalCapability;
+    const isDataNodeExternalCapability =
+      effectiveProvider === 'data-node-real' &&
+      ['cap-weather-context', 'cap-tech-buzz-signal', 'cap-market-price-feed'].includes(capabilityId);
+    const isExternalFeedCapability =
+      isFundamentalExternalCapability || isTechnicalExternalCapability || isDataNodeExternalCapability;
     const supportedServiceActions = [
       'btc-price-feed',
       'risk-score-feed',
       'technical-analysis-feed',
       'x-reader-feed',
       'info-analysis-feed',
-      'hyperliquid-order-testnet'
+      'hyperliquid-order-testnet',
+      'weather-context',
+      'tech-buzz-signal',
+      'market-price-feed'
     ];
     if (!supportedServiceActions.includes(action) && !isExternalFeedCapability) {
       return res.status(400).json({
         ok: false,
         error: 'unsupported_service_action',
-        reason: 'Supported action: btc-price-feed, risk-score-feed, technical-analysis-feed, x-reader-feed, info-analysis-feed, hyperliquid-order-testnet.'
+        reason:
+          'Supported action: btc-price-feed, risk-score-feed, technical-analysis-feed, x-reader-feed, info-analysis-feed, hyperliquid-order-testnet, weather-context, tech-buzz-signal, market-price-feed.'
       });
     }
   
@@ -1070,15 +1146,27 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       const isTechnicalServiceAction = effectiveAction === 'risk-score-feed' || effectiveAction === 'technical-analysis-feed';
       const isInfoServiceAction = effectiveAction === 'info-analysis-feed';
       if (isExternalFeedCapability) {
-        evidenceRequest = buildExternalFeedRequest({
-          service,
-          invocation,
-          traceId,
-          input
-        });
+        const agentManagedPayment =
+          normalizeText(body.x402Mode || body.paymentMode || '').toLowerCase() === 'agent' ||
+          Boolean(body?.paymentProof && body?.requestId);
+        const suppliedRequestId = normalizeText(body.requestId || '');
+        const suppliedPaymentProof =
+          body?.paymentProof && typeof body.paymentProof === 'object' && !Array.isArray(body.paymentProof)
+            ? body.paymentProof
+            : null;
+        evidenceRequest =
+          (suppliedRequestId
+            ? readX402Requests().find((item) => normalizeText(item?.requestId || '') === suppliedRequestId) || null
+            : null) ||
+          buildExternalFeedRequest({
+            service,
+            invocation,
+            traceId,
+            input
+          });
         evidenceRequest = upsertX402RequestRecord({
           ...evidenceRequest,
-          status: 'pending',
+          status: normalizeText(evidenceRequest?.status || '') === 'paid' ? 'paid' : 'pending',
           actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
           a2a: {
             sourceAgentId,
@@ -1088,133 +1176,334 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             traceId
           }
         });
-        evidenceWorkflow = buildExternalFeedWorkflow({
-          service,
-          invocation,
-          traceId,
-          input,
-          request: evidenceRequest
-        });
-        appendServiceWorkflowStep(evidenceWorkflow, 'challenge_issued', 'ok', {
-          requestId: evidenceRequest?.requestId || '',
-          amount: evidenceRequest?.amount || '',
-          recipient: evidenceRequest?.recipient || ''
-        });
-        evidenceWorkflow.updatedAt = new Date().toISOString();
-        upsertWorkflow(evidenceWorkflow);
-        if (typeof broadcastEvent === 'function') {
-          broadcastEvent('challenge_issued', {
+        evidenceWorkflow =
+          readWorkflows().find((item) => normalizeText(item?.traceId || '') === traceId) ||
+          buildExternalFeedWorkflow({
+            service,
+            invocation,
             traceId,
+            input,
+            request: evidenceRequest
+          });
+        if (!Array.isArray(evidenceWorkflow?.steps) || evidenceWorkflow.steps.length === 0) {
+          appendServiceWorkflowStep(evidenceWorkflow, 'challenge_issued', 'ok', {
             requestId: evidenceRequest?.requestId || '',
             amount: evidenceRequest?.amount || '',
-            recipient: evidenceRequest?.recipient || '',
-            serviceId,
-            capabilityId
+            recipient: evidenceRequest?.recipient || ''
           });
+          evidenceWorkflow.updatedAt = new Date().toISOString();
+          upsertWorkflow(evidenceWorkflow);
+          if (typeof broadcastEvent === 'function') {
+            broadcastEvent('challenge_issued', {
+              traceId,
+              requestId: evidenceRequest?.requestId || '',
+              amount: evidenceRequest?.amount || '',
+              recipient: evidenceRequest?.recipient || '',
+              serviceId,
+              capabilityId
+            });
+          }
         }
 
-        if (isFundamentalExternalCapability) {
-          if (capabilityId === 'cap-listing-alert') externalResult = await fetchListingAlert(input);
-          else if (capabilityId === 'cap-whale-alert') externalResult = await fetchWhaleAlert(input);
-          else if (capabilityId === 'cap-news-signal') externalResult = await fetchNewsSignal(input);
-          else if (capabilityId === 'cap-meme-sentiment') externalResult = await fetchMemeSentiment(input);
-          else if (capabilityId === 'cap-kol-monitor') externalResult = await fetchKolMonitor(input);
-        } else if (isTechnicalExternalCapability) {
-          if (capabilityId === 'cap-smart-money-signal') externalResult = await fetchSmartMoneySignal(input);
-          else if (capabilityId === 'cap-trenches-scan') externalResult = await fetchTrenchesScan(input);
-          else if (capabilityId === 'cap-token-analysis') externalResult = await fetchTokenAnalysis(input);
-          else if (capabilityId === 'cap-wallet-pnl') externalResult = await fetchWalletPnl(input);
-          else if (capabilityId === 'cap-dex-market') externalResult = await fetchDexMarket(input);
+        externalResult = evidenceRequest?.previewResult?.external || null;
+        if (!externalResult) {
+          if (isFundamentalExternalCapability) {
+            if (capabilityId === 'cap-listing-alert') externalResult = await fetchListingAlert(input);
+            else if (capabilityId === 'cap-news-signal') externalResult = await fetchNewsSignal(input);
+            else if (capabilityId === 'cap-meme-sentiment') externalResult = await fetchMemeSentiment(input);
+            else if (capabilityId === 'cap-kol-monitor') externalResult = await fetchKolMonitor(input);
+          } else if (isTechnicalExternalCapability) {
+            if (capabilityId === 'cap-smart-money-signal') externalResult = await fetchSmartMoneySignal(input);
+            else if (capabilityId === 'cap-trenches-scan') externalResult = await fetchTrenchesScan(input);
+            else if (capabilityId === 'cap-token-analysis') externalResult = await fetchTokenAnalysis(input);
+            else if (capabilityId === 'cap-wallet-pnl') externalResult = await fetchWalletPnl(input);
+            else if (capabilityId === 'cap-dex-market') externalResult = await fetchDexMarket(input);
+          } else if (isDataNodeExternalCapability) {
+            if (capabilityId === 'cap-weather-context') externalResult = await fetchWeatherContext(input);
+            else if (capabilityId === 'cap-tech-buzz-signal') externalResult = await fetchTechBuzzSignal(input);
+            else if (capabilityId === 'cap-market-price-feed') externalResult = await fetchMarketPriceFeed(input);
+          }
         }
         if (externalResult) {
           if (!externalResult.ok) {
             throw new Error(normalizeText(externalResult.error || 'external_feed_failed') || 'external_feed_failed');
           }
-          const pay = await postSessionPayWithRetry(
-            {
-              tokenAddress: evidenceRequest?.tokenAddress || invocation.tokenAddress || '',
-              recipient: evidenceRequest?.recipient || invocation.recipient || '',
-              amount: evidenceRequest?.amount || invocation.amount || '',
-              requestId: evidenceRequest?.requestId || '',
-              action: capabilityId || effectiveAction,
-              query: normalizeText(evidenceRequest?.query || `${service?.name || serviceId} ${effectiveAction}`)
-            },
-            { maxAttempts: 5, timeoutMs: 210_000 }
-          );
-          const payBody = pay?.body || {};
-          const txHash = normalizeText(payBody?.payment?.txHash || '');
-          const userOpHash = normalizeText(payBody?.payment?.userOpHash || '');
-          if (!txHash) {
-            throw new Error('session pay returned empty txHash.');
-          }
-          const paymentProof = {
-            requestId: evidenceRequest?.requestId || '',
-            txHash,
-            payer,
-            tokenAddress: evidenceRequest?.tokenAddress || '',
-            recipient: evidenceRequest?.recipient || '',
-            amount: evidenceRequest?.amount || ''
-          };
-          const paymentValidationError = validatePaymentProof(evidenceRequest, paymentProof);
-          if (paymentValidationError) {
-            throw new Error(paymentValidationError);
-          }
-          evidenceWorkflow.txHash = txHash;
-          evidenceWorkflow.userOpHash = userOpHash;
-          appendServiceWorkflowStep(evidenceWorkflow, 'payment_sent', 'ok', {
-            txHash,
-            userOpHash
-          });
-          evidenceWorkflow.updatedAt = new Date().toISOString();
-          upsertWorkflow(evidenceWorkflow);
-          if (typeof broadcastEvent === 'function') {
-            broadcastEvent('payment_sent', {
+          const externalItemCount = getExternalFeedItemCount(externalResult);
+          if (externalItemCount === 0) {
+            const noDataReason = 'no_data';
+            evidenceRequest = upsertX402RequestRecord({
+              ...evidenceRequest,
+              status: 'failed',
+              failure: {
+                reason: noDataReason,
+                at: new Date().toISOString()
+              },
+              result: {
+                summary: buildExternalFeedSummary(service, externalResult)
+              }
+            });
+            appendServiceWorkflowStep(evidenceWorkflow, 'failed', 'error', {
+              reason: noDataReason
+            });
+            evidenceWorkflow.state = 'failed';
+            evidenceWorkflow.error = noDataReason;
+            evidenceWorkflow.result = {
+              summary: buildExternalFeedSummary(service, externalResult),
+              external: externalResult
+            };
+            evidenceWorkflow.updatedAt = new Date().toISOString();
+            upsertWorkflow(evidenceWorkflow);
+            if (typeof broadcastEvent === 'function') {
+              broadcastEvent('failed', {
+                traceId,
+                state: 'failed',
+                reason: noDataReason,
+                serviceId,
+                capabilityId
+              });
+            }
+            const failed = {
+              ...invocation,
+              state: 'failed',
+              requestId: normalizeText(evidenceRequest?.requestId || invocation?.requestId || ''),
+              error: noDataReason,
+              summary: buildExternalFeedSummary(service, externalResult),
+              updatedAt: new Date().toISOString()
+            };
+            upsertServiceInvocation(failed);
+            return res.status(422).json({
+              ok: false,
+              error: 'invoke_failed',
+              reason: noDataReason,
+              serviceId,
+              invocationId,
               traceId,
+              workflow: evidenceWorkflow,
+              result: externalResult
+            });
+          }
+          let txHash = '';
+          let userOpHash = '';
+          if (agentManagedPayment) {
+            const storedPaymentProof =
+              evidenceRequest?.paymentProof &&
+              typeof evidenceRequest.paymentProof === 'object' &&
+              !Array.isArray(evidenceRequest.paymentProof)
+                ? evidenceRequest.paymentProof
+                : null;
+            evidenceRequest = upsertX402RequestRecord({
+              ...evidenceRequest,
+              previewResult: {
+                external: externalResult,
+                summary: buildExternalFeedSummary(service, externalResult)
+              },
+              actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {}
+            });
+            if (
+              !suppliedRequestId ||
+              (!suppliedPaymentProof && normalizeText(evidenceRequest?.status || '') !== 'paid')
+            ) {
+              const pending = {
+                ...invocation,
+                requestId: normalizeText(evidenceRequest?.requestId || ''),
+                state: 'payment_pending',
+                summary: 'Waiting for agent-first x402 payment.',
+                updatedAt: new Date().toISOString()
+              };
+              upsertServiceInvocation(pending);
+              return res.status(402).json({
+                ...buildExternalFeedPaymentRequiredResponse(evidenceRequest, 'x402 payment required'),
+                traceId,
+                serviceId,
+                invocationId
+              });
+            }
+            if (normalizeText(evidenceRequest?.requestId || '') !== suppliedRequestId) {
+              return res.status(409).json({
+                ok: false,
+                error: 'payment_request_mismatch',
+                reason: 'Supplied requestId does not match the active x402 request for this invocation.',
+                traceId,
+                serviceId,
+                invocationId,
+                requestId: normalizeText(evidenceRequest?.requestId || '')
+              });
+            }
+            if (normalizeText(evidenceRequest?.status || '') !== 'paid') {
+              const effectivePaymentProof = suppliedPaymentProof || storedPaymentProof;
+              const paymentValidationError = validatePaymentProof(evidenceRequest, effectivePaymentProof);
+              if (paymentValidationError) {
+                return res.status(402).json({
+                  ...buildExternalFeedPaymentRequiredResponse(evidenceRequest, paymentValidationError),
+                  traceId,
+                  serviceId,
+                  invocationId
+                });
+              }
+              const verification = await verifyProofOnChain(evidenceRequest, effectivePaymentProof);
+              if (!verification?.ok) {
+                return res.status(402).json({
+                  ...buildExternalFeedPaymentRequiredResponse(
+                    evidenceRequest,
+                    `on-chain proof verification failed: ${normalizeText(verification?.reason || 'unknown')}`
+                  ),
+                  traceId,
+                  serviceId,
+                  invocationId
+                });
+              }
+              txHash = normalizeText(effectivePaymentProof?.txHash || '');
+              userOpHash = normalizeText(body?.paymentUserOpHash || '');
+              evidenceWorkflow.txHash = txHash;
+              evidenceWorkflow.userOpHash = userOpHash;
+              appendServiceWorkflowStep(evidenceWorkflow, 'payment_sent', 'ok', {
+                txHash,
+                userOpHash
+              });
+              evidenceWorkflow.updatedAt = new Date().toISOString();
+              upsertWorkflow(evidenceWorkflow);
+              if (typeof broadcastEvent === 'function') {
+                broadcastEvent('payment_sent', {
+                  traceId,
+                  requestId: evidenceRequest?.requestId || '',
+                  txHash,
+                  userOpHash,
+                  serviceId,
+                  capabilityId
+                });
+              }
+              evidenceRequest = upsertX402RequestRecord({
+                ...evidenceRequest,
+                status: 'paid',
+                paidAt: Date.now(),
+                paymentTxHash: txHash,
+                paymentProof: {
+                  requestId: effectivePaymentProof?.requestId,
+                  txHash,
+                  payer: effectivePaymentProof?.payer || payer,
+                  tokenAddress: effectivePaymentProof?.tokenAddress,
+                  recipient: effectivePaymentProof?.recipient,
+                  amount: effectivePaymentProof?.amount
+                },
+                proofVerification: {
+                  mode: 'on-chain',
+                  verifiedAt: Date.now(),
+                  details: verification?.details || {}
+                },
+                actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
+                a2a: {
+                  sourceAgentId,
+                  targetAgentId,
+                  capability: capabilityId,
+                  taskType: effectiveAction,
+                  traceId
+                },
+                result: {
+                  summary: buildExternalFeedSummary(service, externalResult)
+                }
+              });
+              appendValidationRecord({
+                requestId: evidenceRequest?.requestId || '',
+                txHash,
+                userOpHash,
+                tokenAddress: evidenceRequest?.tokenAddress || '',
+                recipient: evidenceRequest?.recipient || '',
+                amount: evidenceRequest?.amount || '',
+                action: capabilityId || effectiveAction,
+                payer
+              });
+            } else {
+              txHash = normalizeText(evidenceRequest?.paymentTxHash || evidenceRequest?.paymentProof?.txHash || '');
+              userOpHash = normalizeText(evidenceWorkflow?.userOpHash || '');
+            }
+          } else {
+            const pay = await postSessionPayWithRetry(
+              {
+                tokenAddress: evidenceRequest?.tokenAddress || invocation.tokenAddress || '',
+                recipient: evidenceRequest?.recipient || invocation.recipient || '',
+                amount: evidenceRequest?.amount || invocation.amount || '',
+                payer,
+                requestId: evidenceRequest?.requestId || '',
+                action: capabilityId || effectiveAction,
+                query: normalizeText(evidenceRequest?.query || `${service?.name || serviceId} ${effectiveAction}`)
+              },
+              { maxAttempts: 2, timeoutMs: 600_000 }
+            );
+            const payBody = pay?.body || {};
+            txHash = normalizeText(payBody?.payment?.txHash || '');
+            userOpHash = normalizeText(payBody?.payment?.userOpHash || '');
+            if (!txHash) {
+              throw new Error('session pay returned empty txHash.');
+            }
+            const paymentProof = {
+              requestId: evidenceRequest?.requestId || '',
+              txHash,
+              payer,
+              tokenAddress: evidenceRequest?.tokenAddress || '',
+              recipient: evidenceRequest?.recipient || '',
+              amount: evidenceRequest?.amount || ''
+            };
+            const paymentValidationError = validatePaymentProof(evidenceRequest, paymentProof);
+            if (paymentValidationError) {
+              throw new Error(paymentValidationError);
+            }
+            evidenceWorkflow.txHash = txHash;
+            evidenceWorkflow.userOpHash = userOpHash;
+            appendServiceWorkflowStep(evidenceWorkflow, 'payment_sent', 'ok', {
+              txHash,
+              userOpHash
+            });
+            evidenceWorkflow.updatedAt = new Date().toISOString();
+            upsertWorkflow(evidenceWorkflow);
+            if (typeof broadcastEvent === 'function') {
+              broadcastEvent('payment_sent', {
+                traceId,
+                requestId: evidenceRequest?.requestId || '',
+                txHash,
+                userOpHash,
+                serviceId,
+                capabilityId
+              });
+            }
+
+            const verification = await verifyProofOnChain(evidenceRequest, paymentProof);
+            if (!verification?.ok) {
+              throw new Error(`on-chain proof verification failed: ${normalizeText(verification?.reason || 'unknown')}`);
+            }
+            evidenceRequest = upsertX402RequestRecord({
+              ...evidenceRequest,
+              status: 'paid',
+              paidAt: Date.now(),
+              paymentTxHash: txHash,
+              paymentProof,
+              proofVerification: {
+                mode: 'on-chain',
+                verifiedAt: Date.now(),
+                details: verification?.details || {}
+              },
+              actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
+              a2a: {
+                sourceAgentId,
+                targetAgentId,
+                capability: capabilityId,
+                taskType: effectiveAction,
+                traceId
+              },
+              result: {
+                summary: buildExternalFeedSummary(service, externalResult)
+              }
+            });
+            appendValidationRecord({
               requestId: evidenceRequest?.requestId || '',
               txHash,
               userOpHash,
-              serviceId,
-              capabilityId
+              tokenAddress: evidenceRequest?.tokenAddress || '',
+              recipient: evidenceRequest?.recipient || '',
+              amount: evidenceRequest?.amount || '',
+              action: capabilityId || effectiveAction,
+              payer
             });
           }
-
-          const verification = await verifyProofOnChain(evidenceRequest, paymentProof);
-          if (!verification?.ok) {
-            throw new Error(`on-chain proof verification failed: ${normalizeText(verification?.reason || 'unknown')}`);
-          }
-          evidenceRequest = upsertX402RequestRecord({
-            ...evidenceRequest,
-            status: 'paid',
-            paidAt: Date.now(),
-            paymentTxHash: txHash,
-            paymentProof,
-            proofVerification: {
-              mode: 'on-chain',
-              verifiedAt: Date.now(),
-              details: verification?.details || {}
-            },
-            actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
-            a2a: {
-              sourceAgentId,
-              targetAgentId,
-              capability: capabilityId,
-              taskType: effectiveAction,
-              traceId
-            },
-            result: {
-              summary: buildExternalFeedSummary(service, externalResult)
-            }
-          });
-          appendValidationRecord({
-            requestId: evidenceRequest?.requestId || '',
-            txHash,
-            userOpHash,
-            tokenAddress: evidenceRequest?.tokenAddress || '',
-            recipient: evidenceRequest?.recipient || '',
-            amount: evidenceRequest?.amount || '',
-            action: capabilityId || effectiveAction,
-            payer
-          });
           appendServiceWorkflowStep(evidenceWorkflow, 'proof_submitted', 'ok', {
             verified: true,
             mode: 'on-chain'

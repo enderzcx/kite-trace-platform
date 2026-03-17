@@ -7,6 +7,54 @@ export function createOnchainAnchorHelpers({
   jobLifecycleAnchorAbi,
   trustPublicationAnchorAbi
 }) {
+  function normalizeText(value = '') {
+    return String(value || '').trim();
+  }
+
+  function isRetryableOnchainError(error = null) {
+    const message = normalizeText(
+      [
+        error?.message,
+        error?.shortMessage,
+        error?.code,
+        error?.cause?.message,
+        error?.cause?.code
+      ]
+        .filter(Boolean)
+        .join(' ')
+    ).toLowerCase();
+    if (!message) return false;
+    return (
+      message.includes('tls') ||
+      message.includes('fetch failed') ||
+      message.includes('socket') ||
+      message.includes('econnreset') ||
+      message.includes('before secure tls connection') ||
+      message.includes('timeout') ||
+      message.includes('network')
+    );
+  }
+
+  async function wait(ms = 0) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
+  }
+
+  async function runWithOnchainRetry(operation) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        if (attempt >= 5 || !isRetryableOnchainError(error)) {
+          throw error;
+        }
+        await wait(1000 * attempt);
+      }
+    }
+    throw lastError || new Error('onchain anchor publish failed');
+  }
+
   async function publishTrustPublicationOnChain(input = {}) {
     const signer = backendSigner;
     const registryAddress = String(erc8004TrustAnchorRegistry || '').trim();
@@ -40,16 +88,18 @@ export function createOnchainAnchorHelpers({
       : ethers.ZeroHash;
 
     const contract = new ethers.Contract(registryAddress, trustPublicationAnchorAbi, signer);
-    const tx = await contract.publishTrustPublication(
-      publicationType,
-      sourceId,
-      agentId,
-      referenceId,
-      traceId,
-      payloadHash,
-      detailsURI
+    const tx = await runWithOnchainRetry(() =>
+      contract.publishTrustPublication(
+        publicationType,
+        sourceId,
+        agentId,
+        referenceId,
+        traceId,
+        payloadHash,
+        detailsURI
+      )
     );
-    const receipt = await tx.wait();
+    const receipt = await runWithOnchainRetry(() => tx.wait());
     const anchorInterface = new ethers.Interface(trustPublicationAnchorAbi);
     const anchorLog = receipt?.logs
       ?.filter((log) => String(log?.address || '').toLowerCase() === registryAddress.toLowerCase())
@@ -116,21 +166,23 @@ export function createOnchainAnchorHelpers({
       : ethers.ZeroHash;
 
     const contract = new ethers.Contract(registryAddress, jobLifecycleAnchorAbi, signer);
-    const tx = await contract.publishJobLifecycleAnchor(
-      anchorType,
-      jobId,
-      traceId,
-      providerId,
-      capability,
-      status,
-      paymentRequestId,
-      paymentTxHash,
-      validationId,
-      referenceId,
-      payloadHash,
-      detailsURI
+    const tx = await runWithOnchainRetry(() =>
+      contract.publishJobLifecycleAnchor(
+        anchorType,
+        jobId,
+        traceId,
+        providerId,
+        capability,
+        status,
+        paymentRequestId,
+        paymentTxHash,
+        validationId,
+        referenceId,
+        payloadHash,
+        detailsURI
+      )
     );
-    const receipt = await tx.wait();
+    const receipt = await runWithOnchainRetry(() => tx.wait());
     const anchorInterface = new ethers.Interface(jobLifecycleAnchorAbi);
     const anchorLog = receipt?.logs
       ?.filter((log) => String(log?.address || '').toLowerCase() === registryAddress.toLowerCase())

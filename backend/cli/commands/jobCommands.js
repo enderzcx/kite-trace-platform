@@ -3,6 +3,8 @@ export function createJobCommandHandlers({
   parseJobSubmitArgs,
   parseJobCompleteArgs,
   parseJobRejectArgs,
+  parseJobValidateArgs,
+  parseJobAuditArgs,
   requestJson,
   resolveAgentTransportApiKey,
   createEnvelope,
@@ -47,6 +49,9 @@ export function createJobCommandHandlers({
         ...(options.templateId ? { templateId: String(options.templateId || '').trim() } : {}),
         ...(options.evaluator ? { evaluator: String(options.evaluator || '').trim() } : {}),
         ...(options.expiresAt ? { expiresAt: String(options.expiresAt || '').trim() } : {}),
+        ...(options.executor ? { executor: String(options.executor || '').trim() } : {}),
+        ...(options.validator ? { validator: String(options.validator || '').trim() } : {}),
+        ...(options.escrowAmount ? { escrowAmount: String(options.escrowAmount || '').trim() } : {}),
         input,
         ...(options.traceId ? { traceId: options.traceId } : {}),
         ...(wallet ? { payer: wallet } : {})
@@ -68,6 +73,9 @@ export function createJobCommandHandlers({
           capability: String(job?.capability || capability).trim(),
           budget: String(job?.budget || options.budget || '').trim(),
           payer: String(job?.payer || wallet || '').trim(),
+          executor: String(job?.executor || options.executor || '').trim(),
+          validator: String(job?.validator || options.validator || '').trim(),
+          escrowAmount: String(job?.escrowAmount || options.escrowAmount || '').trim(),
           templateId: String(job?.templateId || options.templateId || '').trim(),
           evaluator: String(job?.evaluator || options.evaluator || '').trim(),
           expiresAt: String(job?.expiresAt || options.expiresAt || '').trim(),
@@ -97,6 +105,9 @@ export function createJobCommandHandlers({
       }
     });
     const job = payload?.job || {};
+    const approval = payload?.approval && typeof payload.approval === 'object' ? payload.approval : null;
+    const isPendingApproval =
+      String(payload?.state || job?.state || '').trim().toLowerCase() === 'pending_approval';
     return createEnvelope({
       ok: true,
       exitCode: 0,
@@ -121,10 +132,65 @@ export function createJobCommandHandlers({
           signerMode: String(job?.signerMode || '').trim(),
           anchorRegistry: String(job?.anchorRegistry || '').trim(),
           fundingAnchorId: String(job?.fundingAnchorId || '').trim(),
-          fundingAnchorTxHash: String(job?.fundingAnchorTxHash || '').trim()
-        }
+          fundingAnchorTxHash: String(job?.fundingAnchorTxHash || '').trim(),
+          approvalId: String(job?.approvalId || approval?.approvalId || '').trim(),
+          approvalState: String(job?.approvalState || approval?.approvalState || '').trim(),
+          approvalReasonCode: String(job?.approvalReasonCode || approval?.reasonCode || '').trim(),
+          approvalUrl: String(job?.approvalUrl || approval?.approvalUrl || '').trim(),
+          approvalRequestedAt: Number(job?.approvalRequestedAt || approval?.createdAt || 0),
+          approvalExpiresAt: Number(job?.approvalExpiresAt || approval?.expiresAt || 0),
+          approvalDecidedAt: Number(job?.approvalDecidedAt || approval?.decidedAt || 0),
+          approvalDecidedBy: String(job?.approvalDecidedBy || approval?.decidedBy || '').trim(),
+          approvalDecisionNote: String(job?.approvalDecisionNote || approval?.decisionNote || '').trim()
+        },
+        ...(approval
+          ? {
+              approval: {
+                approvalId: String(approval?.approvalId || '').trim(),
+                approvalKind: String(approval?.approvalKind || '').trim(),
+                approvalState: String(approval?.approvalState || '').trim(),
+                approvalUrl: String(approval?.approvalUrl || '').trim(),
+                expiresAt: Number(approval?.expiresAt || 0),
+                requestedByAaWallet: String(approval?.requestedByAaWallet || '').trim(),
+                requestedByOwnerEoa: String(approval?.requestedByOwnerEoa || '').trim(),
+                reasonCode: String(approval?.reasonCode || '').trim()
+              }
+            }
+          : {}),
+        ...(isPendingApproval
+          ? {
+              nextStep: {
+                action: 'open_approval_url',
+                approvalUrl: String(job?.approvalUrl || approval?.approvalUrl || '').trim(),
+                expiresAt: Number(job?.approvalExpiresAt || approval?.expiresAt || 0),
+                note: 'Open the approval URL, approve or reject the job, then rerun job show or continue the lane.'
+              }
+            }
+          : {})
       },
-      message: String(job?.summary || 'Job funded.').trim()
+      message: String(
+        job?.summary || (isPendingApproval ? 'Job funding is waiting for human approval.' : 'Job funded.')
+      ).trim()
+    });
+  }
+
+  async function handleJobAccept(runtimeBundle, commandArgs = []) {
+    const runtime = runtimeBundle.config;
+    const jobId = ensureReference(commandArgs, 'job-id');
+    const payload = await requestJson(runtime, {
+      method: 'POST',
+      pathname: `/api/jobs/${encodeURIComponent(jobId)}/accept`,
+      apiKey: resolveAgentTransportApiKey(runtime),
+      body: {}
+    });
+    const job = payload?.job || {};
+    return createEnvelope({
+      ok: true,
+      exitCode: 0,
+      command: { family: 'job', action: 'accept', display: 'ktrace job accept' },
+      runtime,
+      data: { job },
+      message: String(job?.summary || 'Job accepted.').trim()
     });
   }
 
@@ -176,11 +242,14 @@ export function createJobCommandHandlers({
           paymentTxHash: String(job?.paymentTxHash || '').trim(),
           submissionRef: String(job?.submissionRef || '').trim(),
           submissionHash: String(job?.submissionHash || '').trim(),
+          resultRef: String(job?.resultRef || '').trim(),
+          resultHash: String(job?.resultHash || '').trim(),
           receiptRef: String(job?.receiptRef || '').trim(),
           evidenceRef: String(job?.evidenceRef || '').trim(),
           anchorRegistry: String(job?.anchorRegistry || '').trim(),
-          outcomeAnchorId: String(job?.outcomeAnchorId || '').trim(),
-          outcomeAnchorTxHash: String(job?.outcomeAnchorTxHash || '').trim(),
+          submitAnchorId: String(job?.submitAnchorId || '').trim(),
+          submitAnchorTxHash: String(job?.submitAnchorTxHash || '').trim(),
+          escrowSubmitTxHash: String(job?.escrowSubmitTxHash || '').trim(),
           summary: String(job?.summary || '').trim(),
           error: String(job?.error || '').trim()
         },
@@ -206,6 +275,67 @@ export function createJobCommandHandlers({
       runtime,
       data: { job },
       message: String(job?.summary || `Job ${jobId}`).trim()
+    });
+  }
+
+  async function handleJobAudit(runtimeBundle, commandArgs = []) {
+    const runtime = runtimeBundle.config;
+    const options = parseJobAuditArgs(commandArgs);
+    const reference = ensureReference(commandArgs, 'job-id');
+    const jobId = options.trace ? '' : reference;
+    const traceId = options.trace ? reference : '';
+    const pathname = options.public
+      ? options.trace
+        ? `/api/public/jobs/by-trace/${encodeURIComponent(traceId)}/audit`
+        : `/api/public/jobs/${encodeURIComponent(jobId)}/audit`
+      : `/api/jobs/${encodeURIComponent(jobId)}/audit`;
+    const payload = await requestJson(runtime, {
+      pathname,
+      apiKey: options.public ? '' : resolveAgentTransportApiKey(runtime),
+      omitRuntimeApiKey: options.public
+    });
+    const audit = payload?.audit || {};
+    return createEnvelope({
+      ok: true,
+      exitCode: 0,
+      command: { family: 'job', action: 'audit', display: 'ktrace job audit' },
+      runtime,
+      data: { audit },
+      message: String(audit?.summary?.state || '').trim()
+        ? `Job audit loaded for ${options.trace ? traceId : jobId}.`
+        : `Job audit loaded.`
+    });
+  }
+
+  async function handleJobValidate(runtimeBundle, commandArgs = []) {
+    const runtime = runtimeBundle.config;
+    const jobId = ensureReference(commandArgs, 'job-id');
+    const options = parseJobValidateArgs(commandArgs.slice(1));
+    if (typeof options.approved !== 'boolean') {
+      throw createCliError('Pass exactly one of --approve or --reject.', {
+        code: 'validation_decision_required'
+      });
+    }
+    const wallet = normalizeWalletAddress(runtime.wallet);
+    const payload = await requestJson(runtime, {
+      method: 'POST',
+      pathname: `/api/jobs/${encodeURIComponent(jobId)}/validate`,
+      apiKey: resolveAgentTransportApiKey(runtime),
+      body: {
+        approved: options.approved,
+        ...(options.reason ? { reason: options.reason } : {}),
+        ...(options.summary ? { summary: options.summary } : {}),
+        ...(options.validator ? { validatorAddress: options.validator } : wallet ? { validatorAddress: wallet } : {})
+      }
+    });
+    const job = payload?.job || {};
+    return createEnvelope({
+      ok: true,
+      exitCode: 0,
+      command: { family: 'job', action: 'validate', display: 'ktrace job validate' },
+      runtime,
+      data: { job },
+      message: String(job?.summary || 'Job validated.').trim()
     });
   }
 
@@ -276,8 +406,11 @@ export function createJobCommandHandlers({
   return {
     handleJobCreate,
     handleJobFund,
+    handleJobAccept,
     handleJobSubmit,
     handleJobShow,
+    handleJobAudit,
+    handleJobValidate,
     handleJobComplete,
     handleJobReject,
     handleJobExpire

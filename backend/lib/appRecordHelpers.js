@@ -51,11 +51,24 @@ export function createCatalogHelpers({
   }
 
   function ensureTemplateCatalog() {
+    const services = ensureServiceCatalog();
+    const validServiceIds = new Set(
+      services
+        .map((service) => String(service?.id || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
     const rows = readTemplates();
     if (Array.isArray(rows) && rows.length > 0) {
-      return rows;
+      const filtered = rows.filter((item) => {
+        const serviceId = String(item?.serviceId || '').trim().toLowerCase();
+        return validServiceIds.has(serviceId);
+      });
+      if (filtered.length !== rows.length) {
+        writeTemplates(filtered);
+      }
+      return filtered;
     }
-    const seeded = ensureServiceCatalog().map((service) => buildTemplateRecordFromService(service));
+    const seeded = services.map((service) => buildTemplateRecordFromService(service));
     writeTemplates(seeded);
     return seeded;
   }

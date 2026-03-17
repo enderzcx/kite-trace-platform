@@ -17,29 +17,41 @@
     IDENTITY_CHALLENGE_MAX_ROWS,
     IDENTITY_CHALLENGE_TTL_MS,
     IDENTITY_VERIFY_MODE,
+    KTRACE_ADMIN_KEY,
+    KTRACE_JOB_APPROVAL_THRESHOLD,
+    KTRACE_JOB_APPROVAL_TTL_MS,
     KITE_AGENT1_ID,
     KITE_AGENT2_ID,
+    KITE_REQUIRE_AA_V2,
+    AA_V2_VERSION_TAG,
     maskSecret,
     normalizeAddress,
     normalizeReactiveParams,
     llmAdapter,
     PORT,
+    readJobs,
     readSessionAuthorizations,
+    readSessionApprovalRequests,
     XMTP_ROUTER_DERIVED_ADDRESS,
     readIdentityChallenges,
     readRecords,
     readSessionRuntime,
+    resolveSessionOwnerPrivateKey,
+    resolveSessionRuntime,
     readWorkflows,
     readX402Requests,
     requireRole,
+    resolveRoleByApiKey,
     sessionPayConfigSnapshot,
     sessionPayMetrics,
     sessionRuntimePath,
     writeIdentityChallenges,
     writeJsonObject,
     writeRecords,
+    writeSessionApprovalRequests,
     writeSessionAuthorizations,
     writeSessionRuntime,
+    upsertJobRecord,
   } = deps;
 
   function getBackendSignerState() {
@@ -54,7 +66,9 @@
     'function addSupportedToken(address token) external',
     'function createSession(bytes32 sessionId, address agent, tuple(uint256 timeWindow,uint160 budget,uint96 initialWindowStartTime,bytes32[] targetProviders)[] rules) external',
     'function sessionExists(bytes32 sessionId) view returns (bool)',
-    'function getSessionAgent(bytes32 sessionId) view returns (address)'
+    'function getSessionAgent(bytes32 sessionId) view returns (address)',
+    'function owner() view returns (address)',
+    'function version() view returns (string)'
   ];
 
   function normalizeSessionGrantText(value = '', fallback = '') {
@@ -195,8 +209,714 @@
     return nextRows[0] || null;
   }
 
+  function normalizeSessionApprovalRequestRows(rows = []) {
+    const items = Array.isArray(rows) ? rows.filter((item) => item && typeof item === 'object') : [];
+    return items
+      .filter((item) => String(item.approvalRequestId || '').trim())
+      .sort((left, right) => Number(right.createdAt || 0) - Number(left.createdAt || 0))
+      .slice(0, 1000);
+  }
+
+  function listSessionApprovalRequests() {
+    return normalizeSessionApprovalRequestRows(readSessionApprovalRequests());
+  }
+
+  function findSessionApprovalRequest(approvalRequestId = '') {
+    const normalizedId = String(approvalRequestId || '').trim();
+    if (!normalizedId) return null;
+    return listSessionApprovalRequests().find(
+      (item) => String(item.approvalRequestId || '').trim() === normalizedId
+    ) || null;
+  }
+
+  function writeSessionApprovalRequestRows(rows = []) {
+    writeSessionApprovalRequests(normalizeSessionApprovalRequestRows(rows));
+    return listSessionApprovalRequests();
+  }
+
+  function appendSessionApprovalRequest(record = {}) {
+    const rows = listSessionApprovalRequests();
+    rows.unshift(record);
+    return writeSessionApprovalRequestRows(rows)[0] || null;
+  }
+
+  function updateSessionApprovalRequest(approvalRequestId = '', patch = {}) {
+    const normalizedId = String(approvalRequestId || '').trim();
+    const rows = listSessionApprovalRequests();
+    const nextRows = rows.map((item) =>
+      String(item.approvalRequestId || '').trim() === normalizedId ? { ...item, ...patch } : item
+    );
+    writeSessionApprovalRequests(nextRows);
+    return findSessionApprovalRequest(normalizedId);
+  }
+
+  function buildApprovalRequestToken() {
+    return `sat_${crypto.randomBytes(18).toString('hex')}`;
+  }
+
+  function resolveApprovalFrontendBaseUrl(audience = '') {
+    const explicit = String(
+      process.env.KTRACE_APPROVAL_FRONTEND_URL ||
+        process.env.FRONTEND_PUBLIC_URL ||
+        process.env.NEXT_PUBLIC_APP_URL ||
+        process.env.AGENT_NETWORK_PUBLIC_URL ||
+        ''
+    ).trim();
+    if (explicit) return explicit.replace(/\/+$/, '');
+    const fallback = String(audience || '').trim() || `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
+    try {
+      const url = new URL(fallback);
+      if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.port && url.port !== '3000') {
+        url.port = '3000';
+      }
+      return url.toString().replace(/\/+$/, '');
+    } catch {
+      return fallback.replace(/\/+$/, '');
+    }
+  }
+
+  function buildApprovalRequestUrl(approvalRequestId = '', approvalToken = '', audience = '') {
+    const frontendBaseUrl = resolveApprovalFrontendBaseUrl(audience);
+    const backendBaseUrl =
+      String(audience || '').trim() || `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
+    try {
+      const url = new URL(
+        `/approval/${encodeURIComponent(String(approvalRequestId || '').trim())}`,
+        `${frontendBaseUrl.replace(/\/+$/, '')}/`
+      );
+      if (approvalToken) {
+        url.searchParams.set('token', approvalToken);
+      }
+      if (backendBaseUrl) {
+        url.searchParams.set('backend', backendBaseUrl.replace(/\/+$/, ''));
+      }
+      return url.toString();
+    } catch {
+      const query = new URLSearchParams();
+      if (approvalToken) query.set('token', String(approvalToken || '').trim());
+      if (backendBaseUrl) query.set('backend', backendBaseUrl.replace(/\/+$/, ''));
+      const suffix = query.toString();
+      return `/approval/${encodeURIComponent(String(approvalRequestId || '').trim())}${suffix ? `?${suffix}` : ''}`;
+    }
+  }
+
+  function buildSessionApprovalRequestPayload(record = {}, { includeToken = false } = {}) {
+    const payload =
+      record?.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+        ? record.payload
+        : {};
+    const authorization =
+      record?.authorization && typeof record.authorization === 'object' && !Array.isArray(record.authorization)
+        ? record.authorization
+        : null;
+    return {
+      approvalId: String(record?.approvalRequestId || '').trim(),
+      approvalRequestId: String(record?.approvalRequestId || '').trim(),
+      approvalKind: 'session',
+      approvalState: String(record?.status || '').trim().toLowerCase() || 'pending',
+      state: String(record?.status || '').trim().toLowerCase() || 'pending',
+      status: String(record?.status || '').trim(),
+      executionMode: String(record?.executionMode || '').trim(),
+      userEoa: normalizeSessionGrantAddress(record?.userEoa || ''),
+      sessionAddress: normalizeSessionGrantAddress(record?.sessionAddress || ''),
+      createdAt: Number(record?.createdAt || 0),
+      updatedAt: Number(record?.updatedAt || 0),
+      completedAt: Number(record?.completedAt || 0),
+      approvalUrl: buildApprovalRequestUrl(
+        record?.approvalRequestId,
+        includeToken ? record?.approvalToken : '',
+        payload?.audience || ''
+      ),
+      qrText: buildApprovalRequestUrl(
+        record?.approvalRequestId,
+        includeToken ? record?.approvalToken : '',
+        payload?.audience || ''
+      ),
+      payload,
+      authorizationId: String(record?.authorizationId || authorization?.authorizationId || '').trim(),
+      authorization,
+      runtime: record?.runtime && typeof record.runtime === 'object' && !Array.isArray(record.runtime)
+        ? buildSessionRuntimePayload(record.runtime)
+        : null,
+      session:
+        record?.runtime && typeof record.runtime === 'object' && !Array.isArray(record.runtime)
+          ? {
+              address: String(record.runtime.sessionAddress || '').trim(),
+              id: String(record.runtime.sessionId || '').trim(),
+              txHash: String(record.runtime.sessionTxHash || '').trim(),
+              maxPerTx: Number(record.runtime.maxPerTx || 0),
+              dailyLimit: Number(record.runtime.dailyLimit || 0),
+              gatewayRecipient: String(record.runtime.gatewayRecipient || '').trim(),
+              tokenAddress: String(record.runtime.tokenAddress || payload?.tokenAddress || '').trim()
+            }
+          : null,
+      ...(includeToken ? { approvalToken: String(record?.approvalToken || '').trim() } : {})
+    };
+  }
+
+  function buildUnifiedApprovalPayload(record = {}, { includeToken = false } = {}) {
+    if (normalizeApprovalKind(record?.approvalKind) === 'job') {
+      return buildJobApprovalPayload(record, { includeToken });
+    }
+    const legacy = buildSessionApprovalRequestPayload(record, { includeToken });
+    const approvalState = String(record?.status || '').trim().toLowerCase() || 'pending';
+    return {
+      ...legacy,
+      approvalId: legacy.approvalRequestId,
+      approvalKind: 'session',
+      approvalState,
+      expiresAt: Number(record?.payload?.expiresAt || 0),
+      meta: {
+        sessionAuthorization: true
+      }
+    };
+  }
+
+  function clampApprovalListLimit(value, fallback = 20, min = 1, max = 100) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.max(min, Math.min(Math.round(numeric), max));
+  }
+
+  function normalizeApprovalKind(value = '') {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === 'job' ? 'job' : 'session';
+  }
+
+  function getApprovalOwner(record = {}) {
+    if (normalizeApprovalKind(record?.approvalKind) === 'job') {
+      return normalizeSessionGrantAddress(record?.requestedByOwnerEoa || '');
+    }
+    return normalizeSessionGrantAddress(record?.userEoa || '');
+  }
+
+  function maybeExpireApprovalRecord(record = {}) {
+    const approvalId = String(record?.approvalRequestId || record?.approvalId || '').trim();
+    const status = String(record?.status || '').trim().toLowerCase();
+    const expiresAt = Number(record?.expiresAt || record?.payload?.expiresAt || 0);
+    if (!approvalId || status !== 'pending' || !Number.isFinite(expiresAt) || expiresAt <= 0 || expiresAt > Date.now()) {
+      return record;
+    }
+    const expired = updateSessionApprovalRequest(approvalId, {
+      status: 'expired',
+      updatedAt: Date.now(),
+      completedAt: Date.now(),
+      resumeStatus:
+        normalizeApprovalKind(record?.approvalKind) === 'job'
+          ? 'expired'
+          : normalizeSessionGrantText(record?.resumeStatus)
+    });
+    if (normalizeApprovalKind(record?.approvalKind) === 'job') {
+      const relatedJob =
+        readJobs?.().find((item) => String(item?.jobId || '').trim() === String(record?.jobId || '').trim()) || null;
+      if (relatedJob) {
+        upsertJobRecord?.({
+          ...relatedJob,
+          state: 'approval_expired',
+          approvalState: 'expired',
+          approvalExpiresAt: expiresAt,
+          updatedAt: new Date().toISOString(),
+          summary: 'Job approval expired before funding.',
+          error: 'approval_expired'
+        });
+      }
+    }
+    return expired || record;
+  }
+
+  function buildJobApprovalPayload(record = {}, { includeToken = false } = {}) {
+    const approvalId = String(record?.approvalRequestId || record?.approvalId || '').trim();
+    const approvalToken = includeToken ? String(record?.approvalToken || '').trim() : '';
+    const audience = String(record?.authorizationAudience || record?.audience || '').trim();
+    const jobId = String(record?.jobId || '').trim();
+    const traceId = String(record?.traceId || '').trim();
+    const auditBase = normalizeSessionGrantText(audience) || `http://127.0.0.1:${PORT}`;
+    const policySnapshot =
+      record?.policySnapshot && typeof record.policySnapshot === 'object' && !Array.isArray(record.policySnapshot)
+        ? record.policySnapshot
+        : {};
+    const jobSnapshot =
+      record?.jobSnapshot && typeof record.jobSnapshot === 'object' && !Array.isArray(record.jobSnapshot)
+        ? record.jobSnapshot
+        : {};
+    return {
+      approvalId,
+      approvalRequestId: approvalId,
+      approvalKind: 'job',
+      approvalState: String(record?.status || '').trim().toLowerCase() || 'pending',
+      state: String(record?.status || '').trim().toLowerCase() || 'pending',
+      status: String(record?.status || '').trim().toLowerCase() || 'pending',
+      createdAt: Number(record?.createdAt || 0),
+      updatedAt: Number(record?.updatedAt || 0),
+      completedAt: Number(record?.completedAt || 0),
+      expiresAt: Number(record?.expiresAt || 0),
+      approvalUrl: buildApprovalRequestUrl(approvalId, approvalToken, audience),
+      qrText: buildApprovalRequestUrl(approvalId, approvalToken, audience),
+      jobId,
+      traceId,
+      reasonCode: String(record?.reasonCode || '').trim(),
+      requestedByAaWallet: normalizeSessionGrantAddress(record?.requestedByAaWallet || ''),
+      requestedByOwnerEoa: normalizeSessionGrantAddress(record?.requestedByOwnerEoa || ''),
+      requestedAction: String(record?.requestedAction || '').trim(),
+      decidedAt: Number(record?.decidedAt || 0),
+      decidedBy: normalizeSessionGrantAddress(record?.decidedBy || ''),
+      decisionNote: String(record?.decisionNote || '').trim(),
+      policySnapshot,
+      jobSnapshot,
+      jobSummary: {
+        jobId,
+        traceId,
+        state: String(jobSnapshot?.state || '').trim(),
+        provider: String(jobSnapshot?.provider || '').trim(),
+        capability: String(jobSnapshot?.capability || '').trim(),
+        payer: String(jobSnapshot?.payer || '').trim(),
+        executor: String(jobSnapshot?.executor || '').trim(),
+        validator: String(jobSnapshot?.validator || '').trim(),
+        budget: String(jobSnapshot?.budget || '').trim(),
+        escrowAmount: String(jobSnapshot?.escrowAmount || '').trim()
+      },
+      reviewSummary: {
+        reasonCode: String(record?.reasonCode || '').trim(),
+        threshold: Number(policySnapshot?.threshold || 0),
+        amount: Number(policySnapshot?.amount || 0),
+        currency: String(policySnapshot?.currency || '').trim(),
+        exceeded: Boolean(policySnapshot?.exceeded),
+        expiresAt: Number(record?.expiresAt || 0),
+        requestedByOwnerEoa: normalizeSessionGrantAddress(record?.requestedByOwnerEoa || ''),
+        requestedByAaWallet: normalizeSessionGrantAddress(record?.requestedByAaWallet || '')
+      },
+      authorizationId: String(record?.authorizationId || '').trim(),
+      authorization: null,
+      runtime: null,
+      session: null,
+      links: {
+        approvalUrl: buildApprovalRequestUrl(approvalId, approvalToken, audience),
+        jobAuditUrl: jobId ? `${auditBase}/api/jobs/${encodeURIComponent(jobId)}/audit` : '',
+        publicJobAuditUrl: jobId ? `${auditBase}/api/public/jobs/${encodeURIComponent(jobId)}/audit` : '',
+        publicJobAuditByTraceUrl: traceId ? `${auditBase}/api/public/jobs/by-trace/${encodeURIComponent(traceId)}/audit` : ''
+      },
+      meta: {
+        sessionAuthorization: false,
+        resumeStatus: String(record?.resumeStatus || '').trim(),
+        resumeError: String(record?.resumeError || '').trim()
+      },
+      ...(includeToken ? { approvalToken } : {})
+    };
+  }
+
+  function filterUnifiedApprovalRows({ state = '', approvalKind = '', owner = '', limit = 20 } = {}) {
+    const normalizedState = String(state || '').trim().toLowerCase();
+    const normalizedKind = String(approvalKind || '').trim().toLowerCase();
+    const normalizedOwner = normalizeSessionGrantAddress(owner || '');
+    return listSessionApprovalRequests()
+      .map((item) => maybeExpireApprovalRecord(item))
+      .filter((item) => {
+        const itemKind = normalizeApprovalKind(item?.approvalKind);
+        if (normalizedKind && normalizedKind !== itemKind) return false;
+        if (normalizedState && String(item?.status || '').trim().toLowerCase() !== normalizedState) return false;
+        if (normalizedOwner && getApprovalOwner(item) !== normalizedOwner) return false;
+        return true;
+      })
+      .slice(0, clampApprovalListLimit(limit));
+  }
+
+  function buildApprovalListMeta({ state = '', approvalKind = '', owner = '', limit = 20, rows = [] } = {}) {
+    const threshold = Number(KTRACE_JOB_APPROVAL_THRESHOLD || process.env.KTRACE_JOB_APPROVAL_THRESHOLD || 0);
+    const ttlMs = Math.max(
+      60_000,
+      Number(KTRACE_JOB_APPROVAL_TTL_MS || process.env.KTRACE_JOB_APPROVAL_TTL_MS || 0) || 24 * 60 * 60 * 1000
+    );
+    const counts = (Array.isArray(rows) ? rows : []).reduce(
+      (acc, item) => {
+        const itemState = String(item?.status || '').trim().toLowerCase() || 'pending';
+        const itemKind = normalizeApprovalKind(item?.approvalKind);
+        acc.byState[itemState] = Number(acc.byState[itemState] || 0) + 1;
+        acc.byKind[itemKind] = Number(acc.byKind[itemKind] || 0) + 1;
+        return acc;
+      },
+      { byState: {}, byKind: {} }
+    );
+    return {
+      filters: {
+        state: String(state || '').trim().toLowerCase(),
+        approvalKind: String(approvalKind || '').trim().toLowerCase(),
+        owner: normalizeSessionGrantAddress(owner || ''),
+        limit: clampApprovalListLimit(limit)
+      },
+      approvalPolicyDefaults: {
+        threshold,
+        ttlMs
+      },
+      counts
+    };
+  }
+
+  function extractApprovalApiKey(req = {}) {
+    const xApiKey = String(req.headers?.['x-api-key'] || '').trim();
+    if (xApiKey) return xApiKey;
+    const auth = String(req.headers?.authorization || '').trim();
+    if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
+    return '';
+  }
+
+  function extractApprovalAdminKey(req = {}) {
+    return String(req.headers?.['x-admin-key'] || '').trim();
+  }
+
+  function assertApprovalInboxAccess(req = {}) {
+    const configuredAdminKey = String(KTRACE_ADMIN_KEY || process.env.KTRACE_ADMIN_KEY || '').trim();
+    if (!configuredAdminKey) {
+      const error = new Error('Approval inbox auth is not configured on this backend.');
+      error.statusCode = 501;
+      error.code = 'approval_inbox_auth_not_configured';
+      throw error;
+    }
+    const providedAdminKey = extractApprovalAdminKey(req);
+    if (!providedAdminKey || providedAdminKey !== configuredAdminKey) {
+      const error = new Error('Approval inbox requires a valid X-Admin-Key header.');
+      error.statusCode = 403;
+      error.code = 'approval_inbox_forbidden';
+      throw error;
+    }
+  }
+
+  function canAccessApprovalWithApiKey(req = {}, { requireWrite = false } = {}) {
+    const role = resolveRoleByApiKey?.(extractApprovalApiKey(req)) || '';
+    if (!role) return false;
+    if (!requireWrite) return true;
+    return role === 'admin' || role === 'agent';
+  }
+
+  function getSessionApprovalRecordOrThrow(approvalRequestId = '', approvalToken = '', req = null, { requireWrite = false } = {}) {
+    const record = maybeExpireApprovalRecord(findSessionApprovalRequest(approvalRequestId));
+    if (!record) {
+      const error = new Error('Approval request not found.');
+      error.statusCode = 404;
+      error.code = 'approval_request_not_found';
+      throw error;
+    }
+    if (approvalToken && approvalToken === String(record.approvalToken || '').trim()) {
+      return record;
+    }
+    if (req && canAccessApprovalWithApiKey(req, { requireWrite })) {
+      return record;
+    }
+    if (!approvalToken || approvalToken !== String(record.approvalToken || '').trim()) {
+      const error = new Error('Approval request token is invalid.');
+      error.statusCode = 403;
+      error.code = 'approval_request_token_invalid';
+      throw error;
+    }
+    return record;
+  }
+
+  function buildApprovalReadResponse(record = {}, { includeToken = true } = {}) {
+    const approval = buildUnifiedApprovalPayload(record, { includeToken });
+    return {
+      approvalRequest: approval,
+      approval,
+      authorization: approval.authorization || null,
+      runtime: approval.runtime || null,
+      session: approval.session || null
+    };
+  }
+
+  function normalizeJobApprovalResumeToken(record = {}) {
+    const token =
+      record?.resumeToken && typeof record.resumeToken === 'object' && !Array.isArray(record.resumeToken)
+        ? record.resumeToken
+        : {};
+    const fundRequest =
+      token?.fundRequest && typeof token.fundRequest === 'object' && !Array.isArray(token.fundRequest)
+        ? token.fundRequest
+        : {};
+    return {
+      version: normalizeSessionGrantText(token?.version),
+      operation: normalizeSessionGrantText(token?.operation),
+      approvalId: normalizeSessionGrantText(
+        token?.approvalId || record?.approvalRequestId || record?.approvalId
+      ),
+      jobId: normalizeSessionGrantText(token?.jobId || record?.jobId),
+      traceId: normalizeSessionGrantText(token?.traceId || record?.traceId),
+      createdAt: Number(token?.createdAt || record?.createdAt || 0),
+      sessionAuthorizationRef: normalizeSessionGrantText(
+        token?.sessionAuthorizationRef || record?.sessionAuthorizationRef || record?.authorizationId
+      ),
+      fundRequest: {
+        budget: normalizeSessionGrantText(fundRequest?.budget),
+        escrowAmount: normalizeSessionGrantText(fundRequest?.escrowAmount),
+        tokenAddress: normalizeSessionGrantAddress(fundRequest?.tokenAddress || ''),
+        payerAaWallet: normalizeSessionGrantAddress(fundRequest?.payerAaWallet || ''),
+        requester: normalizeSessionGrantAddress(fundRequest?.requester || ''),
+        executor: normalizeSessionGrantAddress(fundRequest?.executor || ''),
+        validator: normalizeSessionGrantAddress(fundRequest?.validator || '')
+      }
+    };
+  }
+
+  async function finalizeJobApprovalRecord({ approvalRequestId = '', approvalToken = '', body = {}, traceId = '', req = null } = {}) {
+    const record = getSessionApprovalRecordOrThrow(approvalRequestId, approvalToken, req, { requireWrite: true });
+    const approvalId = String(record?.approvalRequestId || record?.approvalId || '').trim();
+    const status = String(record?.status || '').trim().toLowerCase();
+    if (status === 'completed') {
+      return {
+        record,
+        response: buildApprovalReadResponse(record, { includeToken: true })
+      };
+    }
+    if (status === 'rejected') {
+      const error = new Error('Approval request has already been rejected.');
+      error.statusCode = 409;
+      error.code = 'approval_request_rejected';
+      throw error;
+    }
+    if (status === 'expired') {
+      const error = new Error('Approval request has expired.');
+      error.statusCode = 409;
+      error.code = 'approval_request_expired';
+      throw error;
+    }
+
+    const jobId = String(record?.jobId || '').trim();
+    const relatedJob =
+      readJobs?.().find((item) => String(item?.jobId || '').trim() === jobId) || null;
+    if (!relatedJob) {
+      const error = new Error('Related job not found for approval request.');
+      error.statusCode = 404;
+      error.code = 'approval_job_not_found';
+      throw error;
+    }
+
+    const decidedBy = normalizeSessionGrantAddress(
+      body?.decidedBy || body?.owner || body?.userEoa || record?.requestedByOwnerEoa || ''
+    );
+    const decisionNote = String(body?.reason || body?.note || '').trim();
+    const approvedAt = Date.now();
+    const approvedRecord = updateSessionApprovalRequest(approvalId, {
+      status: 'approved',
+      updatedAt: approvedAt,
+      decidedAt: approvedAt,
+      completedAt: 0,
+      decidedBy,
+      decisionNote,
+      resumeStatus: 'resuming',
+      resumeError: ''
+    });
+
+    upsertJobRecord?.({
+      ...relatedJob,
+      state: 'pending_approval',
+      approvalId,
+      approvalState: 'approved',
+      approvalDecidedAt: approvedAt,
+      approvalDecidedBy: decidedBy,
+      approvalDecisionNote: decisionNote,
+      updatedAt: new Date().toISOString(),
+      summary: 'Job approval granted. Funding is resuming.',
+      error: ''
+    });
+
+    const headers = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    };
+    const internalApiKey = getInternalAgentApiKey?.();
+    if (internalApiKey) headers['x-api-key'] = internalApiKey;
+
+    let resumeResponse;
+    let resumePayload = {};
+    const resumeToken = normalizeJobApprovalResumeToken(record);
+    try {
+      resumeResponse = await fetch(
+        `http://127.0.0.1:${PORT}/api/jobs/${encodeURIComponent(jobId)}/fund`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            approvalId: resumeToken.approvalId || approvalId,
+            approvalRequestId: resumeToken.approvalId || approvalId,
+            budget: resumeToken.fundRequest.budget,
+            escrowAmount: resumeToken.fundRequest.escrowAmount,
+            tokenAddress: resumeToken.fundRequest.tokenAddress,
+            payerAaWallet: resumeToken.fundRequest.payerAaWallet,
+            requester: resumeToken.fundRequest.requester,
+            executor: resumeToken.fundRequest.executor,
+            validator: resumeToken.fundRequest.validator,
+            sessionAuthorizationRef: resumeToken.sessionAuthorizationRef
+          })
+        }
+      );
+      resumePayload = await resumeResponse.json().catch(() => ({}));
+    } catch (error) {
+      updateSessionApprovalRequest(approvalId, {
+        status: 'approved',
+        updatedAt: Date.now(),
+        resumeStatus: 'failed',
+        resumeError: String(error?.message || 'job approval resume failed').trim()
+      });
+      const failed = findSessionApprovalRequest(approvalId) || approvedRecord || record;
+      return {
+        record: failed,
+        response: buildApprovalReadResponse(failed, { includeToken: true })
+      };
+    }
+
+    const refreshed = findSessionApprovalRequest(approvalId) || approvedRecord || record;
+    if (!resumeResponse?.ok) {
+      return {
+        record: refreshed,
+        response: {
+          ...buildApprovalReadResponse(refreshed, { includeToken: true }),
+          resume: {
+            ok: false,
+            status: Number(resumeResponse?.status || 0),
+            payload: resumePayload,
+            traceId: traceId || ''
+          }
+        }
+      };
+    }
+
+    const completedRecord = findSessionApprovalRequest(approvalId) || refreshed;
+    return {
+      record: completedRecord,
+      response: {
+        ...buildApprovalReadResponse(completedRecord, { includeToken: true }),
+        resume: {
+          ok: true,
+          status: Number(resumeResponse?.status || 200),
+          payload: resumePayload,
+          traceId: traceId || ''
+        }
+      }
+    };
+  }
+
+  async function finalizeSessionApprovalRecord({ approvalRequestId = '', approvalToken = '', body = {}, traceId = '', req = null } = {}) {
+    const record = getSessionApprovalRecordOrThrow(approvalRequestId, approvalToken, req, { requireWrite: true });
+    if (normalizeApprovalKind(record?.approvalKind) === 'job') {
+      return finalizeJobApprovalRecord({ approvalRequestId, approvalToken, body, traceId, req });
+    }
+    const status = String(record.status || '').trim().toLowerCase();
+    if (status === 'completed') {
+      return {
+        record,
+        response: buildApprovalReadResponse(record, { includeToken: true })
+      };
+    }
+    if (status === 'rejected') {
+      const error = new Error('Approval request has already been rejected.');
+      error.statusCode = 409;
+      error.code = 'approval_request_rejected';
+      throw error;
+    }
+
+    const finalized = await finalizeSessionAuthorization({
+      body,
+      traceId,
+      approvalRequest: record
+    });
+    const completedRecord = updateSessionApprovalRequest(approvalRequestId, {
+      status: 'completed',
+      updatedAt: Date.now(),
+      completedAt: finalized.authorizedAt,
+      authorizationId: finalized.authorizationId,
+      authorization: {
+        authorizationId: finalized.authorizationId,
+        mode: finalized.authorizationMode,
+        authorizedBy: finalized.userEoa,
+        authorizedAt: finalized.authorizedAt,
+        payload: finalized.payload,
+        payloadHash: finalized.authorizationPayloadHash,
+        signatureMasked: maskSecret(finalized.userSignature),
+        expiresAt: finalized.payload.expiresAt,
+        nonce: finalized.payload.nonce,
+        allowedCapabilities: finalized.payload.allowedCapabilities
+      },
+      runtime: finalized.nextRuntime
+    });
+    return {
+      record: completedRecord,
+      response: buildApprovalReadResponse(completedRecord, { includeToken: true })
+    };
+  }
+
+  function rejectJobApprovalRecord({ approvalRequestId = '', approvalToken = '', reason = '', req = null } = {}) {
+    const record = getSessionApprovalRecordOrThrow(approvalRequestId, approvalToken, req, { requireWrite: true });
+    const approvalId = String(record?.approvalRequestId || record?.approvalId || '').trim();
+    const status = String(record?.status || '').trim().toLowerCase();
+    if (status === 'rejected') {
+      return buildApprovalReadResponse(record, { includeToken: true });
+    }
+    if (status === 'completed') {
+      const error = new Error('Approval request has already been completed.');
+      error.statusCode = 409;
+      error.code = 'approval_request_completed';
+      throw error;
+    }
+
+    const rejectedAt = Date.now();
+    const decisionNote = String(reason || '').trim();
+    const rejectedRecord = updateSessionApprovalRequest(approvalId, {
+      status: 'rejected',
+      updatedAt: rejectedAt,
+      completedAt: rejectedAt,
+      decidedAt: rejectedAt,
+      decidedBy: normalizeSessionGrantAddress(record?.requestedByOwnerEoa || ''),
+      decisionNote,
+      rejectionReason: decisionNote,
+      resumeStatus: 'cancelled',
+      resumeError: ''
+    });
+
+    const relatedJob =
+      readJobs?.().find((item) => String(item?.jobId || '').trim() === String(record?.jobId || '').trim()) || null;
+    if (relatedJob) {
+      upsertJobRecord?.({
+        ...relatedJob,
+        state: 'approval_rejected',
+        approvalId,
+        approvalState: 'rejected',
+        approvalDecidedAt: rejectedAt,
+        approvalDecidedBy: normalizeSessionGrantAddress(record?.requestedByOwnerEoa || ''),
+        approvalDecisionNote: decisionNote,
+        updatedAt: new Date().toISOString(),
+        summary: 'Job funding was rejected by the owner.',
+        error: 'approval_rejected'
+      });
+    }
+
+    return buildApprovalReadResponse(rejectedRecord, { includeToken: true });
+  }
+
+  function rejectSessionApprovalRecord({ approvalRequestId = '', approvalToken = '', reason = '', req = null } = {}) {
+    const record = getSessionApprovalRecordOrThrow(approvalRequestId, approvalToken, req, { requireWrite: true });
+    if (normalizeApprovalKind(record?.approvalKind) === 'job') {
+      return rejectJobApprovalRecord({ approvalRequestId, approvalToken, reason, req });
+    }
+    const status = String(record.status || '').trim().toLowerCase();
+    if (status === 'rejected') {
+      return buildApprovalReadResponse(record, { includeToken: true });
+    }
+    if (status === 'completed') {
+      const error = new Error('Approval request has already been completed.');
+      error.statusCode = 409;
+      error.code = 'approval_request_completed';
+      throw error;
+    }
+    const rejectedRecord = updateSessionApprovalRequest(approvalRequestId, {
+      status: 'rejected',
+      updatedAt: Date.now(),
+      completedAt: Date.now(),
+      rejectionReason: String(reason || '').trim()
+    });
+    return buildApprovalReadResponse(rejectedRecord, { includeToken: true });
+  }
+
   function normalizePositiveAmount(rawValue, fallbackValue, label = 'amount') {
-    const candidate = String(rawValue ?? fallbackValue ?? '').trim();
+    const rawText = String(rawValue ?? '').trim();
+    const fallbackText = String(fallbackValue ?? '').trim();
+    const candidate = rawText || fallbackText;
     const numeric = Number(candidate);
     if (!Number.isFinite(numeric) || numeric <= 0) {
       throw new Error(`${label} must be a positive number.`);
@@ -207,16 +927,165 @@
     };
   }
 
+  function shouldRetryRpcRead(error = null) {
+    const text = [
+      String(error?.message || ''),
+      String(error?.code || ''),
+      String(error?.shortMessage || ''),
+      String(error?.cause?.message || ''),
+      String(error?.cause?.code || '')
+    ]
+      .join(' ')
+      .trim()
+      .toLowerCase();
+    if (!text) return false;
+    return (
+      text.includes('econnreset') ||
+      text.includes('timeout') ||
+      text.includes('timed out') ||
+      text.includes('network') ||
+      text.includes('socket') ||
+      text.includes('tls') ||
+      text.includes('fetch failed') ||
+      text.includes('aborted')
+    );
+  }
+
+  async function withRpcReadRetry(task, { attempts = 3, delayMs = 1200 } = {}) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= Math.max(1, Number(attempts || 1)); attempt += 1) {
+      try {
+        return await task();
+      } catch (error) {
+        lastError = error;
+        if (attempt >= attempts || !shouldRetryRpcRead(error)) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+      }
+    }
+    throw lastError || new Error('rpc_read_failed');
+  }
+
   async function isSessionRuntimeReadyOnchain(runtime = {}, contract = null) {
     if (!contract) return false;
     if (!ethers.isAddress(runtime?.aaWallet || '')) return false;
     if (!ethers.isAddress(runtime?.sessionAddress || '')) return false;
     if (!/^0x[0-9a-fA-F]{64}$/.test(String(runtime?.sessionId || ''))) return false;
-    const [exists, onchainAgent] = await Promise.all([
-      contract.sessionExists(runtime.sessionId),
-      contract.getSessionAgent(runtime.sessionId)
-    ]);
+    const [exists, onchainAgent] = await withRpcReadRetry(() =>
+      Promise.all([contract.sessionExists(runtime.sessionId), contract.getSessionAgent(runtime.sessionId)])
+    );
     return Boolean(exists) && normalizeAddress(onchainAgent || '') === normalizeAddress(runtime.sessionAddress || '');
+  }
+
+  async function verifyExternalSessionRuntime({
+    runtime = {},
+    payload = {},
+    userEoa = ''
+  } = {}) {
+    const provider = backendSigner?.provider || new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+    const suppliedOwner = normalizeAddress(runtime.owner || '');
+    const sessionPrivateKey = String(runtime.sessionPrivateKey || '').trim();
+    const hasSessionPrivateKey = /^0x[0-9a-fA-F]{64}$/.test(sessionPrivateKey);
+    const sessionWallet = hasSessionPrivateKey ? new ethers.Wallet(sessionPrivateKey) : null;
+    const sessionAddress = normalizeAddress(runtime.sessionAddress || sessionWallet?.address || '');
+    const aaWallet = normalizeAddress(runtime.aaWallet || payload.payerAaWallet || '');
+    const sessionId = String(runtime.sessionId || '').trim();
+    const sessionTxHash = String(runtime.sessionTxHash || '').trim();
+    const normalizedUserEoa = normalizeAddress(userEoa || '');
+    if (!aaWallet || !ethers.isAddress(aaWallet)) {
+      throw new Error('A valid aaWallet is required for self-custodial session import.');
+    }
+    if (!sessionAddress || !ethers.isAddress(sessionAddress)) {
+      throw new Error('A valid sessionAddress is required for self-custodial session import.');
+    }
+    if (hasSessionPrivateKey && sessionAddress !== normalizeAddress(sessionWallet?.address || '')) {
+      throw new Error('sessionPrivateKey does not match the supplied sessionAddress.');
+    }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(sessionId)) {
+      throw new Error('A valid sessionId is required for self-custodial session import.');
+    }
+    if (sessionTxHash && !/^0x[0-9a-fA-F]{64}$/.test(sessionTxHash)) {
+      throw new Error('sessionTxHash must be a valid transaction hash when provided.');
+    }
+    if (payload?.payerAaWallet && normalizeAddress(payload.payerAaWallet || '') !== aaWallet) {
+      throw new Error('authorization payload payerAaWallet does not match the supplied aaWallet.');
+    }
+
+    const accountCode = await withRpcReadRetry(() => provider.getCode(aaWallet));
+    if (!accountCode || accountCode === '0x') {
+      throw new Error(`No contract code found at aaWallet: ${aaWallet}`);
+    }
+
+    const account = new ethers.Contract(aaWallet, AA_SESSION_ABI, provider);
+    const [exists, onchainAgent, onchainOwnerRaw] = await withRpcReadRetry(() =>
+      Promise.all([
+        account.sessionExists(sessionId),
+        account.getSessionAgent(sessionId),
+        account.owner().catch(() => '')
+      ])
+    );
+    if (!exists) {
+      throw new Error(`Session not found on-chain: ${sessionId}`);
+    }
+    if (normalizeAddress(onchainAgent || '') !== sessionAddress) {
+      throw new Error(`On-chain session agent mismatch. expected=${onchainAgent}, supplied=${sessionAddress}`);
+    }
+
+    const onchainOwner = normalizeAddress(onchainOwnerRaw || '');
+    const resolvedOwner = suppliedOwner || onchainOwner || normalizedUserEoa;
+    if (!resolvedOwner || !ethers.isAddress(resolvedOwner)) {
+      throw new Error('A valid owner address is required for self-custodial session import.');
+    }
+    if (onchainOwner && resolvedOwner !== onchainOwner) {
+      throw new Error(`AA owner mismatch. onchain=${onchainOwner}, supplied=${resolvedOwner}`);
+    }
+
+    if (KITE_REQUIRE_AA_V2) {
+      let aaVersion = '';
+      try {
+        aaVersion = String(await withRpcReadRetry(() => account.version())).trim();
+      } catch {
+        aaVersion = '';
+      }
+      if (aaVersion !== AA_V2_VERSION_TAG) {
+        throw new Error(
+          `AA must be upgraded to V2 for session-userop payments. required=${AA_V2_VERSION_TAG}, current=${aaVersion || 'unknown_or_legacy'}`
+        );
+      }
+    }
+
+    const maxPerTx = normalizePositiveAmount(
+      payload?.singleLimit,
+      runtime.maxPerTx || POLICY_MAX_PER_TX_DEFAULT,
+      'singleLimit'
+    );
+    const dailyLimit = normalizePositiveAmount(
+      payload?.dailyLimit,
+      runtime.dailyLimit || POLICY_DAILY_LIMIT_DEFAULT,
+      'dailyLimit'
+    );
+    const gatewayRecipient = normalizeAddress(
+      runtime.gatewayRecipient || payload?.gatewayRecipient || MERCHANT_ADDRESS || ''
+    );
+    if (!gatewayRecipient || !ethers.isAddress(gatewayRecipient)) {
+      throw new Error('A valid gatewayRecipient is required for self-custodial session import.');
+    }
+
+    return {
+      aaWallet,
+      owner: resolvedOwner,
+      sessionAddress,
+      sessionPrivateKey: hasSessionPrivateKey ? sessionPrivateKey : '',
+      sessionId,
+      sessionTxHash,
+      expiresAt: Number(runtime.expiresAt || 0),
+      maxPerTx: maxPerTx.numeric,
+      dailyLimit: dailyLimit.numeric,
+      gatewayRecipient,
+      source: String(runtime.source || (hasSessionPrivateKey ? 'api-v1-session-authorize-external' : 'api-v1-session-authorize-agent-first')).trim(),
+      updatedAt: Date.now()
+    };
   }
 
   async function ensureBackendSessionRuntime({
@@ -227,21 +1096,24 @@
     gatewayRecipient = '',
     forceNewSession = false
   } = {}) {
-    const routerOwnerKey = String(ROUTER_WALLET_KEY_NORMALIZED || '').trim();
-    if (!routerOwnerKey) {
-      throw new Error('Router owner key unavailable. Set XMTP_ROUTER_WALLET_KEY in backend environment.');
-    }
-
     const provider = backendSigner?.provider || new ethers.JsonRpcProvider(BACKEND_RPC_URL);
-    const ownerWallet = new ethers.Wallet(routerOwnerKey, provider);
-    const signerOwner = normalizeAddress(ownerWallet.address || XMTP_ROUTER_DERIVED_ADDRESS || '');
-    const currentRuntime = readSessionRuntime();
-    const requestedOwner = normalizeAddress(owner || currentRuntime.owner || signerOwner || '');
+    const fallbackRouterOwner = normalizeAddress(XMTP_ROUTER_DERIVED_ADDRESS || '');
+    const currentRuntime = resolveSessionRuntime({ owner });
+    const requestedOwner = normalizeAddress(owner || currentRuntime.owner || fallbackRouterOwner || '');
     if (!ethers.isAddress(requestedOwner)) {
       throw new Error('A valid owner address is required for session creation.');
     }
+
+    const managedOwnerKey =
+      String(resolveSessionOwnerPrivateKey?.(requestedOwner) || '').trim() ||
+      String(ROUTER_WALLET_KEY_NORMALIZED || '').trim();
+    if (!managedOwnerKey) {
+      throw new Error(`Owner key unavailable for requested owner: ${requestedOwner}`);
+    }
+    const ownerWallet = new ethers.Wallet(managedOwnerKey, provider);
+    const signerOwner = normalizeAddress(ownerWallet.address || '');
     if (requestedOwner !== signerOwner) {
-      throw new Error(`Owner mismatch. requested=${requestedOwner} signer=${signerOwner}`);
+      throw new Error(`Owner key mismatch. requested=${requestedOwner} signer=${signerOwner}`);
     }
 
     const saltRaw = String(process.env.KITECLAW_AA_SALT ?? '0').trim();
@@ -688,7 +1560,11 @@
   });
   
   app.get('/api/session/runtime', requireRole('viewer'), (req, res) => {
-    const runtime = readSessionRuntime();
+    const runtime = resolveSessionRuntime({
+      owner: req.query.owner,
+      aaWallet: req.query.aaWallet,
+      sessionId: req.query.sessionId
+    });
     return res.json({
       ok: true,
       runtime: buildSessionRuntimePayload(runtime)
@@ -734,7 +1610,11 @@
   });
   
   app.get('/api/session/runtime/secret', requireRole('admin'), (req, res) => {
-    const runtime = readSessionRuntime();
+    const runtime = resolveSessionRuntime({
+      owner: req.query.owner,
+      aaWallet: req.query.aaWallet,
+      sessionId: req.query.sessionId
+    });
     return res.json({
       ok: true,
       runtime
@@ -821,70 +1701,409 @@
     }
   });
 
-  app.post('/api/v1/session/authorize', requireRole('admin'), async (req, res) => {
+  async function finalizeSessionAuthorization({
+    body = {},
+    traceId = '',
+    approvalRequest = null
+  } = {}) {
+    const executionModeRaw = String(body.executionMode || body.sessionStrategy || '').trim().toLowerCase();
+    const executionMode =
+      executionModeRaw === 'external' ||
+      executionModeRaw === 'self-custodial' ||
+      executionModeRaw === 'self_custodial'
+        ? 'external'
+        : 'managed';
+    const rawPayload =
+      body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
+        ? body.payload
+        : {};
+    const profile = await readIdentityProfile({
+      registry: rawPayload.identityRegistry || body.identityRegistry,
+      agentId: rawPayload.agentId || body.agentId
+    });
+    if (!profile?.available) {
+      const error = new Error(profile?.reason || 'identity_unavailable');
+      error.statusCode = 400;
+      error.code = 'identity_unavailable';
+      error.data = {
+        profile: buildIdentitySummary(profile)
+      };
+      throw error;
+    }
+
+    const currentRuntime = readSessionRuntime();
+    const fallbackPayload = {
+      agentId: String(profile?.configured?.agentId || '').trim(),
+      agentWallet: normalizeSessionGrantAddress(profile?.agentWallet || ''),
+      identityRegistry: normalizeSessionGrantAddress(profile?.configured?.registry || ''),
+      chainId: String(profile?.chainId || '').trim(),
+      payerAaWallet: normalizeSessionGrantAddress(currentRuntime?.aaWallet || ''),
+      tokenAddress: normalizeSessionGrantAddress(
+        rawPayload.tokenAddress || body.tokenAddress || body.token || SETTLEMENT_TOKEN || ''
+      ),
+      gatewayRecipient: normalizeSessionGrantAddress(
+        rawPayload.gatewayRecipient || body.gatewayRecipient || currentRuntime?.gatewayRecipient || MERCHANT_ADDRESS || ''
+      ),
+      audience: normalizeSessionGrantText(
+        rawPayload.audience,
+        `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`
+      ),
+      singleLimit: normalizeSessionGrantAmount(
+        rawPayload.singleLimit,
+        body.singleLimit || currentRuntime?.maxPerTx || POLICY_MAX_PER_TX_DEFAULT
+      ),
+      dailyLimit: normalizeSessionGrantAmount(
+        rawPayload.dailyLimit,
+        body.dailyLimit || currentRuntime?.dailyLimit || POLICY_DAILY_LIMIT_DEFAULT
+      ),
+      allowedCapabilities: rawPayload.allowedCapabilities || body.allowedCapabilities || [],
+      nonce:
+        rawPayload.nonce ||
+        (body.nonce ? String(body.nonce || '').trim() : `0x${crypto.randomBytes(16).toString('hex')}`),
+      issuedAt: rawPayload.issuedAt || body.issuedAt || Date.now(),
+      expiresAt: rawPayload.expiresAt || body.expiresAt || Date.now() + 24 * 60 * 60 * 1000
+    };
+    const payload = normalizeSessionGrantPayload(rawPayload, fallbackPayload);
+    if (
+      approvalRequest &&
+      approvalRequest.payload &&
+      typeof approvalRequest.payload === 'object' &&
+      !Array.isArray(approvalRequest.payload)
+    ) {
+      const requestPayload = normalizeSessionGrantPayload(approvalRequest.payload);
+      if (
+        payload.agentId !== requestPayload.agentId ||
+        payload.identityRegistry !== requestPayload.identityRegistry ||
+        payload.agentWallet !== requestPayload.agentWallet ||
+        payload.tokenAddress !== requestPayload.tokenAddress ||
+        payload.gatewayRecipient !== requestPayload.gatewayRecipient ||
+        payload.singleLimit !== requestPayload.singleLimit ||
+        payload.dailyLimit !== requestPayload.dailyLimit ||
+        payload.audience !== requestPayload.audience ||
+        payload.nonce !== requestPayload.nonce
+      ) {
+        const error = new Error('Approval completion payload does not match the pending approval request.');
+        error.statusCode = 400;
+        error.code = 'approval_request_payload_mismatch';
+        throw error;
+      }
+      if (payload.expiresAt !== requestPayload.expiresAt) {
+        payload.expiresAt = requestPayload.expiresAt;
+      }
+    }
+    if (!payload.agentId || !payload.identityRegistry || !payload.agentWallet) {
+      const error = new Error(
+        'Session authorization payload must include agentId, identityRegistry, and agentWallet.'
+      );
+      error.statusCode = 400;
+      error.code = 'authorization_payload_invalid';
+      error.data = { payload };
+      throw error;
+    }
+    if (!payload.singleLimit || !payload.dailyLimit) {
+      const error = new Error(
+        'Session authorization payload must include positive singleLimit and dailyLimit values.'
+      );
+      error.statusCode = 400;
+      error.code = 'authorization_limits_invalid';
+      error.data = { payload };
+      throw error;
+    }
+    if (!payload.nonce) {
+      const error = new Error('Session authorization payload must include a nonce.');
+      error.statusCode = 400;
+      error.code = 'authorization_nonce_required';
+      throw error;
+    }
+    if (!payload.expiresAt || payload.expiresAt <= Date.now()) {
+      const error = new Error('Session authorization payload is already expired.');
+      error.statusCode = 400;
+      error.code = 'authorization_expired';
+      error.data = { payload };
+      throw error;
+    }
+    if (payload.issuedAt > Date.now() + 5 * 60 * 1000) {
+      const error = new Error('Session authorization issuedAt is too far in the future.');
+      error.statusCode = 400;
+      error.code = 'authorization_issued_at_invalid';
+      error.data = { payload };
+      throw error;
+    }
+
+    const expectedRegistry = normalizeSessionGrantAddress(profile?.configured?.registry || '');
+    const expectedAgentId = String(profile?.configured?.agentId || '').trim();
+    const expectedAgentWallet = normalizeSessionGrantAddress(profile?.agentWallet || '');
+    if (payload.identityRegistry !== expectedRegistry || payload.agentId !== expectedAgentId) {
+      const error = new Error('Session authorization payload does not match the resolved ERC-8004 identity.');
+      error.statusCode = 400;
+      error.code = 'authorization_identity_mismatch';
+      error.data = {
+        payload,
+        profile: buildIdentitySummary(profile)
+      };
+      throw error;
+    }
+    if (payload.agentWallet !== expectedAgentWallet) {
+      const error = new Error(
+        'Session authorization payload agentWallet does not match the ERC-8004 agent wallet.'
+      );
+      error.statusCode = 400;
+      error.code = 'authorization_agent_wallet_mismatch';
+      error.data = {
+        payload,
+        profile: buildIdentitySummary(profile)
+      };
+      throw error;
+    }
+
+    const userSignature = String(body.userSignature || body.signature || '').trim();
+    if (!userSignature) {
+      const error = new Error('userSignature is required for session authorization.');
+      error.statusCode = 400;
+      error.code = 'authorization_signature_required';
+      throw error;
+    }
+    const recoveredAddress = normalizeSessionGrantAddress(
+      ethers.verifyMessage(
+        createSessionAuthorizationMessage({
+          payload,
+          userEoa: body.userEoa || ''
+        }),
+        userSignature
+      )
+    );
+    const userEoa = normalizeSessionGrantAddress(body.userEoa || recoveredAddress || '');
+    if (!userEoa) {
+      const error = new Error('userEoa is invalid.');
+      error.statusCode = 400;
+      error.code = 'authorization_user_eoa_invalid';
+      throw error;
+    }
+    if (recoveredAddress !== userEoa) {
+      const error = new Error(`Signature recovered ${recoveredAddress || '-'} but expected ${userEoa}.`);
+      error.statusCode = 400;
+      error.code = 'authorization_signature_invalid';
+      throw error;
+    }
+    if (
+      approvalRequest?.userEoa &&
+      normalizeSessionGrantAddress(approvalRequest.userEoa || '') !== userEoa
+    ) {
+      const error = new Error('Approval request was created for a different user EOA.');
+      error.statusCode = 400;
+      error.code = 'approval_request_user_mismatch';
+      throw error;
+    }
+
+    const authorizationRows = normalizeSessionAuthorizationRows(readSessionAuthorizations());
+    const duplicateNonce = authorizationRows.find(
+      (item) =>
+        String(item?.authorizationNonce || '').trim() === payload.nonce &&
+        normalizeSessionGrantAddress(item?.authorizedBy || '') === userEoa
+    );
+    if (duplicateNonce) {
+      const error = new Error('This session authorization nonce was already used for the same user.');
+      error.statusCode = 409;
+      error.code = 'authorization_nonce_reused';
+      error.data = {
+        authorizationId: String(duplicateNonce.authorizationId || '').trim()
+      };
+      throw error;
+    }
+
+    const ensured =
+      executionMode === 'external'
+        ? null
+        : await ensureBackendSessionRuntime({
+            owner: body.owner,
+            singleLimit: payload.singleLimit,
+            dailyLimit: payload.dailyLimit,
+            tokenAddress: payload.tokenAddress,
+            gatewayRecipient: payload.gatewayRecipient,
+            forceNewSession: /^(1|true|yes|on)$/i.test(String(body.forceNewSession || '').trim())
+          });
+    const externalRuntime =
+      executionMode === 'external'
+        ? await verifyExternalSessionRuntime({
+            runtime: body.runtime && typeof body.runtime === 'object' ? body.runtime : {},
+            payload,
+            userEoa
+          })
+        : null;
+    if (
+      approvalRequest?.sessionAddress &&
+      normalizeSessionGrantAddress(approvalRequest.sessionAddress || '') !==
+        normalizeSessionGrantAddress(externalRuntime?.sessionAddress || '')
+    ) {
+      const error = new Error('Approval completion sessionAddress does not match the requested sessionAddress.');
+      error.statusCode = 400;
+      error.code = 'approval_request_session_mismatch';
+      throw error;
+    }
+
+    const authorizedAt = Date.now();
+    const authorizationPayloadHash = hashSessionGrantPayload(payload);
+    const authorizationId = createTraceId('sga');
+    const authorizationMode =
+      executionMode === 'external' ? 'user_grant_self_custodial' : 'user_grant_backend_executed';
+    const authorizationRecord = appendSessionAuthorizationRecord({
+      authorizationId,
+      traceId,
+      authorizedBy: userEoa,
+      authorizedAt,
+      authorizationMode,
+      authorizationPayload: payload,
+      authorizationPayloadHash,
+      authorizationSignature: userSignature,
+      authorizationNonce: payload.nonce,
+      authorizationExpiresAt: payload.expiresAt,
+      authorizedAgentId: payload.agentId,
+      authorizedAgentWallet: payload.agentWallet,
+      authorizationAudience: payload.audience,
+      allowedCapabilities: payload.allowedCapabilities,
+      status: 'authorized',
+      created: ensured?.created ? 1 : 0,
+      reused: ensured?.reused ? 1 : 0
+    });
+
+    const nextRuntime = writeSessionRuntime({
+      ...(executionMode === 'external' ? externalRuntime : ensured.runtime),
+      authorizedBy: userEoa,
+      authorizedAt,
+      authorizationMode,
+      authorizationPayload: payload,
+      authorizationPayloadHash,
+      authorizationSignature: userSignature,
+      authorizationNonce: payload.nonce,
+      authorizationExpiresAt: payload.expiresAt,
+      authorizedAgentId: payload.agentId,
+      authorizedAgentWallet: payload.agentWallet,
+      authorizationAudience: payload.audience,
+      allowedCapabilities: payload.allowedCapabilities,
+      source: approvalRequest ? 'api-session-approval-complete' : 'api-v1-session-authorize',
+      updatedAt: Date.now()
+    });
+
+    return {
+      profile,
+      payload,
+      executionMode,
+      ensured,
+      externalRuntime,
+      nextRuntime,
+      authorizationId,
+      authorizationMode,
+      authorizationPayloadHash,
+      authorizationRecord,
+      authorizedAt,
+      userEoa,
+      userSignature
+    };
+  }
+
+  app.post('/api/v1/session/authorize', requireRole('agent'), async (req, res) => {
+    try {
+      const finalized = await finalizeSessionAuthorization({
+        body: req.body || {},
+        traceId: req.traceId || ''
+      });
+
+      return res.json({
+        ok: true,
+        schemaVersion: 'v1',
+        traceId: req.traceId || '',
+        created: Boolean(finalized?.ensured?.created),
+        reused: Boolean(finalized?.ensured?.reused),
+        imported: finalized.executionMode === 'external',
+        executionMode: finalized.executionMode,
+        authorizedBy: finalized.userEoa,
+        authorization: {
+          authorizationId: finalized.authorizationId,
+          mode: finalized.authorizationMode,
+          authorizedBy: finalized.userEoa,
+          authorizedAt: finalized.authorizedAt,
+          payload: finalized.payload,
+          payloadHash: finalized.authorizationPayloadHash,
+          signatureMasked: maskSecret(finalized.userSignature),
+          expiresAt: finalized.payload.expiresAt,
+          nonce: finalized.payload.nonce,
+          allowedCapabilities: finalized.payload.allowedCapabilities
+        },
+        session: {
+          address: finalized.nextRuntime.sessionAddress,
+          id: finalized.nextRuntime.sessionId,
+          txHash: finalized.nextRuntime.sessionTxHash,
+          maxPerTx: finalized.nextRuntime.maxPerTx,
+          dailyLimit: finalized.nextRuntime.dailyLimit,
+          gatewayRecipient: finalized.nextRuntime.gatewayRecipient,
+          tokenAddress: finalized.payload.tokenAddress,
+          authorizedBy: finalized.nextRuntime.authorizedBy,
+          authorizationMode: finalized.nextRuntime.authorizationMode
+        },
+        runtime: buildSessionRuntimePayload(finalized.nextRuntime),
+        record: finalized.authorizationRecord
+      });
+    } catch (error) {
+      const reason = error?.message || 'session_authorize_failed';
+      const status = Number(error?.statusCode || 0) || (/already used|reused/i.test(reason) ? 409 : 400);
+      return res.status(status).json({
+        ok: false,
+        schemaVersion: 'v1',
+        error: error?.code || 'session_authorize_failed',
+        reason,
+        traceId: req.traceId || '',
+        ...(error?.data && typeof error.data === 'object' ? error.data : {})
+      });
+    }
+  });
+
+  app.post('/api/v1/session/approval-requests', requireRole('agent'), async (req, res) => {
     try {
       const body = req.body || {};
+      const executionModeRaw = String(body.executionMode || '').trim().toLowerCase();
+      const executionMode =
+        executionModeRaw === 'external' ||
+        executionModeRaw === 'self-custodial' ||
+        executionModeRaw === 'self_custodial'
+          ? 'external'
+          : 'managed';
+      if (executionMode !== 'external') {
+        return res.status(400).json({
+          ok: false,
+          error: 'approval_request_external_only',
+          reason: 'Agent-first approval requests currently require executionMode=external.',
+          traceId: req.traceId || ''
+        });
+      }
+
       const rawPayload =
         body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
           ? body.payload
           : {};
-      const profile = await readIdentityProfile({
-        registry: rawPayload.identityRegistry || body.identityRegistry,
-        agentId: rawPayload.agentId || body.agentId
-      });
-      if (!profile?.available) {
-        return res.status(400).json({
-          ok: false,
-          schemaVersion: 'v1',
-          error: 'identity_unavailable',
-          reason: profile?.reason || 'identity_unavailable',
-          traceId: req.traceId || '',
-          profile: buildIdentitySummary(profile)
-        });
-      }
-
-      const currentRuntime = readSessionRuntime();
-      const fallbackPayload = {
-        agentId: String(profile?.configured?.agentId || '').trim(),
-        agentWallet: normalizeSessionGrantAddress(profile?.agentWallet || ''),
-        identityRegistry: normalizeSessionGrantAddress(profile?.configured?.registry || ''),
-        chainId: String(profile?.chainId || '').trim(),
-        payerAaWallet: normalizeSessionGrantAddress(currentRuntime?.aaWallet || ''),
-        tokenAddress: normalizeSessionGrantAddress(
-          rawPayload.tokenAddress || body.tokenAddress || body.token || SETTLEMENT_TOKEN || ''
-        ),
-        gatewayRecipient: normalizeSessionGrantAddress(
-          rawPayload.gatewayRecipient || body.gatewayRecipient || currentRuntime?.gatewayRecipient || MERCHANT_ADDRESS || ''
-        ),
+      const payload = normalizeSessionGrantPayload(rawPayload, {
         audience: normalizeSessionGrantText(
           rawPayload.audience,
           `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`
         ),
-        singleLimit: normalizeSessionGrantAmount(
-          rawPayload.singleLimit,
-          body.singleLimit || currentRuntime?.maxPerTx || POLICY_MAX_PER_TX_DEFAULT
-        ),
-        dailyLimit: normalizeSessionGrantAmount(
-          rawPayload.dailyLimit,
-          body.dailyLimit || currentRuntime?.dailyLimit || POLICY_DAILY_LIMIT_DEFAULT
-        ),
-        allowedCapabilities: rawPayload.allowedCapabilities || body.allowedCapabilities || [],
-        nonce:
-          rawPayload.nonce ||
-          (body.nonce ? String(body.nonce || '').trim() : `0x${crypto.randomBytes(16).toString('hex')}`),
-        issuedAt: rawPayload.issuedAt || body.issuedAt || Date.now(),
-        expiresAt:
-          rawPayload.expiresAt ||
-          body.expiresAt ||
-          Date.now() + 24 * 60 * 60 * 1000
-      };
-      const payload = normalizeSessionGrantPayload(rawPayload, fallbackPayload);
-      if (!payload.agentId || !payload.identityRegistry || !payload.agentWallet) {
+        nonce: rawPayload.nonce || `0x${crypto.randomBytes(16).toString('hex')}`,
+        issuedAt: rawPayload.issuedAt || Date.now(),
+        expiresAt: rawPayload.expiresAt || Date.now() + 24 * 60 * 60 * 1000
+      });
+      const userEoa = normalizeSessionGrantAddress(body.userEoa || '');
+      const sessionAddress = normalizeSessionGrantAddress(body.sessionAddress || '');
+      if (!userEoa || !sessionAddress) {
         return res.status(400).json({
           ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_payload_invalid',
-          reason: 'Session authorization payload must include agentId, identityRegistry, and agentWallet.',
+          error: 'approval_request_invalid',
+          reason: 'userEoa and sessionAddress are required to create an approval request.',
+          traceId: req.traceId || ''
+        });
+      }
+      if (!payload.agentId || !payload.agentWallet || !payload.identityRegistry) {
+        return res.status(400).json({
+          ok: false,
+          error: 'approval_request_identity_missing',
+          reason: 'Approval request payload is missing ERC-8004 identity fields.',
           traceId: req.traceId || '',
           payload
         });
@@ -892,220 +2111,260 @@
       if (!payload.singleLimit || !payload.dailyLimit) {
         return res.status(400).json({
           ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_limits_invalid',
-          reason: 'Session authorization payload must include positive singleLimit and dailyLimit values.',
+          error: 'approval_request_limits_invalid',
+          reason: 'Approval request payload must include positive singleLimit and dailyLimit values.',
           traceId: req.traceId || '',
           payload
-        });
-      }
-      if (!payload.nonce) {
-        return res.status(400).json({
-          ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_nonce_required',
-          reason: 'Session authorization payload must include a nonce.',
-          traceId: req.traceId || ''
         });
       }
       if (!payload.expiresAt || payload.expiresAt <= Date.now()) {
         return res.status(400).json({
           ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_expired',
-          reason: 'Session authorization payload is already expired.',
+          error: 'approval_request_expired',
+          reason: 'Approval request payload is already expired.',
           traceId: req.traceId || '',
           payload
         });
       }
-      if (payload.issuedAt > Date.now() + 5 * 60 * 1000) {
-        return res.status(400).json({
-          ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_issued_at_invalid',
-          reason: 'Session authorization issuedAt is too far in the future.',
-          traceId: req.traceId || '',
-          payload
-        });
-      }
-      const expectedRegistry = normalizeSessionGrantAddress(profile?.configured?.registry || '');
-      const expectedAgentId = String(profile?.configured?.agentId || '').trim();
-      const expectedAgentWallet = normalizeSessionGrantAddress(profile?.agentWallet || '');
-      if (payload.identityRegistry !== expectedRegistry || payload.agentId !== expectedAgentId) {
-        return res.status(400).json({
-          ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_identity_mismatch',
-          reason: 'Session authorization payload does not match the resolved ERC-8004 identity.',
-          traceId: req.traceId || '',
-          payload,
-          profile: buildIdentitySummary(profile)
-        });
-      }
-      if (payload.agentWallet !== expectedAgentWallet) {
-        return res.status(400).json({
-          ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_agent_wallet_mismatch',
-          reason: 'Session authorization payload agentWallet does not match the ERC-8004 agent wallet.',
-          traceId: req.traceId || '',
-          payload,
-          profile: buildIdentitySummary(profile)
-        });
-      }
 
-      const userSignature = String(body.userSignature || body.signature || '').trim();
-      if (!userSignature) {
-        return res.status(400).json({
-          ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_signature_required',
-          reason: 'userSignature is required for session authorization.',
-          traceId: req.traceId || ''
-        });
-      }
-      const recoveredAddress = normalizeSessionGrantAddress(
-        ethers.verifyMessage(
-          createSessionAuthorizationMessage({
-            payload,
-            userEoa: body.userEoa || ''
-          }),
-          userSignature
-        )
-      );
-      const userEoa = normalizeSessionGrantAddress(body.userEoa || recoveredAddress || '');
-      if (!userEoa) {
-        return res.status(400).json({
-          ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_user_eoa_invalid',
-          reason: 'userEoa is invalid.',
-          traceId: req.traceId || ''
-        });
-      }
-        if (recoveredAddress !== userEoa) {
-          return res.status(400).json({
-            ok: false,
-            schemaVersion: 'v1',
-            error: 'authorization_signature_invalid',
-            reason: `Signature recovered ${recoveredAddress || '-'} but expected ${userEoa}.`,
-            traceId: req.traceId || ''
-          });
-        }
-
-      const authorizationRows = normalizeSessionAuthorizationRows(readSessionAuthorizations());
-      const duplicateNonce = authorizationRows.find(
+      const duplicate = listSessionApprovalRequests().find(
         (item) =>
-          String(item?.authorizationNonce || '').trim() === payload.nonce &&
-          normalizeSessionGrantAddress(item?.authorizedBy || '') === userEoa
+          String(item.status || '').trim().toLowerCase() === 'pending' &&
+          normalizeSessionGrantAddress(item.userEoa || '') === userEoa &&
+          normalizeSessionGrantAddress(item.sessionAddress || '') === sessionAddress &&
+          String(item?.payload?.nonce || '').trim() === payload.nonce
       );
-      if (duplicateNonce) {
+      if (duplicate) {
+        const existing = buildSessionApprovalRequestPayload(duplicate, { includeToken: true });
         return res.status(409).json({
           ok: false,
-          schemaVersion: 'v1',
-          error: 'authorization_nonce_reused',
-          reason: 'This session authorization nonce was already used for the same user.',
+          error: 'approval_request_duplicate',
+          reason: 'A pending approval request already exists for this user/session/nonce.',
           traceId: req.traceId || '',
-          authorizationId: String(duplicateNonce.authorizationId || '').trim()
+          approvalRequest: existing
         });
       }
 
-      const ensured = await ensureBackendSessionRuntime({
-        singleLimit: payload.singleLimit,
-        dailyLimit: payload.dailyLimit,
-        tokenAddress: payload.tokenAddress,
-        gatewayRecipient: payload.gatewayRecipient,
-        forceNewSession: /^(1|true|yes|on)$/i.test(String(body.forceNewSession || '').trim())
-      });
-
-      const authorizedAt = Date.now();
-      const authorizationPayloadHash = hashSessionGrantPayload(payload);
-      const authorizationId = createTraceId('sga');
-      const authorizationRecord = appendSessionAuthorizationRecord({
-        authorizationId,
-        traceId: req.traceId || '',
-        authorizedBy: userEoa,
-        authorizedAt,
-        authorizationMode: 'user_grant_backend_executed',
-        authorizationPayload: payload,
-        authorizationPayloadHash,
-        authorizationSignature: userSignature,
-        authorizationNonce: payload.nonce,
-        authorizationExpiresAt: payload.expiresAt,
-        authorizedAgentId: payload.agentId,
-        authorizedAgentWallet: payload.agentWallet,
-        authorizationAudience: payload.audience,
-        allowedCapabilities: payload.allowedCapabilities,
-        status: 'authorized',
-        created: ensured.created ? 1 : 0,
-        reused: ensured.reused ? 1 : 0
-      });
-
-      const nextRuntime = writeSessionRuntime({
-        ...ensured.runtime,
-        authorizedBy: userEoa,
-        authorizedAt,
-        authorizationMode: 'user_grant_backend_executed',
-        authorizationPayload: payload,
-        authorizationPayloadHash,
-        authorizationSignature: userSignature,
-        authorizationNonce: payload.nonce,
-        authorizationExpiresAt: payload.expiresAt,
-        authorizedAgentId: payload.agentId,
-        authorizedAgentWallet: payload.agentWallet,
-        authorizationAudience: payload.audience,
-        allowedCapabilities: payload.allowedCapabilities,
-        source: 'api-v1-session-authorize',
-        updatedAt: Date.now()
+      const approvalRequestId = createTraceId('apr');
+      const approvalToken = buildApprovalRequestToken();
+      const createdAt = Date.now();
+      const record = appendSessionApprovalRequest({
+        approvalRequestId,
+        approvalToken,
+        executionMode: 'external',
+        userEoa,
+        sessionAddress,
+        payload,
+        status: 'pending',
+        createdAt,
+        updatedAt: createdAt,
+        traceId: req.traceId || ''
       });
 
       return res.json({
         ok: true,
-        schemaVersion: 'v1',
         traceId: req.traceId || '',
-        created: ensured.created,
-        reused: ensured.reused,
-        authorizedBy: userEoa,
-        authorization: {
-          authorizationId,
-          mode: 'user_grant_backend_executed',
-          authorizedBy: userEoa,
-          authorizedAt,
-          payload,
-          payloadHash: authorizationPayloadHash,
-          signatureMasked: maskSecret(userSignature),
-          expiresAt: payload.expiresAt,
-          nonce: payload.nonce,
-          allowedCapabilities: payload.allowedCapabilities
-        },
-        session: {
-          address: nextRuntime.sessionAddress,
-          id: nextRuntime.sessionId,
-          txHash: nextRuntime.sessionTxHash,
-          maxPerTx: nextRuntime.maxPerTx,
-          dailyLimit: nextRuntime.dailyLimit,
-          gatewayRecipient: nextRuntime.gatewayRecipient,
-          tokenAddress: payload.tokenAddress,
-          authorizedBy: nextRuntime.authorizedBy,
-          authorizationMode: nextRuntime.authorizationMode
-        },
-        runtime: buildSessionRuntimePayload(nextRuntime),
-        record: authorizationRecord
+        approvalRequest: buildSessionApprovalRequestPayload(record, { includeToken: true })
       });
     } catch (error) {
-      const reason = error?.message || 'session_authorize_failed';
-      const status =
-        /invalid|required|mismatch|expired|nonce/i.test(reason)
-          ? 400
-          : /already used|reused/i.test(reason)
-            ? 409
-            : 500;
-      return res.status(status).json({
+      return res.status(Number(error?.statusCode || 0) || 500).json({
         ok: false,
-        schemaVersion: 'v1',
-        error: 'session_authorize_failed',
-        reason,
+        error: error?.code || 'approval_request_create_failed',
+        reason: error?.message || 'approval_request_create_failed',
         traceId: req.traceId || ''
+      });
+    }
+  });
+
+  app.get('/api/approvals', async (req, res) => {
+    try {
+      assertApprovalInboxAccess(req);
+      const rows = filterUnifiedApprovalRows({
+        state: req.query.state,
+        approvalKind: req.query.approvalKind,
+        owner: req.query.owner,
+        limit: req.query.limit
+      });
+      const items = rows.map((record) => buildUnifiedApprovalPayload(record, { includeToken: false }));
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        total: items.length,
+        meta: buildApprovalListMeta({
+          state: req.query.state,
+          approvalKind: req.query.approvalKind,
+          owner: req.query.owner,
+          limit: req.query.limit,
+          rows
+        }),
+        items
+      });
+    } catch (error) {
+      return res.status(Number(error?.statusCode || 0) || 500).json({
+        ok: false,
+        error: error?.code || 'approval_list_failed',
+        reason: error?.message || 'approval_list_failed',
+        traceId: req.traceId || ''
+      });
+    }
+  });
+
+  app.get('/api/approvals/:approvalId', async (req, res) => {
+    try {
+      const approvalId = String(req.params.approvalId || '').trim();
+      const approvalToken = String(req.query.token || '').trim();
+      const record = getSessionApprovalRecordOrThrow(approvalId, approvalToken, req);
+      const responsePayload = buildApprovalReadResponse(record, { includeToken: true });
+      const wantsHtml = !String(req.headers.accept || '').toLowerCase().includes('application/json');
+      if (wantsHtml) {
+        const frontendUrl = String(responsePayload.approval?.approvalUrl || '').trim();
+        if (frontendUrl && !frontendUrl.includes('/api/approvals/')) {
+          return res.redirect(302, frontendUrl);
+        }
+      }
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        ...responsePayload
+      });
+    } catch (error) {
+      return res.status(Number(error?.statusCode || 0) || 500).json({
+        ok: false,
+        error: error?.code || 'approval_request_read_failed',
+        reason: error?.message || 'approval_request_read_failed',
+        traceId: req.traceId || ''
+      });
+    }
+  });
+
+  app.post('/api/approvals/:approvalId/approve', async (req, res) => {
+    try {
+      const approvalId = String(req.params.approvalId || '').trim();
+      const approvalToken = String(req.query.token || req.body?.token || '').trim();
+      const completed = await finalizeSessionApprovalRecord({
+        approvalRequestId: approvalId,
+        approvalToken,
+        body: req.body || {},
+        traceId: req.traceId || '',
+        req
+      });
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        ...completed.response
+      });
+    } catch (error) {
+      return res.status(Number(error?.statusCode || 0) || 500).json({
+        ok: false,
+        error: error?.code || 'approval_request_complete_failed',
+        reason: error?.message || 'approval_request_complete_failed',
+        traceId: req.traceId || ''
+      });
+    }
+  });
+
+  app.post('/api/approvals/:approvalId/reject', async (req, res) => {
+    try {
+      const approvalId = String(req.params.approvalId || '').trim();
+      const approvalToken = String(req.query.token || req.body?.token || '').trim();
+      const responsePayload = rejectSessionApprovalRecord({
+        approvalRequestId: approvalId,
+        approvalToken,
+        reason: req.body?.reason || req.body?.note || '',
+        req
+      });
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        ...responsePayload
+      });
+    } catch (error) {
+      return res.status(Number(error?.statusCode || 0) || 500).json({
+        ok: false,
+        error: error?.code || 'approval_request_reject_failed',
+        reason: error?.message || 'approval_request_reject_failed',
+        traceId: req.traceId || ''
+      });
+    }
+  });
+
+  app.get('/api/session/approval/:approvalRequestId', async (req, res) => {
+    try {
+      const approvalRequestId = String(req.params.approvalRequestId || '').trim();
+      const approvalToken = String(req.query.token || '').trim();
+      const record = getSessionApprovalRecordOrThrow(approvalRequestId, approvalToken);
+      const payload = buildSessionApprovalRequestPayload(record, { includeToken: true });
+      const wantsHtml = !String(req.headers.accept || '').toLowerCase().includes('application/json');
+      if (wantsHtml) {
+        const frontendUrl = buildApprovalRequestUrl(
+          payload.approvalRequestId,
+          payload.approvalToken,
+          payload?.payload?.audience || ''
+        );
+        if (frontendUrl && !frontendUrl.includes('/api/session/approval/')) {
+          return res.redirect(302, frontendUrl);
+        }
+        const html = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>KTRACE Session Approval</title></head>
+<body>
+<h1>KTRACE Session Approval</h1>
+<p>Status: ${payload.status || '-'}</p>
+<p>Approval Request: ${payload.approvalRequestId || '-'}</p>
+<p>User EOA: ${payload.userEoa || '-'}</p>
+<p>Session Address: ${payload.sessionAddress || '-'}</p>
+<p>This approval URL is ready. Use a wallet-aware client or the ktrace CLI to complete the session approval.</p>
+<pre>${JSON.stringify(payload, null, 2)}</pre>
+</body>
+</html>`;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.send(html);
+      }
+
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        approvalRequest: payload,
+        authorization: payload.authorization || null,
+        runtime: payload.runtime || null,
+        session: payload.session || null
+      });
+    } catch (error) {
+      return res.status(Number(error?.statusCode || 0) || 500).json({
+        ok: false,
+        error: error?.code || 'approval_request_read_failed',
+        reason: error?.message || 'approval_request_read_failed',
+        traceId: req.traceId || ''
+      });
+    }
+  });
+
+  app.post('/api/session/approval/:approvalRequestId/complete', async (req, res) => {
+    try {
+      const approvalRequestId = String(req.params.approvalRequestId || '').trim();
+      const approvalToken = String(req.query.token || req.body?.token || '').trim();
+      const completed = await finalizeSessionApprovalRecord({
+        approvalRequestId,
+        approvalToken,
+        body: req.body || {},
+        traceId: req.traceId || ''
+      });
+
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        approvalRequest: buildSessionApprovalRequestPayload(completed.record, { includeToken: true }),
+        authorization: completed.response.authorization,
+        session: completed.response.session,
+        runtime: completed.response.runtime
+      });
+    } catch (error) {
+      return res.status(Number(error?.statusCode || 0) || 500).json({
+        ok: false,
+        error: error?.code || 'approval_request_complete_failed',
+        reason: error?.message || 'approval_request_complete_failed',
+        traceId: req.traceId || '',
+        ...(error?.data && typeof error.data === 'object' ? error.data : {})
       });
     }
   });

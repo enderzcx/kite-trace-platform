@@ -262,7 +262,6 @@ app.post('/invoke', async (req, res) => {
 | capabilityId | 名称 | 价格 | 主要输入 |
 |---|---|---|---|
 | cap-listing-alert | Exchange Listing Alert | 0.002 USDT | exchange, coin, limit |
-| cap-whale-alert | On-chain Whale Alert | 0.001 USDT | coin, limit |
 | cap-news-signal | AI News Signal | 0.0005 USDT | coin, signal, minScore |
 | cap-meme-sentiment | Meme Coin Sentiment | 0.0001 USDT | limit |
 | cap-kol-monitor | KOL Tweet Monitor | 0.0003 USDT | username, includeDeleted |

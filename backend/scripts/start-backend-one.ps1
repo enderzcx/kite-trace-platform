@@ -155,6 +155,14 @@ if (-not $env:KITECLAW_AUTH_DISABLED) {
   $env:KITECLAW_AUTH_DISABLED = "1"
 }
 
+$hasProxy =
+  "$env:HTTP_PROXY".Trim() -or
+  "$env:HTTPS_PROXY".Trim() -or
+  "$env:ALL_PROXY".Trim()
+if ($hasProxy -and -not "$env:NODE_USE_ENV_PROXY".Trim()) {
+  $env:NODE_USE_ENV_PROXY = "1"
+}
+
 $env:OPENNEWS_TOKEN = $openNewsToken
 $env:TWITTER_TOKEN = $twitterToken
 if (-not $env:OPENNEWS_API_BASE) { $env:OPENNEWS_API_BASE = "https://ai.6551.io" }
@@ -173,6 +181,9 @@ else {
   Write-Host "[start-backend-one] OPENNEWS_TOKEN/TWITTER_TOKEN loaded from environment variables"
 }
 Write-Host "[start-backend-one] OPENNEWS_API_BASE=$($env:OPENNEWS_API_BASE) TWITTER_API_BASE=$($env:TWITTER_API_BASE)"
+if ("$env:NODE_USE_ENV_PROXY".Trim()) {
+  Write-Host "[start-backend-one] NODE_USE_ENV_PROXY=$($env:NODE_USE_ENV_PROXY)"
+}
 
 if ($NoRun) {
   Write-Host "[start-backend-one] dry run only, skip npm start"

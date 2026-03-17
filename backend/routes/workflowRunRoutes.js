@@ -390,6 +390,7 @@ export function registerWorkflowRunRoutes(app, deps) {
             tokenAddress: accept.tokenAddress,
             recipient: accept.recipient,
             amount: accept.amount,
+            payer,
             requestId,
             action: 'reactive-stop-orders',
             query: `A2A stop-order ${symbol} tp=${takeProfit} sl=${stopLoss}${
@@ -631,6 +632,7 @@ export function registerWorkflowRunRoutes(app, deps) {
             tokenAddress: accept.tokenAddress,
             recipient: accept.recipient,
             amount: accept.amount,
+            payer,
             requestId,
             action: 'btc-price-feed',
           query: `ATAPI BTC price ${pair} source=${source}`
@@ -868,6 +870,7 @@ export function registerWorkflowRunRoutes(app, deps) {
             tokenAddress: accept.tokenAddress,
             recipient: accept.recipient,
             amount: accept.amount,
+            payer,
             requestId,
             action: workflowAction,
             query: `A2A risk-score ${normalizedTask.symbol} horizon=${normalizedTask.horizonMin} source=${normalizedTask.source}`
@@ -1085,6 +1088,7 @@ export function registerWorkflowRunRoutes(app, deps) {
             tokenAddress: accept.tokenAddress,
             recipient: accept.recipient,
             amount: accept.amount,
+            payer,
             requestId,
             action: workflowAction,
             query: `ATAPI x-reader ${normalizedTask.url}`
@@ -1321,6 +1325,7 @@ export function registerWorkflowRunRoutes(app, deps) {
           tokenAddress: accept.tokenAddress,
           recipient: accept.recipient,
           amount: accept.amount,
+          payer,
           requestId,
           action: 'hyperliquid-order-testnet',
           query: `ATAPI hyperliquid order ${symbol} ${side} ${orderType} size=${size}`

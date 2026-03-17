@@ -63,11 +63,14 @@
         'risk-score-feed',
         'technical-analysis-feed',
         'info-analysis-feed',
-        'hyperliquid-order-testnet'
+        'hyperliquid-order-testnet',
+        'weather-context',
+        'tech-buzz-signal',
+        'market-price-feed'
       ].includes(action)
     ) {
       throw new Error(
-        'Supported service actions: btc-price-feed, risk-score-feed, technical-analysis-feed, info-analysis-feed, hyperliquid-order-testnet.'
+        'Supported service actions: btc-price-feed, risk-score-feed, technical-analysis-feed, info-analysis-feed, hyperliquid-order-testnet, weather-context, tech-buzz-signal, market-price-feed.'
       );
     }
     return action;
@@ -93,6 +96,7 @@
     const isTechnical = isTechnicalAnalysisAction(action);
     const isInfo = isInfoAnalysisAction(action);
     const isHyperliquidOrder = action === 'hyperliquid-order-testnet';
+    const isDataNode = ['weather-context', 'tech-buzz-signal', 'market-price-feed'].includes(action);
     const normalizedTask =
       isTechnical
         ? normalizeRiskScoreParams({
@@ -120,6 +124,34 @@
               orderType: String(input.orderType || existing?.orderType || 'limit').trim().toLowerCase() || 'limit',
               tif: String(input.tif || existing?.tif || 'Gtc').trim() || 'Gtc'
             }
+          : isDataNode
+            ? {
+                pair: String(input.pair || input.symbol || existing?.pair || '').trim().toUpperCase(),
+                source:
+                  String(
+                    input.source ||
+                      existing?.source ||
+                      (action === 'weather-context'
+                        ? 'open-meteo'
+                        : action === 'tech-buzz-signal'
+                          ? 'hackernews'
+                          : 'coingecko')
+                  )
+                    .trim()
+                    .toLowerCase() || 'auto',
+                sourceRequested:
+                  String(
+                    input.sourceRequested ||
+                      existing?.sourceRequested ||
+                      (action === 'weather-context'
+                        ? 'open-meteo'
+                        : action === 'tech-buzz-signal'
+                          ? 'hackernews'
+                          : 'coingecko')
+                  )
+                    .trim()
+                    .toLowerCase() || 'auto'
+              }
           : normalizeBtcPriceParams({
               pair: input.pair || existing?.pair || 'BTCUSDT',
               source: input.source || existing?.source || 'hyperliquid'
@@ -130,6 +162,8 @@
         ? resolveInfoSettlementRecipient()
         : isHyperliquidOrder
           ? normalizeAddress(HYPERLIQUID_ORDER_RECIPIENT || MERCHANT_ADDRESS)
+          : isDataNode
+            ? normalizeAddress(KITE_AGENT2_AA_ADDRESS)
           : normalizeAddress(KITE_AGENT2_AA_ADDRESS);
     const recipient = normalizeAddress(input.recipient || existing?.recipient || fallbackRecipient);
     if (!recipient || !ethers.isAddress(recipient)) {
@@ -155,6 +189,12 @@
             : 'BTC Risk Score Service'
         : isHyperliquidOrder
           ? 'Hyperliquid Testnet Order Service'
+          : isDataNode
+            ? action === 'weather-context'
+              ? 'Weather Context Data Node'
+              : action === 'tech-buzz-signal'
+                ? 'Tech Buzz Signal Data Node'
+                : 'Market Price Feed Data Node'
           : 'BTCUSD Quote Service');
     const description =
       String(input.description || existing?.description || '').trim() ||
@@ -168,8 +208,17 @@
             : 'Pay-per-call risk score analysis via x402.'
         : isHyperliquidOrder
           ? 'Pay-per-call Hyperliquid testnet order execution via x402.'
+          : isDataNode
+            ? action === 'weather-context'
+              ? 'Low-cost weather context primitive via Open-Meteo + x402.'
+              : action === 'tech-buzz-signal'
+                ? 'Low-cost Hacker News top-story primitive via x402.'
+                : 'Low-cost CoinGecko market price primitive via x402.'
           : 'Pay-per-call BTCUSD quote service.');
-    const providerAgentId = String(input.providerAgentId || existing?.providerAgentId || KITE_AGENT2_ID).trim();
+    const providerAgentId = String(
+      input.providerAgentId || existing?.providerAgentId || (isDataNode ? 'data-node-real' : KITE_AGENT2_ID)
+    ).trim();
+    const providerKey = String(input.providerKey || existing?.providerKey || (isDataNode ? 'data-node-real' : '')).trim();
     const tags = normalizeStringList(
       input.tags ||
         existing?.tags ||
@@ -183,6 +232,12 @@
               : ['a2a', 'x402', 'risk']
           : isHyperliquidOrder
             ? ['atapi', 'x402', 'hyperliquid', 'order']
+            : isDataNode
+              ? action === 'weather-context'
+                ? ['atapi', 'x402', 'data-primitive', 'weather', 'open-meteo']
+                : action === 'tech-buzz-signal'
+                  ? ['atapi', 'x402', 'data-primitive', 'news', 'hackernews']
+                  : ['atapi', 'x402', 'data-primitive', 'market', 'coingecko']
             : ['atapi', 'x402', action]),
       { lower: true, dedup: true }
     );
@@ -205,6 +260,12 @@
                 : { url: 'https://newshacker.me/', mode: 'auto', maxChars: X_READER_MAX_CHARS_DEFAULT }
               : isHyperliquidOrder
                 ? { symbol: 'BTCUSDT', side: 'buy', orderType: 'limit', tif: 'Gtc', size: 0.001 }
+                : isDataNode
+                  ? action === 'weather-context'
+                    ? { latitude: 40.7128, longitude: -74.006, forecastDays: 3, timezone: 'auto' }
+                    : action === 'tech-buzz-signal'
+                      ? { limit: 10 }
+                      : { vsCurrency: 'usd', ids: 'bitcoin,ethereum', limit: 10 }
                 : { pair: 'BTCUSDT', source: 'hyperliquid' };
     const activeInput = input.active;
     const active =
@@ -226,6 +287,7 @@
       resourceUrl: normalizedTask.url || '',
       maxChars: normalizedTask.maxChars || null,
       providerAgentId,
+      providerKey,
       recipient,
       tokenAddress,
       price: String(Number(priceRaw.toFixed(6))),
@@ -366,6 +428,78 @@
         createdAt: now,
         updatedAt: now,
         publishedBy: 'system'
+      },
+      {
+        id: 'cap-weather-context',
+        name: 'Weather Context Data Node',
+        description: 'Low-cost weather context primitive via Open-Meteo + x402 payment.',
+        action: 'weather-context',
+        pair: '',
+        source: 'open-meteo',
+        sourceRequested: 'open-meteo',
+        providerAgentId: 'data-node-real',
+        providerKey: 'data-node-real',
+        recipient: normalizeAddress(KITE_AGENT2_AA_ADDRESS),
+        tokenAddress: normalizeAddress(SETTLEMENT_TOKEN),
+        price: '0.00005',
+        tags: ['atapi', 'x402', 'data-primitive', 'weather', 'open-meteo'],
+        slaMs: 12000,
+        rateLimitPerMinute: 20,
+        budgetPerDay: 0.03,
+        allowlistPayers: [],
+        exampleInput: { latitude: 40.7128, longitude: -74.006, forecastDays: 3, timezone: 'auto' },
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+        publishedBy: 'system'
+      },
+      {
+        id: 'cap-tech-buzz-signal',
+        name: 'Tech Buzz Signal Data Node',
+        description: 'Low-cost Hacker News top-story primitive via x402 payment.',
+        action: 'tech-buzz-signal',
+        pair: '',
+        source: 'hackernews',
+        sourceRequested: 'hackernews',
+        providerAgentId: 'data-node-real',
+        providerKey: 'data-node-real',
+        recipient: normalizeAddress(KITE_AGENT2_AA_ADDRESS),
+        tokenAddress: normalizeAddress(SETTLEMENT_TOKEN),
+        price: '0.00005',
+        tags: ['atapi', 'x402', 'data-primitive', 'news', 'hackernews'],
+        slaMs: 12000,
+        rateLimitPerMinute: 20,
+        budgetPerDay: 0.03,
+        allowlistPayers: [],
+        exampleInput: { limit: 10 },
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+        publishedBy: 'system'
+      },
+      {
+        id: 'cap-market-price-feed',
+        name: 'Market Price Feed Data Node',
+        description: 'Low-cost CoinGecko market price primitive via x402 payment.',
+        action: 'market-price-feed',
+        pair: '',
+        source: 'coingecko',
+        sourceRequested: 'coingecko',
+        providerAgentId: 'data-node-real',
+        providerKey: 'data-node-real',
+        recipient: normalizeAddress(KITE_AGENT2_AA_ADDRESS),
+        tokenAddress: normalizeAddress(SETTLEMENT_TOKEN),
+        price: '0.00005',
+        tags: ['atapi', 'x402', 'data-primitive', 'market', 'coingecko'],
+        slaMs: 12000,
+        rateLimitPerMinute: 20,
+        budgetPerDay: 0.03,
+        allowlistPayers: [],
+        exampleInput: { vsCurrency: 'usd', ids: 'bitcoin,ethereum', limit: 10 },
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+        publishedBy: 'system'
       }
     ];
   }
@@ -376,14 +510,54 @@
     return String(Number(parsed.toFixed(6)));
   }
 
+  function isDataPrimitiveService(item = {}) {
+    const id = String(item?.id || '').trim().toLowerCase();
+    const action = String(item?.action || '').trim().toLowerCase();
+    const providerKey = String(item?.providerKey || item?.providerAgentId || '').trim().toLowerCase();
+    return (
+      providerKey === 'data-node-real' ||
+      ['cap-weather-context', 'cap-tech-buzz-signal', 'cap-market-price-feed'].includes(id) ||
+      ['weather-context', 'tech-buzz-signal', 'market-price-feed'].includes(action)
+    );
+  }
+
+  function resolveCatalogPrice(item = {}, fallbackPrice = '') {
+    if (isDataPrimitiveService(item)) {
+      const parsed = Number(item?.price);
+      if (Number.isFinite(parsed) && parsed > 0) return String(Number(parsed.toFixed(6)));
+      return '0.00005';
+    }
+    return fallbackPrice || normalizedUnifiedServicePrice();
+  }
+
   function mergeBuiltinServices(rows = []) {
     const rawList = Array.isArray(rows) ? [...rows] : [];
     let changed = false;
     const unifiedPrice = normalizedUnifiedServicePrice();
+    const defaults = createDefaultServiceCatalog().map((service) => ({
+      ...service,
+      price: resolveCatalogPrice(service, unifiedPrice)
+    }));
+    const defaultIds = new Set(defaults.map((item) => String(item?.id || '').trim().toLowerCase()).filter(Boolean));
+    const defaultActions = new Set(defaults.map((item) => String(item?.action || '').trim().toLowerCase()).filter(Boolean));
+    const defaultProviderIds = new Set(
+      defaults
+        .flatMap((item) => [String(item?.providerAgentId || '').trim().toLowerCase(), String(item?.providerKey || '').trim().toLowerCase()])
+        .filter(Boolean)
+    );
     const list = rawList
       .filter((item) => {
         const id = String(item?.id || '').trim();
-        if (id === 'svc_x_reader_digest') {
+        const action = String(item?.action || '').trim().toLowerCase();
+        const providerId = String(item?.providerKey || item?.providerAgentId || '').trim().toLowerCase();
+        const publishedBy = String(item?.publishedBy || '').trim().toLowerCase();
+        const isStaleSystemCapability =
+          publishedBy === 'system' &&
+          defaultProviderIds.has(providerId) &&
+          id.toLowerCase().startsWith('cap-') &&
+          !defaultIds.has(id.toLowerCase()) &&
+          !defaultActions.has(action);
+        if (id === 'svc_x_reader_digest' || isStaleSystemCapability) {
           changed = true;
           return false;
         }
@@ -400,20 +574,17 @@
             updatedAt: new Date().toISOString()
           };
         }
-        if (String(next?.price || '').trim() !== unifiedPrice) {
+        const expectedPrice = resolveCatalogPrice(next, unifiedPrice);
+        if (String(next?.price || '').trim() !== expectedPrice) {
           changed = true;
           next = {
             ...next,
-            price: unifiedPrice,
+            price: expectedPrice,
             updatedAt: new Date().toISOString()
           };
         }
         return next;
       });
-    const defaults = createDefaultServiceCatalog().map((service) => ({
-      ...service,
-      price: unifiedPrice
-    }));
     for (const service of defaults) {
       const id = String(service?.id || '').trim();
       if (!id) continue;
@@ -424,11 +595,14 @@
         continue;
       }
       const current = list[index] || {};
-      if (String(current?.price || '').trim() !== unifiedPrice) {
+      const expectedPrice = isDataPrimitiveService(service)
+        ? resolveCatalogPrice(current, service.price || '0.00005')
+        : resolveCatalogPrice(service, unifiedPrice);
+      if (String(current?.price || '').trim() !== expectedPrice) {
         changed = true;
         list[index] = {
           ...current,
-          price: unifiedPrice,
+          price: expectedPrice,
           updatedAt: new Date().toISOString()
         };
       }
@@ -447,7 +621,7 @@
     }
     const seed = createDefaultServiceCatalog().map((item) => ({
       ...item,
-      price: normalizedUnifiedServicePrice()
+      price: resolveCatalogPrice(item, normalizedUnifiedServicePrice())
     }));
     writePublishedServices(seed);
     return seed;
@@ -467,6 +641,15 @@
     if (['hyperliquid-order-testnet', 'trade-order-feed', 'execute-plan'].includes(normalized)) {
       return ['hyperliquid-order-testnet'];
     }
+    if (['weather-context', 'cap-weather-context'].includes(normalized)) {
+      return ['weather-context'];
+    }
+    if (['tech-buzz-signal', 'cap-tech-buzz-signal'].includes(normalized)) {
+      return ['tech-buzz-signal'];
+    }
+    if (['market-price-feed', 'cap-market-price-feed'].includes(normalized)) {
+      return ['market-price-feed'];
+    }
     return [];
   }
 
@@ -483,6 +666,13 @@
     }
     if (['btc-price-feed', 'market-quote'].includes(normalized)) {
       return 'price-agent';
+    }
+    if (
+      ['weather-context', 'cap-weather-context', 'tech-buzz-signal', 'cap-tech-buzz-signal', 'market-price-feed', 'cap-market-price-feed'].includes(
+        normalized
+      )
+    ) {
+      return 'data-node-real';
     }
     return 'router-agent';
   }
@@ -540,10 +730,7 @@
         : typeof fallback.active === 'boolean'
           ? fallback.active
           : true;
-    const capabilities = capabilitiesRaw
-      .map((item) => String(item || '').trim().toLowerCase())
-      .filter(Boolean)
-      .slice(0, 24);
+    const capabilities = capabilitiesRaw.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean).slice(0, 24);
     return {
       id,
       name: name || id,
@@ -652,6 +839,23 @@
         aaAddress: XMTP_EXECUTOR_AGENT_AA_ADDRESS,
         description: 'Executes final orchestration and result aggregation.',
         capabilities: ['execute-plan', 'result-aggregation']
+      },
+      {
+        id: 'data-node-real',
+        name: 'Data Node Real',
+        role: 'provider',
+        mode: 'a2api',
+        xmtpAddress: XMTP_PRICE_RESOLVED_ADDRESS,
+        aaAddress: XMTP_PRICE_AGENT_AA_ADDRESS,
+        description: 'Public data primitive provider for weather, tech buzz, and market snapshots.',
+        capabilities: [
+          'weather-context',
+          'cap-weather-context',
+          'tech-buzz-signal',
+          'cap-tech-buzz-signal',
+          'market-price-feed',
+          'cap-market-price-feed'
+        ]
       }
     ];
     return seeds.map((item) => sanitizeNetworkAgentRecord(item)).filter((item) => item.id);

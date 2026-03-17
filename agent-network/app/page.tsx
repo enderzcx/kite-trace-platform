@@ -1,27 +1,153 @@
-import Link from "next/link";
+import ShowcasePageClient from "@/components/showcase/ShowcasePageClient";
+import {
+  fallbackCapabilities,
+  fallbackHealthStats,
+  fallbackProviders,
+  type ShowcaseCapability,
+  type ShowcaseHealthStats,
+  type ShowcaseProvider,
+} from "@/components/showcase/showcase-data";
 
-import AgentNetwork from "@/components/AgentNetwork";
-import { Button } from "@/components/ui/button";
+export const dynamic = "force-dynamic";
 
-export default function Home() {
+const BACKEND_URL = (process.env.BACKEND_URL || "https://kiteclaw.duckdns.org").replace(/\/+$/, "");
+
+function buildHeaders() {
+  const apiKey = process.env.DEMO_API_KEY?.trim();
+  return {
+    Accept: "application/json",
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+  };
+}
+
+function prettyDefaultInput(value: unknown, fallback: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return fallback;
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+async function fetchJson<T>(pathname: string): Promise<T | null> {
+  try {
+    const response = await fetch(`${BACKEND_URL}${pathname}`, {
+      headers: buildHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+function mapCapabilities(payload: unknown): ShowcaseCapability[] {
+  const response = payload as { items?: Array<Record<string, unknown>> } | null;
+  if (!response?.items?.length) return fallbackCapabilities;
+
+  return response.items.map((item) => {
+    const existing =
+      fallbackCapabilities.find(
+        (capability) => capability.capabilityId === String(item.capabilityId || "")
+      ) || fallbackCapabilities[0];
+    const pricing =
+      item.pricing && typeof item.pricing === "object"
+        ? (item.pricing as Record<string, unknown>)
+        : {};
+    const discovery =
+      item.discovery && typeof item.discovery === "object"
+        ? (item.discovery as Record<string, unknown>)
+        : {};
+
+    return {
+      capabilityId: String(item.capabilityId || existing.capabilityId),
+      providerId: String(item.providerId || existing.providerId),
+      name: String(item.name || existing.name),
+      description: String(item.description || existing.description),
+      price: `${String(pricing.amount || "0")} ${String(pricing.currency || "USDT")}`,
+      tags: Array.isArray(discovery.tags)
+        ? discovery.tags.map((tag) => String(tag))
+        : existing.tags,
+      defaultInput: prettyDefaultInput(item.exampleInput, existing.defaultInput),
+    };
+  });
+}
+
+function mapProviders(
+  payload: unknown,
+  capabilities: ShowcaseCapability[]
+): ShowcaseProvider[] {
+  const response = payload as { items?: Array<Record<string, unknown>> } | null;
+  if (!response?.items?.length) return fallbackProviders;
+
+  return response.items.map((item) => {
+    const runtime =
+      item.runtime && typeof item.runtime === "object"
+        ? (item.runtime as Record<string, unknown>)
+        : {};
+    const identity =
+      item.identity && typeof item.identity === "object"
+        ? (item.identity as Record<string, unknown>)
+        : {};
+    const providerId = String(item.providerId || "");
+    const fallback =
+      fallbackProviders.find((provider) => provider.providerId === providerId) || fallbackProviders[0];
+    const aaWalletAddress = String(runtime.aaAddress || fallback.aaWalletAddress || "");
+    const ownerWalletAddress = String(runtime.ownerWallet || fallback.ownerWalletAddress || "");
+
+    return {
+      providerId: providerId || fallback.providerId,
+      title: String(item.name || fallback.title),
+      agentId: String(identity.agentId || fallback.agentId),
+      description: String(item.description || fallback.description),
+      aaWalletAddress,
+      ownerWalletAddress,
+      explorerUrl: aaWalletAddress
+        ? `https://testnet.kitescan.ai/address/${aaWalletAddress}`
+        : fallback.explorerUrl,
+      identityRegistryUrl:
+        String(identity.registry || "")
+          ? `https://testnet.kitescan.ai/address/${String(identity.registry)}`
+          : fallback.identityRegistryUrl,
+      capabilities: capabilities.filter(
+        (capability) => capability.providerId === (providerId || fallback.providerId)
+      ),
+    };
+  });
+}
+
+async function loadShowcaseData(): Promise<{
+  healthStats: ShowcaseHealthStats;
+  providers: ShowcaseProvider[];
+  capabilities: ShowcaseCapability[];
+}> {
+  const [healthPayload, providersPayload, capabilitiesPayload] = await Promise.all([
+    fetchJson<Record<string, unknown>>("/api/public/health"),
+    fetchJson<Record<string, unknown>>("/api/v1/providers?discoverable=true"),
+    fetchJson<Record<string, unknown>>("/api/v1/capabilities"),
+  ]);
+
+  const capabilities = mapCapabilities(capabilitiesPayload);
+  const providers = mapProviders(providersPayload, capabilities);
+
+  return {
+    healthStats: {
+      agentsLive: providers.length || fallbackHealthStats.agentsLive,
+      capabilityCount: capabilities.length || fallbackHealthStats.capabilityCount,
+      network: String(healthPayload?.network || fallbackHealthStats.network),
+      standards: fallbackHealthStats.standards,
+    },
+    providers,
+    capabilities,
+  };
+}
+
+export default async function Home() {
+  const { healthStats, providers, capabilities } = await loadShowcaseData();
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_10%_10%,rgba(56,189,248,0.18),transparent_35%),radial-gradient(circle_at_90%_15%,rgba(168,85,247,0.18),transparent_30%),linear-gradient(160deg,#030712,#020617_40%,#0a0b12)] p-4 text-white md:p-6">
-      <section className="mx-auto max-w-[1680px]">
-        <header className="mb-4 rounded-2xl border border-white/10 bg-black/45 px-5 py-6 backdrop-blur-xl">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight md:text-5xl">Kite Trace Platform</h1>
-              <p className="mt-2 text-sm text-slate-300 md:text-base">Built on Kite testnet with XMTP x x402 x ERC8004</p>
-            </div>
-            <Link href="/history">
-              <Button variant="outline" className="border-cyan-400/35 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20">
-                Open Audit History
-              </Button>
-            </Link>
-          </div>
-        </header>
-        <AgentNetwork />
-      </section>
-    </main>
+    <ShowcasePageClient
+      healthStats={healthStats}
+      providers={providers}
+      capabilities={capabilities}
+    />
   );
 }

@@ -48,7 +48,6 @@ export class GokiteAASDK {
       factoryAbi: config.factoryAbi || DEFAULT_FACTORY_ABI,
       ...config
     };
-    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
     this.bundlerRpcConfig = {
       timeoutMs: toBoundedInt(config.bundlerRpcTimeoutMs, 15_000, 2_000, 180_000),
       retries: toBoundedInt(config.bundlerRpcRetries, 3, 1, 8),
@@ -56,8 +55,18 @@ export class GokiteAASDK {
       backoffMaxMs,
       backoffFactor: toBoundedInt(config.bundlerRpcBackoffFactor, 2, 1, 6),
       backoffJitterMs,
-      receiptPollIntervalMs: toBoundedInt(config.bundlerReceiptPollIntervalMs, 3_000, 800, 15_000)
+      receiptPollIntervalMs: toBoundedInt(config.bundlerReceiptPollIntervalMs, 1_000, 800, 15_000)
     };
+    const providerRpcTimeoutMs = toBoundedInt(
+      config.rpcTimeoutMs,
+      Math.max(60_000, this.bundlerRpcConfig.timeoutMs * 4),
+      5_000,
+      300_000
+    );
+    const rpcRequest = new ethers.FetchRequest(config.rpcUrl);
+    rpcRequest.timeout = providerRpcTimeoutMs;
+    this.provider = new ethers.JsonRpcProvider(rpcRequest);
+    this.config.rpcTimeoutMs = providerRpcTimeoutMs;
     
     this.entryPointAbi = [
       'function getNonce(address sender, uint192 key) view returns (uint256)',
@@ -201,12 +210,16 @@ export class GokiteAASDK {
   }
 
   async sendRawCallDataUserOperationAndWait(callData, signFunction, gasOverrides = {}) {
+    let userOpHashFromBundler = '';
     try {
       if (!this.config.proxyAddress || !this.account) {
         throw new Error('AA wallet address is not set. Call ensureAccountAddress(owner) first.');
       }
-      const nonce = await this.getNonce();
-      const isDeployed = await this.isAccountDeployed(this.config.proxyAddress);
+      const [nonce, isDeployed, feeSuggestion] = await Promise.all([
+        this.getNonce(),
+        this.isAccountDeployed(this.config.proxyAddress),
+        this.getSuggestedGasFees()
+      ]);
       const ownerAddress = this.config.ownerAddress;
       const salt = this.config.salt ?? 0n;
       if (!isDeployed && !ownerAddress) {
@@ -216,7 +229,6 @@ export class GokiteAASDK {
       const callGasLimit = gasOverrides.callGasLimit ?? (isDeployed ? 180000n : 420000n);
       const verificationGasLimit = gasOverrides.verificationGasLimit ?? (isDeployed ? 260000n : 1800000n);
       const preVerificationGas = gasOverrides.preVerificationGas ?? (isDeployed ? 90000n : 350000n);
-      const feeSuggestion = await this.getSuggestedGasFees();
       const maxFeePerGas = gasOverrides.maxFeePerGas ?? feeSuggestion.maxFeePerGas;
       const maxPriorityFeePerGas =
         gasOverrides.maxPriorityFeePerGas ?? feeSuggestion.maxPriorityFeePerGas;
@@ -272,7 +284,7 @@ export class GokiteAASDK {
         userOp.signature = signature;
       }
 
-      const userOpHashFromBundler = await this.sendToBundler(userOp);
+      userOpHashFromBundler = await this.sendToBundler(userOp);
       const receipt = await this.waitForUserOperation(userOpHashFromBundler);
 
       return {
@@ -282,7 +294,12 @@ export class GokiteAASDK {
         receipt: receipt
       };
     } catch (error) {
-      return { status: 'failed', reason: this.formatErrorReason(error), error: error };
+      return {
+        status: 'failed',
+        reason: this.formatErrorReason(error),
+        userOpHash: userOpHashFromBundler || '',
+        error: error
+      };
     }
   }
 
@@ -291,11 +308,14 @@ export class GokiteAASDK {
       if (!this.config.proxyAddress || !this.account) {
         throw new Error('AA wallet address is not set. Call ensureAccountAddress(owner) first.');
       }
-      const nonce = await this.getNonce();
+      const [nonce, isDeployed, feeSuggestion] = await Promise.all([
+        this.getNonce(),
+        this.isAccountDeployed(this.config.proxyAddress),
+        this.getSuggestedGasFees()
+      ]);
       const normalizedValues = batchRequest.values.length === 0 
         ? new Array(batchRequest.targets.length).fill(0n)
         : batchRequest.values;
-      const isDeployed = await this.isAccountDeployed(this.config.proxyAddress);
       const ownerAddress = this.config.ownerAddress;
       const salt = this.config.salt ?? 0n;
       if (!isDeployed && !ownerAddress) {
@@ -308,7 +328,6 @@ export class GokiteAASDK {
         batchRequest.callDatas
       ]);
 
-      const feeSuggestion = await this.getSuggestedGasFees();
       const userOp = {
         sender: this.config.proxyAddress,
         nonce: nonce.toString(),
@@ -513,7 +532,7 @@ export class GokiteAASDK {
     );
   }
 
-  async waitForUserOperation(userOpHash, timeout = 180000, pollInterval = 3000) {
+  async waitForUserOperation(userOpHash, timeout = 180000, pollInterval) {
     const startTime = Date.now();
     const resolvedPollInterval = toBoundedInt(
       pollInterval,
@@ -562,13 +581,31 @@ export class GokiteAASDK {
 
   async getUserOperationReceipt(userOpHash) {
     return this.callBundlerRpc('eth_getUserOperationReceipt', [userOpHash], {
-      label: 'eth_getUserOperationReceipt'
+      label: 'eth_getUserOperationReceipt',
+      timeoutMs: Math.max(
+        2_500,
+        Math.min(
+          this.bundlerRpcConfig.timeoutMs,
+          this.bundlerRpcConfig.receiptPollIntervalMs + 4_000
+        )
+      ),
+      maxAttempts: 1,
+      retryRpcErrors: false
     });
   }
 
   async getUserOperationByHash(userOpHash) {
     return this.callBundlerRpc('eth_getUserOperationByHash', [userOpHash], {
-      label: 'eth_getUserOperationByHash'
+      label: 'eth_getUserOperationByHash',
+      timeoutMs: Math.max(
+        3_000,
+        Math.min(
+          this.bundlerRpcConfig.timeoutMs,
+          this.bundlerRpcConfig.receiptPollIntervalMs + 6_000
+        )
+      ),
+      maxAttempts: 1,
+      retryRpcErrors: false
     });
   }
 

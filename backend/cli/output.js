@@ -105,9 +105,11 @@ function printAuthSession(envelope) {
 function printSessionAuthorize(envelope) {
   const authorization = envelope?.data?.authorization || {};
   const session = envelope?.data?.session || {};
+  const localRuntime = envelope?.data?.localRuntime || {};
   console.log('ktrace session authorize');
   console.log(`authorizationId: ${authorization.authorizationId || '-'}`);
   console.log(`authorizedBy: ${authorization.authorizedBy || '-'}`);
+  console.log(`executionMode: ${authorization.executionMode || envelope?.runtime?.sessionStrategy || '-'}`);
   console.log(`authorizationMode: ${authorization.authorizationMode || '-'}`);
   console.log(`authorizedAgentId: ${authorization.authorizedAgentId || '-'}`);
   console.log(`authorizedAgentWallet: ${authorization.authorizedAgentWallet || '-'}`);
@@ -115,6 +117,50 @@ function printSessionAuthorize(envelope) {
   console.log(`authorizationNonce: ${authorization.authorizationNonce || '-'}`);
   console.log(`authorizationExpiresAt: ${authorization.authorizationExpiresAt || '-'}`);
   console.log(`aaWallet: ${session.aaWallet || '-'}`);
+  console.log(`sessionAddress: ${session.sessionAddress || '-'}`);
+  console.log(`sessionId: ${session.sessionId || '-'}`);
+  console.log(`sessionTxHash: ${session.sessionTxHash || '-'}`);
+  console.log(`localAccountCreated: ${localRuntime.accountCreatedNow ? 'yes' : 'no'}`);
+  console.log(`localAccountTxHash: ${localRuntime.accountTxHash || '-'}`);
+  console.log(`summary: ${envelope?.message || '-'}`);
+}
+
+function printSessionRequest(envelope) {
+  const approvalRequest = envelope?.data?.approvalRequest || {};
+  console.log('ktrace session request');
+  console.log(`approvalRequestId: ${approvalRequest.approvalRequestId || '-'}`);
+  console.log(`status: ${approvalRequest.status || '-'}`);
+  console.log(`userEoa: ${approvalRequest.userEoa || '-'}`);
+  console.log(`sessionAddress: ${approvalRequest.sessionAddress || '-'}`);
+  console.log(`approvalUrl: ${approvalRequest.approvalUrl || '-'}`);
+  console.log(`qrText: ${approvalRequest.qrText || '-'}`);
+  console.log(`createdAt: ${approvalRequest.createdAt || '-'}`);
+  console.log(`summary: ${envelope?.message || '-'}`);
+}
+
+function printSessionWait(envelope) {
+  const approvalRequest = envelope?.data?.approvalRequest || {};
+  const session = envelope?.data?.session || {};
+  console.log('ktrace session wait');
+  console.log(`approvalRequestId: ${approvalRequest.approvalRequestId || '-'}`);
+  console.log(`status: ${approvalRequest.status || '-'}`);
+  console.log(`authorizationId: ${approvalRequest.authorizationId || envelope?.data?.authorization?.authorizationId || '-'}`);
+  console.log(`aaWallet: ${session.aaWallet || '-'}`);
+  console.log(`sessionAddress: ${session.sessionAddress || '-'}`);
+  console.log(`sessionId: ${session.sessionId || '-'}`);
+  console.log(`sessionTxHash: ${session.sessionTxHash || '-'}`);
+  console.log(`localRuntimeSynced: ${envelope?.data?.localRuntimeSynced ? 'yes' : 'no'}`);
+  console.log(`summary: ${envelope?.message || '-'}`);
+}
+
+function printSessionApprove(envelope) {
+  const approvalRequest = envelope?.data?.approvalRequest || {};
+  const session = envelope?.data?.session || {};
+  console.log('ktrace session approve');
+  console.log(`approvalRequestId: ${approvalRequest.approvalRequestId || '-'}`);
+  console.log(`status: ${approvalRequest.status || '-'}`);
+  console.log(`authorizedBy: ${envelope?.data?.authorization?.authorizedBy || session.authorizedBy || '-'}`);
+  console.log(`aaWallet: ${session.aaWallet || envelope?.data?.aaWallet || '-'}`);
   console.log(`sessionAddress: ${session.sessionAddress || '-'}`);
   console.log(`sessionId: ${session.sessionId || '-'}`);
   console.log(`sessionTxHash: ${session.sessionTxHash || '-'}`);
@@ -158,6 +204,24 @@ function printBuyDirect(envelope) {
   console.log(`sessionStrategy: ${preflight.sessionStrategy || envelope?.runtime?.sessionStrategy || '-'}`);
   console.log(`summary: ${purchase.summary || envelope?.message || '-'}`);
   console.log(`error: ${purchase.error || '-'}`);
+}
+
+function printAgentInvoke(envelope) {
+  const selection = envelope?.data?.selection || {};
+  const template = envelope?.data?.template || {};
+  const purchase = envelope?.data?.purchase || {};
+  const evidence = envelope?.data?.evidence || {};
+  const runtimeSession = evidence?.runtimeSnapshot || evidence?.runtimeSession || {};
+  console.log('ktrace agent invoke');
+  console.log(`providerId: ${selection?.provider?.providerId || purchase?.providerAgentId || '-'}`);
+  console.log(`capabilityId: ${selection?.capability?.capabilityId || purchase?.capabilityId || '-'}`);
+  console.log(`templateId: ${template?.templateId || purchase?.templateId || '-'}`);
+  console.log(`traceId: ${purchase?.traceId || '-'}`);
+  console.log(`state: ${purchase?.state || '-'}`);
+  console.log(`paymentTxHash: ${purchase?.paymentTxHash || '-'}`);
+  console.log(`authorizedBy: ${runtimeSession.authorizedBy || '-'}`);
+  console.log(`summary: ${purchase?.summary || envelope?.message || '-'}`);
+  console.log(`error: ${purchase?.error || '-'}`);
 }
 
 function printTemplateList(envelope) {
@@ -366,6 +430,9 @@ function printJobCreate(envelope) {
   console.log(`capability: ${job.capability || '-'}`);
   console.log(`budget: ${job.budget || '-'}`);
   console.log(`payer: ${job.payer || '-'}`);
+  console.log(`executor: ${job.executor || '-'}`);
+  console.log(`validator: ${job.validator || '-'}`);
+  console.log(`escrowAmount: ${job.escrowAmount || '-'}`);
   console.log(`templateId: ${job.templateId || '-'}`);
   console.log(`evaluator: ${job.evaluator || '-'}`);
   console.log(`expiresAt: ${job.expiresAt || '-'}`);
@@ -384,6 +451,8 @@ function printJobFund(envelope) {
   console.log(`fundingRef: ${job.fundingRef || '-'}`);
   console.log(`paymentRequestId: ${job.paymentRequestId || '-'}`);
   console.log(`paymentTxHash: ${job.paymentTxHash || '-'}`);
+  console.log(`escrowState: ${job.escrowState || '-'}`);
+  console.log(`escrowFundTxHash: ${job.escrowFundTxHash || '-'}`);
   console.log(`signerMode: ${job.signerMode || '-'}`);
   console.log(`fundingAnchorId: ${job.fundingAnchorId || '-'}`);
   console.log(`fundingAnchorTxHash: ${job.fundingAnchorTxHash || '-'}`);
@@ -406,10 +475,13 @@ function printJobSubmit(envelope) {
   console.log(`paymentTxHash: ${job.paymentTxHash || '-'}`);
   console.log(`submissionRef: ${job.submissionRef || '-'}`);
   console.log(`submissionHash: ${job.submissionHash || '-'}`);
+  console.log(`resultRef: ${job.resultRef || '-'}`);
+  console.log(`resultHash: ${job.resultHash || '-'}`);
   console.log(`receiptRef: ${job.receiptRef || '-'}`);
   console.log(`evidenceRef: ${job.evidenceRef || '-'}`);
-  console.log(`outcomeAnchorId: ${job.outcomeAnchorId || '-'}`);
-  console.log(`outcomeAnchorTxHash: ${job.outcomeAnchorTxHash || '-'}`);
+  console.log(`submitAnchorId: ${job.submitAnchorId || '-'}`);
+  console.log(`submitAnchorTxHash: ${job.submitAnchorTxHash || '-'}`);
+  console.log(`escrowSubmitTxHash: ${job.escrowSubmitTxHash || '-'}`);
   console.log(`sessionPreflight: ${preflight.created ? 'created' : preflight.reused ? 'ready' : preflight.checked ? 'checked' : '-'}`);
   console.log(`sessionStrategy: ${preflight.sessionStrategy || envelope?.runtime?.sessionStrategy || '-'}`);
   console.log(`summary: ${job.summary || envelope?.message || '-'}`);
@@ -426,6 +498,11 @@ function printJobShow(envelope) {
   console.log(`capability: ${job.capability || '-'}`);
   console.log(`budget: ${job.budget || '-'}`);
   console.log(`payer: ${job.payer || '-'}`);
+  console.log(`executor: ${job.executor || '-'}`);
+  console.log(`validator: ${job.validator || '-'}`);
+  console.log(`escrowAmount: ${job.escrowAmount || '-'}`);
+  console.log(`escrowState: ${job.escrowState || '-'}`);
+  console.log(`escrowAddress: ${job.escrowAddress || '-'}`);
   console.log(`templateId: ${job.templateId || '-'}`);
   console.log(`serviceId: ${job.serviceId || '-'}`);
   console.log(`paymentRequestId: ${job.paymentRequestId || '-'}`);
@@ -442,7 +519,13 @@ function printJobShow(envelope) {
   console.log(`anchorRegistry: ${job.anchorRegistry || '-'}`);
   console.log(`createAnchorId: ${job.createAnchorId || '-'}`);
   console.log(`fundingAnchorId: ${job.fundingAnchorId || '-'}`);
+  console.log(`acceptAnchorId: ${job.acceptAnchorId || '-'}`);
+  console.log(`submitAnchorId: ${job.submitAnchorId || '-'}`);
   console.log(`outcomeAnchorId: ${job.outcomeAnchorId || '-'}`);
+  console.log(`escrowFundTxHash: ${job.escrowFundTxHash || '-'}`);
+  console.log(`escrowAcceptTxHash: ${job.escrowAcceptTxHash || '-'}`);
+  console.log(`escrowSubmitTxHash: ${job.escrowSubmitTxHash || '-'}`);
+  console.log(`escrowValidateTxHash: ${job.escrowValidateTxHash || '-'}`);
   console.log(`rejectionReason: ${job.rejectionReason || '-'}`);
   console.log(`expiresAt: ${job.expiresAt || '-'}`);
   console.log(`summary: ${job.summary || envelope?.message || '-'}`);
@@ -459,6 +542,8 @@ function printJobLifecycleAction(envelope) {
   console.log(`summary: ${job.summary || envelope?.message || '-'}`);
   console.log(`evaluator: ${job.evaluator || '-'}`);
   console.log(`validationId: ${job.validationId || '-'}`);
+  console.log(`escrowState: ${job.escrowState || '-'}`);
+  console.log(`escrowValidateTxHash: ${job.escrowValidateTxHash || '-'}`);
   console.log(`outcomeAnchorId: ${job.outcomeAnchorId || '-'}`);
   console.log(`outcomeAnchorTxHash: ${job.outcomeAnchorTxHash || '-'}`);
   console.log(`rejectionReason: ${job.rejectionReason || '-'}`);
@@ -685,6 +770,21 @@ export function writeEnvelope(envelope, helpText = '') {
     return;
   }
 
+  if (envelope?.command?.family === 'session' && envelope?.command?.action === 'request') {
+    printSessionRequest(envelope);
+    return;
+  }
+
+  if (envelope?.command?.family === 'session' && envelope?.command?.action === 'wait') {
+    printSessionWait(envelope);
+    return;
+  }
+
+  if (envelope?.command?.family === 'session' && envelope?.command?.action === 'approve') {
+    printSessionApprove(envelope);
+    return;
+  }
+
   if (envelope?.command?.family === 'buy' && envelope?.command?.action === 'request') {
     printBuyRequest(envelope);
     return;
@@ -692,6 +792,11 @@ export function writeEnvelope(envelope, helpText = '') {
 
   if (envelope?.command?.family === 'buy' && envelope?.command?.action === 'direct') {
     printBuyDirect(envelope);
+    return;
+  }
+
+  if (envelope?.command?.family === 'agent' && envelope?.command?.action === 'invoke') {
+    printAgentInvoke(envelope);
     return;
   }
 
@@ -783,6 +888,11 @@ export function writeEnvelope(envelope, helpText = '') {
     return;
   }
 
+  if (envelope?.command?.family === 'job' && envelope?.command?.action === 'accept') {
+    printJobLifecycleAction(envelope);
+    return;
+  }
+
   if (envelope?.command?.family === 'job' && envelope?.command?.action === 'submit') {
     printJobSubmit(envelope);
     return;
@@ -795,7 +905,7 @@ export function writeEnvelope(envelope, helpText = '') {
 
   if (
     envelope?.command?.family === 'job' &&
-    ['complete', 'reject', 'expire'].includes(envelope?.command?.action)
+    ['validate', 'complete', 'reject', 'expire'].includes(envelope?.command?.action)
   ) {
     printJobLifecycleAction(envelope);
     return;

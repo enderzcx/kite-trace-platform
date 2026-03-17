@@ -316,10 +316,32 @@ export function createBuyCommandHandlers({
     } catch (error) {
       if (String(error?.code || '').trim() === 'request_timeout') {
         const polled = await pollFlowByTraceId(runtime, traceId, 240_000);
-        if (polled?.purchase) {
+        if (polled?.purchase || polled?.invocation) {
+          const invocation = polled?.invocation || null;
           payload = {
-            ok: true,
-            purchase: polled.purchase,
+            ok: normalizeBuyState(polled?.purchase?.state || invocation?.state || '') !== 'failed',
+            purchase:
+              polled?.purchase ||
+              {
+                purchaseId: '',
+                traceId: String(invocation?.traceId || traceId || '').trim(),
+                templateId,
+                serviceId: String(invocation?.serviceId || '').trim(),
+                paymentId: String(invocation?.requestId || '').trim(),
+                resultId: String(invocation?.invocationId || '').trim(),
+                state: String(invocation?.state || '').trim(),
+                providerAgentId: String(invocation?.providerAgentId || '').trim(),
+                capabilityId: String(invocation?.serviceId || invocation?.capability || '').trim(),
+                paymentTxHash: String(invocation?.txHash || '').trim(),
+                receiptRef: String(invocation?.requestId || '').trim()
+                  ? `/api/receipt/${encodeURIComponent(String(invocation?.requestId || '').trim())}`
+                  : '',
+                evidenceRef: String(invocation?.traceId || traceId || '').trim()
+                  ? `/api/evidence/export?traceId=${encodeURIComponent(String(invocation?.traceId || traceId || '').trim())}`
+                  : '',
+                summary: String(invocation?.summary || '').trim(),
+                error: String(invocation?.error || '').trim()
+              },
             workflow: null,
             receipt: polled.receipt
           };

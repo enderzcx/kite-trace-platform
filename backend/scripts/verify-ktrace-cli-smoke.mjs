@@ -15,6 +15,8 @@ const port = 34610;
 const host = `http://127.0.0.1:${port}`;
 const wallet = '0x1111111111111111111111111111111111111111';
 const sessionAddress = '0x2222222222222222222222222222222222222222';
+const executorWallet = '0x3333333333333333333333333333333333333333';
+const validatorWallet = '0x4444444444444444444444444444444444444444';
 const externalProviderWallet = ethers.Wallet.createRandom();
 const sessionAuthorizationWallet = ethers.Wallet.createRandom();
 const configPath = path.join(os.tmpdir(), `ktrace-smoke-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.json`);
@@ -118,6 +120,9 @@ registerJobLaneRoutes(app, {
   },
   createTraceId,
   digestStableObject,
+  ERC8183_EXECUTOR_AA_ADDRESS: executorWallet,
+  ERC8183_REQUESTER_AA_ADDRESS: wallet,
+  ERC8183_VALIDATOR_AA_ADDRESS: validatorWallet,
   ensureServiceCatalog: () => services,
   getInternalAgentApiKey: () => '',
   normalizeAddress: (value = '') => String(value || '').trim().toLowerCase(),
@@ -141,6 +146,7 @@ registerJobLaneRoutes(app, {
   },
   readJobs: () => jobs.slice(),
   readSessionRuntime: () => ({
+    ...sessionRuntimeState,
     aaWallet: wallet,
     owner: wallet,
     sessionAddress,
@@ -826,13 +832,41 @@ try {
   const publicEvidence = await runSilentCli([...common, 'evidence', 'get', buyTraceId, '--public']);
   const jobCreate = await runSilentCli([...common, 'job', 'create', '--provider', 'price-agent', '--capability', 'btc-price-feed', '--budget', '0.01', '--input', '{"pair":"BTCUSDT"}']);
   const jobId = String(jobCreate?.data?.job?.jobId || '').trim();
+  const jobTraceId = String(jobCreate?.data?.job?.traceId || '').trim();
   const jobFund = await runSilentCli([...common, 'job', 'fund', jobId]);
+  const jobAccept = await runSilentCli([...common, 'job', 'accept', jobId]);
   const jobSubmit = await runSilentCli([...common, 'job', 'submit', jobId]);
+  const jobValidate = await runSilentCli([...common, 'job', 'validate', jobId, '--approve', '--validator', validatorWallet]);
   const jobShow = await runSilentCli([...common, 'job', 'show', jobId]);
+  const jobAudit = await runSilentCli([...common, 'job', 'audit', jobId]);
+  const publicJobAuditCli = await runSilentCli([...common, 'job', 'audit', jobId, '--public']);
+  const publicJobAuditByTraceCli = await runSilentCli([...common, 'job', 'audit', jobTraceId, '--public', '--trace']);
+  const jobAuditResponse = await fetch(`${host}/api/jobs/${encodeURIComponent(jobId)}/audit`);
+  const jobAuditPayload = await jobAuditResponse.json();
+  const publicJobAuditResponse = await fetch(`${host}/api/public/jobs/${encodeURIComponent(jobId)}/audit`);
+  const publicJobAuditPayload = await publicJobAuditResponse.json();
+  const publicJobAuditByTraceResponse = await fetch(
+    `${host}/api/public/jobs/by-trace/${encodeURIComponent(jobTraceId)}/audit`
+  );
+  const publicJobAuditByTracePayload = await publicJobAuditByTraceResponse.json();
   const jobCreateReject = await runSilentCli([...common, 'job', 'create', '--provider', 'price-agent', '--capability', 'btc-price-feed', '--budget', '0.02', '--input', '{"pair":"BTCUSDT"}']);
   const rejectJobId = String(jobCreateReject?.data?.job?.jobId || '').trim();
   const rejectJobFund = await runSilentCli([...common, 'job', 'fund', rejectJobId]);
-  const jobReject = await runSilentCli([...common, 'job', 'reject', rejectJobId, '--input', '{"reason":"quality check failed","evaluator":"risk-agent"}']);
+  const rejectJobAccept = await runSilentCli([...common, 'job', 'accept', rejectJobId]);
+  const rejectJobSubmit = await runSilentCli([...common, 'job', 'submit', rejectJobId]);
+  const jobReject = await runSilentCli([
+    ...common,
+    'job',
+    'validate',
+    rejectJobId,
+    '--reject',
+    '--reason',
+    'quality check failed',
+    '--summary',
+    'Job rejected after validator review.',
+    '--validator',
+    validatorWallet
+  ]);
   const trustReputation = await runSilentCli([...common, 'trust', 'reputation', '--agent', 'price-agent']);
   const trustValidations = await runSilentCli([...common, 'trust', 'validations', '--agent', 'price-agent']);
   const publicationSourceId = String(trustReputation?.data?.items?.[0]?.signalId || '').trim();
@@ -916,10 +950,53 @@ try {
   assert(Boolean(jobCreate?.data?.job?.createAnchorId), 'job create did not publish create anchor');
   assert(jobFund?.data?.job?.state === 'funded', 'job fund did not mark funded');
   assert(Boolean(jobFund?.data?.job?.fundingAnchorId), 'job fund did not publish funding anchor');
-  assert(jobSubmit?.data?.job?.state === 'completed', 'job submit did not complete');
-  assert(Boolean(jobSubmit?.data?.job?.outcomeAnchorId), 'job submit did not publish outcome anchor');
+  assert(jobAccept?.data?.job?.state === 'accepted', 'job accept did not mark accepted');
+  assert(Boolean(jobAccept?.data?.job?.acceptAnchorId), 'job accept did not publish accept anchor');
+  assert(jobSubmit?.data?.job?.state === 'submitted', 'job submit did not mark submitted');
+  assert(Boolean(jobSubmit?.data?.job?.submitAnchorId), 'job submit did not publish submit anchor');
+  assert(jobValidate?.data?.job?.state === 'completed', 'job validate did not complete');
+  assert(Boolean(jobValidate?.data?.job?.outcomeAnchorId), 'job validate did not publish outcome anchor');
   assert(Boolean(jobShow?.data?.job?.receiptRef), 'job show did not expose receipt ref');
+  assert(jobAudit?.data?.audit?.jobId === jobId, 'job audit cli did not resolve job');
+  assert(jobAuditResponse.status === 200, 'job audit did not return 200');
+  assert(jobAuditPayload?.audit?.jobId === jobId, 'job audit did not resolve job');
+  assert(Array.isArray(jobAuditPayload?.audit?.lifecycle) && jobAuditPayload.audit.lifecycle.length === 5, 'job audit did not expose 5 lifecycle steps');
+  assert(jobAuditPayload?.audit?.summary?.requester === wallet, 'job audit did not expose requester');
+  assert(
+      String(jobAuditPayload?.audit?.authorization?.authorizedBy || '').toLowerCase() ===
+        sessionAuthorizationWallet.address.toLowerCase(),
+    'job audit did not expose authorization snapshot'
+  );
+  assert(publicJobAuditResponse.status === 200, 'public job audit did not return 200');
+  assert(publicJobAuditCli?.data?.audit?.jobId === jobId, 'public job audit cli did not resolve job');
+  assert(publicJobAuditCli?.data?.audit?.humanApproval?.approvalUrl === '', 'public job audit cli leaked approval url');
+  assert(publicJobAuditPayload?.audit?.jobId === jobId, 'public job audit did not resolve job');
+  assert(
+    Array.isArray(publicJobAuditPayload?.audit?.lifecycle) && publicJobAuditPayload.audit.lifecycle.length === 5,
+    'public job audit did not expose 5 lifecycle steps'
+  );
+  assert(
+    typeof publicJobAuditPayload?.audit?.approvalPolicy?.threshold === 'number',
+    'public job audit did not expose approval policy threshold'
+  );
+  assert(publicJobAuditPayload?.audit?.deadline?.onchainEnforced === true, 'public job audit did not expose deadline semantics');
+  assert(publicJobAuditPayload?.audit?.contractPrimitives?.roleEnforcement?.onchainEnforced === true, 'public job audit did not expose contract primitive status');
+  assert(
+    String(publicJobAuditPayload?.audit?.contractPrimitives?.deadline?.timeoutResolution || '').trim().length > 0,
+    'public job audit did not expose timeout resolution'
+  );
+  assert(publicJobAuditPayload?.audit?.deliveryStandard?.satisfied === true, 'public job audit did not expose delivery standard');
+  assert(publicJobAuditPayload?.audit?.humanApproval?.approvalUrl === '', 'public job audit leaked approval url');
+  assert(
+    publicJobAuditPayload?.audit?.authorization?.authorizationAudience === '',
+    'public job audit leaked authorization audience'
+  );
+  assert(publicJobAuditByTraceResponse.status === 200, 'public job audit by trace did not return 200');
+  assert(publicJobAuditByTraceCli?.data?.audit?.jobId === jobId, 'public job audit by trace cli did not resolve job');
+  assert(publicJobAuditByTracePayload?.audit?.jobId === jobId, 'public job audit by trace did not resolve job');
   assert(rejectJobFund?.data?.job?.state === 'funded', 'second job fund did not mark funded');
+  assert(rejectJobAccept?.data?.job?.state === 'accepted', 'second job accept did not mark accepted');
+  assert(rejectJobSubmit?.data?.job?.state === 'submitted', 'second job submit did not mark submitted');
   assert(jobReject?.data?.job?.state === 'rejected', 'job reject did not reject the job');
   assert(Boolean(jobReject?.data?.job?.outcomeAnchorId), 'job reject did not publish outcome anchor');
   assert((trustReputation?.data?.aggregate?.count || 0) >= 2, 'trust reputation did not record signals');
@@ -970,8 +1047,11 @@ try {
           jobState: jobShow?.data?.job?.state || '',
           jobCreateAnchorId: jobCreate?.data?.job?.createAnchorId || '',
           jobFundingAnchorId: jobFund?.data?.job?.fundingAnchorId || '',
-          jobOutcomeAnchorId: jobSubmit?.data?.job?.outcomeAnchorId || '',
+          jobAcceptAnchorId: jobAccept?.data?.job?.acceptAnchorId || '',
+          jobSubmitAnchorId: jobSubmit?.data?.job?.submitAnchorId || '',
+          jobOutcomeAnchorId: jobValidate?.data?.job?.outcomeAnchorId || '',
           jobReceiptRef: jobShow?.data?.job?.receiptRef || '',
+          jobAuditLifecycleCount: Array.isArray(jobAuditPayload?.audit?.lifecycle) ? jobAuditPayload.audit.lifecycle.length : 0,
           rejectedJobId: rejectJobId,
           rejectedJobState: jobReject?.data?.job?.state || '',
           jobFlowLane: flowJob?.data?.flow?.lane || '',

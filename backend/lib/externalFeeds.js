@@ -4,6 +4,8 @@ import { promisify } from 'node:util';
 const API_BASE = 'https://ai.6551.io';
 const DEFAULT_TIMEOUT_MS = 8000;
 const ONCHAINOS_TIMEOUT_MS = 20000;
+const ONCHAINOS_RETRY_BACKOFF_MS = [400, 1200];
+const PUBLIC_FEED_RETRY_BACKOFF_MS = [300, 1000];
 const execFileAsync = promisify(execFile);
 
 function normalizeText(value = '') {
@@ -15,6 +17,12 @@ function normalizeLower(value = '') {
 }
 
 function toBoundedInt(value, fallback, min = 1, max = 100) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(Math.round(numeric), max));
+}
+
+function toBoundedTimeout(value, fallback, min = 1000, max = 120000) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(min, Math.min(Math.round(numeric), max));
@@ -48,6 +56,33 @@ function buildError(error) {
     ok: false,
     error: normalizeText(error || 'request_failed') || 'request_failed'
   };
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldRetryPublicFeedReason(reason = '') {
+  const text = normalizeLower(reason || '');
+  if (!text) return false;
+  return (
+    text.includes('aborted') ||
+    text.includes('aborterror') ||
+    text.includes('timeout') ||
+    text.includes('timed out') ||
+    text.includes('fetch failed') ||
+    text.includes('network') ||
+    text.includes('socket') ||
+    text.includes('tls') ||
+    text.includes('secure connection') ||
+    text.includes('econnreset') ||
+    text.includes('econnrefused') ||
+    text.includes('etimedout') ||
+    text.includes('und_err') ||
+    text.includes('bad gateway') ||
+    text.includes('gateway timeout') ||
+    text.includes('service unavailable')
+  );
 }
 
 function compactList(body) {
@@ -242,6 +277,36 @@ async function fetchJsonWithTimeout(url, timeoutMs = DEFAULT_TIMEOUT_MS, options
   }
 }
 
+async function fetchJsonWithRetry(
+  url,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  options = {},
+  retryBackoffMs = PUBLIC_FEED_RETRY_BACKOFF_MS
+) {
+  const delays = Array.isArray(retryBackoffMs) ? retryBackoffMs : [];
+  const maxAttempts = Math.max(1, 1 + delays.length);
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetchJsonWithTimeout(url, timeoutMs, options);
+    } catch (error) {
+      lastError = error;
+      const reason =
+        error?.name === 'AbortError' || error?.code === 'ETIMEDOUT'
+          ? 'request_aborted'
+          : error?.message || 'request_failed';
+      if (!shouldRetryPublicFeedReason(reason) || attempt >= maxAttempts) {
+        throw error;
+      }
+      const delayMs = Math.max(0, Number(delays[attempt - 1] || 0));
+      if (delayMs > 0) {
+        await waitMs(delayMs);
+      }
+    }
+  }
+  throw lastError || new Error('request_failed');
+}
+
 function buildTokenHeaders(token) {
   const normalizedToken = normalizeText(token);
   return normalizedToken
@@ -263,8 +328,8 @@ function buildUrl(pathname, query = {}) {
   return url.toString();
 }
 
-async function fetchOpenJson(pathname, { token, method = 'GET', query = {}, body } = {}) {
-  return fetchJsonWithTimeout(buildUrl(pathname, query), DEFAULT_TIMEOUT_MS, {
+async function fetchOpenJson(pathname, { token, method = 'GET', query = {}, body, timeoutMs } = {}) {
+  return fetchJsonWithRetry(buildUrl(pathname, query), toBoundedTimeout(timeoutMs, DEFAULT_TIMEOUT_MS), {
     method,
     headers: buildTokenHeaders(token),
     jsonBody: body
@@ -277,6 +342,10 @@ function getEnvValue(names = []) {
     if (value) return value;
   }
   return '';
+}
+
+function getEnvTimeout(names = [], fallback = DEFAULT_TIMEOUT_MS, min = 1000, max = 120000) {
+  return toBoundedTimeout(getEnvValue(names), fallback, min, max);
 }
 
 function getOnchainosConfig() {
@@ -317,25 +386,58 @@ function buildOnchainosEnv() {
   };
 }
 
+function shouldRetryOnchainosReason(reason = '') {
+  const text = normalizeLower(reason || '');
+  if (!text) return false;
+  return (
+    text.includes('tls handshake eof') ||
+    text.includes('request failed') ||
+    text.includes('timed out') ||
+    text.includes('timeout') ||
+    text.includes('temporarily unavailable') ||
+    text.includes('connection reset') ||
+    text.includes('connection aborted') ||
+    text.includes('econnreset') ||
+    text.includes('socket') ||
+    text.includes('network')
+  );
+}
+
 async function runOnchainosJson(args = [], timeoutMs = ONCHAINOS_TIMEOUT_MS) {
   const binary = normalizeText(process.env.ONCHAINOS_BIN) || (process.platform === 'win32' ? 'onchainos.exe' : 'onchainos');
-  try {
-    const { stdout } = await execFileAsync(binary, args, {
-      timeout: timeoutMs,
-      maxBuffer: 8 * 1024 * 1024,
-      windowsHide: true,
-      env: buildOnchainosEnv()
-    });
-    const parsed = parseMaybeJson(stdout);
-    if (parsed) return parsed;
-    return buildError('invalid_onchainos_response');
-  } catch (error) {
-    const parsed = parseMaybeJson(error?.stdout || error?.stderr || '');
-    if (parsed) return parsed;
-    if (error?.code === 'ENOENT') return buildError('onchainos_missing');
-    if (error?.name === 'AbortError' || error?.code === 'ETIMEDOUT') return buildError('timeout');
-    return buildError(error?.message || 'onchainos_failed');
+  const maxAttempts = 1 + ONCHAINOS_RETRY_BACKOFF_MS.length;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const { stdout } = await execFileAsync(binary, args, {
+        timeout: timeoutMs,
+        maxBuffer: 8 * 1024 * 1024,
+        windowsHide: true,
+        env: buildOnchainosEnv()
+      });
+      const parsed = parseMaybeJson(stdout);
+      if (parsed?.ok === false && shouldRetryOnchainosReason(parsed?.error) && attempt < maxAttempts) {
+        await waitMs(ONCHAINOS_RETRY_BACKOFF_MS[attempt - 1] || 0);
+        continue;
+      }
+      if (parsed) return parsed;
+      return buildError('invalid_onchainos_response');
+    } catch (error) {
+      const parsed = parseMaybeJson(error?.stdout || error?.stderr || '');
+      if (parsed?.ok === false && shouldRetryOnchainosReason(parsed?.error) && attempt < maxAttempts) {
+        await waitMs(ONCHAINOS_RETRY_BACKOFF_MS[attempt - 1] || 0);
+        continue;
+      }
+      if (parsed) return parsed;
+      if (error?.code === 'ENOENT') return buildError('onchainos_missing');
+      const reason = error?.name === 'AbortError' || error?.code === 'ETIMEDOUT' ? 'timeout' : error?.message || 'onchainos_failed';
+      if (shouldRetryOnchainosReason(reason) && attempt < maxAttempts) {
+        await waitMs(ONCHAINOS_RETRY_BACKOFF_MS[attempt - 1] || 0);
+        continue;
+      }
+      return buildError(reason);
+    }
   }
+  return buildError('onchainos_failed');
 }
 
 function normalizeChain(value = '', fallback = 'ethereum') {
@@ -428,18 +530,6 @@ function mapListingRecord(item = {}, fetchedAt = new Date().toISOString()) {
   };
 }
 
-function mapWhaleRecord(item = {}, fetchedAt = new Date().toISOString()) {
-  const coins = extractCoinSymbols(item);
-  return {
-    walletAddress: normalizeText(item?.walletAddress || item?.address || item?.wallet),
-    action: normalizeText(item?.action || item?.side || item?.direction || item?.newsType || 'whale'),
-    amount: pickNumber(item?.amount, item?.size, item?.qty, item?.value),
-    coin: normalizeText(coins[0] || ''),
-    ts: pickTimestamp(item),
-    ...withOnchainMeta(item, `onchain:${normalizeText(item?.newsType || item?.source || 'whale')}`, fetchedAt)
-  };
-}
-
 function mapNewsRecord(item = {}, fetchedAt = new Date().toISOString()) {
   const coins = extractCoinSymbols(item);
   const aiRating = item?.aiRating || {};
@@ -478,16 +568,116 @@ function mapTwitterRecord(item = {}, username = '', fetchedAt = new Date().toISO
   };
 }
 
+function toBoundedFloat(value, fallback, min = -90, max = 90) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(numeric, max));
+}
+
+function mapWeatherCodeToSummary(code) {
+  const normalized = Number(code);
+  const table = new Map([
+    [0, 'clear'],
+    [1, 'mainly-clear'],
+    [2, 'partly-cloudy'],
+    [3, 'overcast'],
+    [45, 'fog'],
+    [48, 'depositing-rime-fog'],
+    [51, 'light-drizzle'],
+    [53, 'moderate-drizzle'],
+    [55, 'dense-drizzle'],
+    [61, 'slight-rain'],
+    [63, 'moderate-rain'],
+    [65, 'heavy-rain'],
+    [71, 'slight-snow'],
+    [73, 'moderate-snow'],
+    [75, 'heavy-snow'],
+    [80, 'rain-showers'],
+    [81, 'heavy-rain-showers'],
+    [82, 'violent-rain-showers'],
+    [95, 'thunderstorm'],
+    [96, 'thunderstorm-hail'],
+    [99, 'heavy-thunderstorm-hail']
+  ]);
+  return table.get(normalized) || `weather-code-${normalized}`;
+}
+
+function mapWeatherDailyRecord(daily = {}, index = 0, fetchedAt = new Date().toISOString()) {
+  return {
+    date: normalizeText(Array.isArray(daily?.time) ? daily.time[index] : ''),
+    weatherCode: pickNumber(Array.isArray(daily?.weather_code) ? daily.weather_code[index] : null),
+    weatherSummary: mapWeatherCodeToSummary(Array.isArray(daily?.weather_code) ? daily.weather_code[index] : null),
+    temperatureMax: pickNumber(Array.isArray(daily?.temperature_2m_max) ? daily.temperature_2m_max[index] : null),
+    temperatureMin: pickNumber(Array.isArray(daily?.temperature_2m_min) ? daily.temperature_2m_min[index] : null),
+    precipitationSum: pickNumber(Array.isArray(daily?.precipitation_sum) ? daily.precipitation_sum[index] : null),
+    precipitationProbabilityMax: pickNumber(
+      Array.isArray(daily?.precipitation_probability_max) ? daily.precipitation_probability_max[index] : null
+    ),
+    windSpeedMax: pickNumber(Array.isArray(daily?.wind_speed_10m_max) ? daily.wind_speed_10m_max[index] : null),
+    ...withCommonMeta({}, 'open-meteo', fetchedAt)
+  };
+}
+
+function mapHackerNewsStory(item = {}, fetchedAt = new Date().toISOString()) {
+  const sourceUrl = normalizeText(item?.url || '');
+  return {
+    id: pickNumber(item?.id),
+    title: normalizeText(item?.title || ''),
+    by: normalizeText(item?.by || ''),
+    score: pickNumber(item?.score) || 0,
+    descendants: pickNumber(item?.descendants) || 0,
+    url: sourceUrl || null,
+    hackerNewsUrl: item?.id ? `https://news.ycombinator.com/item?id=${item.id}` : null,
+    publishedAt: toIsoTimestamp(item?.time),
+    sourceUrl: sourceUrl || (item?.id ? `https://news.ycombinator.com/item?id=${item.id}` : null),
+    sourceName: 'hackernews',
+    fetchedAt
+  };
+}
+
+function mapCoinGeckoMarket(item = {}, fetchedAt = new Date().toISOString()) {
+  return {
+    id: normalizeText(item?.id || ''),
+    symbol: normalizeText(item?.symbol || '').toUpperCase(),
+    name: normalizeText(item?.name || ''),
+    image: normalizeText(item?.image || '') || null,
+    currentPrice: pickNumber(item?.current_price),
+    marketCap: pickNumber(item?.market_cap),
+    marketCapRank: pickNumber(item?.market_cap_rank),
+    fullyDilutedValuation: pickNumber(item?.fully_diluted_valuation),
+    totalVolume: pickNumber(item?.total_volume),
+    high24h: pickNumber(item?.high_24h),
+    low24h: pickNumber(item?.low_24h),
+    priceChange24h: pickNumber(item?.price_change_24h),
+    priceChangePercentage24h: pickNumber(item?.price_change_percentage_24h),
+    circulatingSupply: pickNumber(item?.circulating_supply),
+    totalSupply: pickNumber(item?.total_supply),
+    maxSupply: pickNumber(item?.max_supply),
+    ath: pickNumber(item?.ath),
+    atl: pickNumber(item?.atl),
+    lastUpdated: toIsoTimestamp(item?.last_updated),
+    ...withCommonMeta(
+      {
+        sourceUrl: normalizeText(item?.image || '') ? `https://www.coingecko.com/en/coins/${normalizeText(item?.id || '')}` : ''
+      },
+      'coingecko',
+      fetchedAt
+    )
+  };
+}
+
 export async function fetchListingAlert({ exchange = 'all', coin, limit = 10 } = {}) {
   const token = normalizeText(process.env.OPENNEWS_TOKEN);
   if (!token) return buildError('not_configured');
 
   try {
     const fetchedAt = new Date().toISOString();
+    const timeoutMs = getEnvTimeout(['OPENNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS);
     const normalizedExchange = normalizeLower(exchange || 'all');
     const response = await fetchOpenJson('/open/news_search', {
       token,
       method: 'POST',
+      timeoutMs,
       body: buildNewsSearchBody({
         limit,
         coin,
@@ -513,43 +703,19 @@ export async function fetchListingAlert({ exchange = 'all', coin, limit = 10 } =
   }
 }
 
-export async function fetchWhaleAlert({ coin = 'BTC', limit = 10 } = {}) {
+export async function fetchNewsSignal({ coin, signal, minScore = 50, limit = 10 } = {}) {
   const token = normalizeText(process.env.OPENNEWS_TOKEN);
   if (!token) return buildError('not_configured');
 
   try {
     const fetchedAt = new Date().toISOString();
-    const response = await fetchOpenJson('/open/news_search', {
-      token,
-      method: 'POST',
-      body: buildNewsSearchBody({
-        limit,
-        coin,
-        engineTypes: { onchain: ['hyperliquid_whale_trade', 'hyperliquid_whale_position'] }
-      })
-    });
-    const events = compactList(response)
-      .filter((item) => normalizeLower(item?.engineType) === 'onchain')
-      .filter((item) => filterByCoin(item, coin))
-      .slice(0, toBoundedInt(limit, 10, 1, 100))
-      .map((item) => mapWhaleRecord(item, fetchedAt));
-    return buildSuccess({ events }, 'opennews:onchain', fetchedAt);
-  } catch (error) {
-    return buildError(error?.message || 'whale_alert_failed');
-  }
-}
-
-export async function fetchNewsSignal({ coin, signal, minScore = 70, limit = 10 } = {}) {
-  const token = normalizeText(process.env.OPENNEWS_TOKEN);
-  if (!token) return buildError('not_configured');
-
-  try {
-    const fetchedAt = new Date().toISOString();
+    const timeoutMs = getEnvTimeout(['OPENNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS);
     const normalizedSignal = normalizeLower(signal);
-    const minimumScore = Number.isFinite(Number(minScore)) ? Number(minScore) : 70;
+    const minimumScore = Number.isFinite(Number(minScore)) ? Number(minScore) : 50;
     const response = await fetchOpenJson('/open/news_search', {
       token,
       method: 'POST',
+      timeoutMs,
       body: buildNewsSearchBody({
         limit,
         coin,
@@ -580,9 +746,11 @@ export async function fetchMemeSentiment({ limit = 20 } = {}) {
 
   try {
     const fetchedAt = new Date().toISOString();
+    const timeoutMs = getEnvTimeout(['OPENNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS);
     const response = await fetchOpenJson('/open/news_search', {
       token,
       method: 'POST',
+      timeoutMs,
       body: buildNewsSearchBody({
         limit,
         engineTypes: { meme: ['twitter'] }
@@ -606,9 +774,11 @@ export async function fetchKolMonitor({ username, includeDeleted = false, limit 
 
   try {
     const fetchedAt = new Date().toISOString();
+    const timeoutMs = getEnvTimeout(['TWITTER_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS);
     const tweetsResponse = await fetchOpenJson('/open/twitter_user_tweets', {
       token,
       method: 'POST',
+      timeoutMs,
       body: {
         username: screenName,
         maxResults: toBoundedInt(limit, 20, 1, 100),
@@ -626,6 +796,7 @@ export async function fetchKolMonitor({ username, includeDeleted = false, limit 
       const deletedResponse = await fetchOpenJson('/open/twitter_deleted_tweets', {
         token,
         method: 'POST',
+        timeoutMs,
         body: {
           username: screenName,
           maxResults: toBoundedInt(limit, 20, 1, 100)
@@ -646,6 +817,141 @@ export async function fetchKolMonitor({ username, includeDeleted = false, limit 
     );
   } catch (error) {
     return buildError(error?.message || 'kol_monitor_failed');
+  }
+}
+
+export async function fetchWeatherContext({
+  latitude,
+  longitude,
+  forecastDays = 3,
+  timezone = 'auto'
+} = {}) {
+  const lat = toBoundedFloat(latitude, NaN, -90, 90);
+  const lon = toBoundedFloat(longitude, NaN, -180, 180);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return buildError('latitude_longitude_required');
+  }
+
+  try {
+    const fetchedAt = new Date().toISOString();
+    const forecastLength = toBoundedInt(forecastDays, 3, 1, 7);
+    const url = new URL('https://api.open-meteo.com/v1/forecast');
+    url.searchParams.set('latitude', String(lat));
+    url.searchParams.set('longitude', String(lon));
+    url.searchParams.set('timezone', normalizeText(timezone || 'auto') || 'auto');
+    url.searchParams.set(
+      'current',
+      'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m'
+    );
+    url.searchParams.set(
+      'daily',
+      'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max'
+    );
+    url.searchParams.set('forecast_days', String(forecastLength));
+    const response = await fetchJsonWithRetry(
+      url.toString(),
+      getEnvTimeout(['OPEN_METEO_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS)
+    );
+    const daily = response?.daily || {};
+    const dayCount = Array.isArray(daily?.time) ? daily.time.length : 0;
+    return buildSuccess(
+      {
+        location: {
+          latitude: pickNumber(response?.latitude),
+          longitude: pickNumber(response?.longitude),
+          elevation: pickNumber(response?.elevation),
+          timezone: normalizeText(response?.timezone || ''),
+          timezoneAbbreviation: normalizeText(response?.timezone_abbreviation || '')
+        },
+        current: {
+          time: normalizeText(response?.current?.time || ''),
+          temperature: pickNumber(response?.current?.temperature_2m),
+          apparentTemperature: pickNumber(response?.current?.apparent_temperature),
+          humidity: pickNumber(response?.current?.relative_humidity_2m),
+          precipitation: pickNumber(response?.current?.precipitation),
+          weatherCode: pickNumber(response?.current?.weather_code),
+          weatherSummary: mapWeatherCodeToSummary(response?.current?.weather_code),
+          windSpeed: pickNumber(response?.current?.wind_speed_10m),
+          windDirection: pickNumber(response?.current?.wind_direction_10m),
+          ...withCommonMeta({}, 'open-meteo', fetchedAt)
+        },
+        daily: Array.from({ length: dayCount }, (_, index) => mapWeatherDailyRecord(daily, index, fetchedAt))
+      },
+      'open-meteo:forecast',
+      fetchedAt
+    );
+  } catch (error) {
+    return buildError(error?.message || 'weather_context_failed');
+  }
+}
+
+export async function fetchTechBuzzSignal({ limit = 10 } = {}) {
+  try {
+    const fetchedAt = new Date().toISOString();
+    const maxRows = toBoundedInt(limit, 10, 1, 30);
+    const topStoryIds = await fetchJsonWithRetry(
+      'https://hacker-news.firebaseio.com/v0/topstories.json',
+      getEnvTimeout(['HACKERNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS)
+    );
+    const ids = Array.isArray(topStoryIds) ? topStoryIds.slice(0, maxRows) : [];
+    const itemResponses = await Promise.all(
+      ids.map((id) =>
+        fetchJsonWithRetry(
+          `https://hacker-news.firebaseio.com/v0/item/${id}.json`,
+          getEnvTimeout(['HACKERNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS)
+        ).catch(() => null)
+      )
+    );
+    const stories = itemResponses
+      .filter((item) => item && item.type === 'story' && item.deleted !== true && item.dead !== true)
+      .map((item) => mapHackerNewsStory(item, fetchedAt));
+    return buildSuccess({ stories }, 'hackernews:topstories', fetchedAt);
+  } catch (error) {
+    return buildError(error?.message || 'tech_buzz_signal_failed');
+  }
+}
+
+export async function fetchMarketPriceFeed({
+  vsCurrency = 'usd',
+  ids = 'bitcoin,ethereum',
+  symbols = '',
+  category = '',
+  order = 'market_cap_desc',
+  limit = 10,
+  page = 1
+} = {}) {
+  try {
+    const fetchedAt = new Date().toISOString();
+    const url = new URL('https://api.coingecko.com/api/v3/coins/markets');
+    url.searchParams.set('vs_currency', normalizeLower(vsCurrency || 'usd') || 'usd');
+    if (normalizeText(ids)) {
+      url.searchParams.set('ids', normalizeText(ids));
+    } else if (normalizeText(symbols)) {
+      url.searchParams.set('symbols', normalizeText(symbols));
+    }
+    if (normalizeText(category)) {
+      url.searchParams.set('category', normalizeText(category));
+    }
+    url.searchParams.set('order', normalizeText(order || 'market_cap_desc') || 'market_cap_desc');
+    url.searchParams.set('per_page', String(toBoundedInt(limit, 10, 1, 50)));
+    url.searchParams.set('page', String(toBoundedInt(page, 1, 1, 100)));
+    url.searchParams.set('sparkline', 'false');
+    url.searchParams.set('price_change_percentage', '24h');
+    const response = await fetchJsonWithRetry(
+      url.toString(),
+      getEnvTimeout(['COINGECKO_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS)
+    );
+    const markets = compactList(response).map((item) => mapCoinGeckoMarket(item, fetchedAt));
+    return buildSuccess(
+      {
+        vsCurrency: normalizeLower(vsCurrency || 'usd') || 'usd',
+        markets
+      },
+      'coingecko:coins-markets',
+      fetchedAt
+    );
+  } catch (error) {
+    return buildError(error?.message || 'market_price_feed_failed');
   }
 }
 
@@ -953,25 +1259,32 @@ export async function fetchDexMarket({ symbol = 'BTCUSDT', interval = '1h', limi
 
   const target = targetResult.target;
   const boundedLimit = toBoundedInt(limit, 20, 1, 299);
-  const [priceInfoResponse, klineResponse] = await Promise.all([
-    runOnchainosJson(['token', 'price-info', '--address', target.address, '--chain', target.chain]),
-    runOnchainosJson(['market', 'kline', '--address', target.address, '--chain', target.chain, '--bar', normalizeBar(interval), '--limit', String(boundedLimit)])
+  const [marketPriceResponse, klineResponse, priceInfoResponse] = await Promise.all([
+    runOnchainosJson(['market', 'price', '--address', target.address, '--chain', target.chain]),
+    runOnchainosJson(['market', 'kline', '--address', target.address, '--chain', target.chain, '--bar', normalizeBar(interval), '--limit', String(boundedLimit)]),
+    runOnchainosJson(['token', 'price-info', '--address', target.address, '--chain', target.chain], Math.min(8_000, ONCHAINOS_TIMEOUT_MS))
   ]);
-  if (!priceInfoResponse?.ok) return buildError(priceInfoResponse?.error || 'dex_market_failed');
+  if (!marketPriceResponse?.ok && !priceInfoResponse?.ok) {
+    return buildError(marketPriceResponse?.error || priceInfoResponse?.error || 'dex_market_failed');
+  }
   if (!klineResponse?.ok) return buildError(klineResponse?.error || 'dex_market_failed');
 
   const fetchedAt = new Date().toISOString();
+  const marketPrice = compactList(marketPriceResponse)[0] || {};
   const priceInfo = compactList(priceInfoResponse)[0] || {};
   const klines = compactList(klineResponse).map((row) => mapKlineRecord(row, target.explorerUrl, fetchedAt));
 
   return buildSuccess(
     {
-      price: pickNumber(priceInfo?.price),
+      price: pickNumber(marketPrice?.price, priceInfo?.price),
       change24h: pickNumber(priceInfo?.priceChange24H),
       volume24h: pickNumber(priceInfo?.volume24H),
       klines,
       ...buildTopLevelOnchainMeta(target, fetchedAt, 'okx-dex-market'),
-      raw: priceInfo
+      raw: {
+        marketPrice,
+        priceInfo
+      }
     },
     'okx:onchainos:market',
     fetchedAt

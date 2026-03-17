@@ -8,9 +8,21 @@ export const COMMAND_CATALOG = {
     }
   },
   session: {
-    description: 'User authorization for backend-executed AA sessions',
+    description: 'User authorization for managed or self-custodial AA sessions',
     actions: {
-      authorize: { batch: 'V3-C: User-Authorized Session Grants', implemented: true }
+      authorize: { batch: 'V3-C: User-Authorized Session Grants', implemented: true },
+      request: { batch: 'Agent-First Approval Requests', implemented: true },
+      wait: { batch: 'Agent-First Approval Requests', implemented: true },
+      approve: { batch: 'Agent-First Approval Requests', implemented: true }
+    }
+  },
+  approval: {
+    description: 'Operator approval inbox and decision surface',
+    actions: {
+      list: { batch: 'Human Approval And Public Audit', implemented: true },
+      show: { batch: 'Human Approval And Public Audit', implemented: true },
+      approve: { batch: 'Human Approval And Public Audit', implemented: true },
+      reject: { batch: 'Human Approval And Public Audit', implemented: true }
     }
   },
   config: {
@@ -24,6 +36,12 @@ export const COMMAND_CATALOG = {
     actions: {
       request: { batch: 'Batch 2: Buy Lane', implemented: true },
       direct: { batch: 'V2-A: Direct Buy Slice', implemented: true }
+    }
+  },
+  agent: {
+    description: 'CLI-only one-shot invoke path for external agents',
+    actions: {
+      invoke: { batch: 'CLI-Only Agent Integration', implemented: true }
     }
   },
   template: {
@@ -72,8 +90,11 @@ export const COMMAND_CATALOG = {
     actions: {
       create: { batch: 'Batch 4: Minimal ERC-8183 Job Lane', implemented: true },
       fund: { batch: 'Batch 4: Minimal ERC-8183 Job Lane', implemented: true },
+      accept: { batch: 'ERC-8183 Three-Party Escrow', implemented: true },
       submit: { batch: 'Batch 4: Minimal ERC-8183 Job Lane', implemented: true },
       show: { batch: 'Batch 4: Minimal ERC-8183 Job Lane', implemented: true },
+      audit: { batch: 'Human Approval And Public Audit', implemented: true },
+      validate: { batch: 'ERC-8183 Three-Party Escrow', implemented: true },
       complete: { batch: 'V2-C: Deeper ERC-8183 Fulfillment', implemented: true },
       reject: { batch: 'V2-C: Deeper ERC-8183 Fulfillment', implemented: true },
       expire: { batch: 'V2-C: Deeper ERC-8183 Fulfillment', implemented: true }

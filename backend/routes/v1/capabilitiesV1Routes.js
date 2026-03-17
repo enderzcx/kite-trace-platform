@@ -1,6 +1,6 @@
 import { createPlatformV1Shared } from './platformV1Shared.js';
 
-const REAL_AGENT_CAPABILITY_SEEDS = [
+export const REAL_AGENT_CAPABILITY_SEEDS = [
   {
     capabilityId: 'cap-listing-alert',
     action: 'listing-alert',
@@ -22,19 +22,6 @@ const REAL_AGENT_CAPABILITY_SEEDS = [
     exampleInput: { exchange: 'all', coin: 'BTC', limit: 10 }
   },
   {
-    capabilityId: 'cap-whale-alert',
-    action: 'whale-alert',
-    providerAgentId: 'fundamental-agent-real',
-    providerKey: 'fundamental-agent-real',
-    name: 'On-chain Whale Alert',
-    description: 'Hyperliquid large position and whale trade detection.',
-    inputSchema: { coin: 'string? default BTC', limit: 'number? default 10' },
-    outputSchema: { events: [{ walletAddress: 'string', action: 'string', amount: 'number', coin: 'string', ts: 'string' }] },
-    pricing: { model: 'per_call', amount: '0.001', currency: 'USDC' },
-    tags: ['fundamental', 'onchain', 'whale'],
-    exampleInput: { coin: 'BTC', limit: 10 }
-  },
-  {
     capabilityId: 'cap-news-signal',
     action: 'news-signal',
     providerAgentId: 'fundamental-agent-real',
@@ -44,7 +31,7 @@ const REAL_AGENT_CAPABILITY_SEEDS = [
     inputSchema: {
       coin: 'string?',
       signal: 'string? long|short|neutral',
-      minScore: 'number? default 70',
+      minScore: 'number? default 50',
       limit: 'number? default 10'
     },
     outputSchema: {
@@ -52,7 +39,7 @@ const REAL_AGENT_CAPABILITY_SEEDS = [
     },
     pricing: { model: 'per_call', amount: '0.0005', currency: 'USDC' },
     tags: ['fundamental', 'news', 'signal'],
-    exampleInput: { coin: 'BTC', signal: 'long', minScore: 70, limit: 10 }
+    exampleInput: { coin: 'BTC', signal: 'long', minScore: 50, limit: 10 }
   },
   {
     capabilityId: 'cap-meme-sentiment',
@@ -162,6 +149,170 @@ const REAL_AGENT_CAPABILITY_SEEDS = [
   }
 ];
 
+export function seedRealAgentCapabilities({
+  ensureServiceCatalog,
+  ensureNetworkAgents,
+  writePublishedServices,
+  writeNetworkAgents,
+  normalizeText = (value = '') => String(value || '').trim(),
+  normalizeLower = (value = '') => String(value || '').trim().toLowerCase()
+} = {}) {
+  const rows = ensureServiceCatalog().map((item) => ({ ...item }));
+  const now = new Date().toISOString();
+  const providerDefaults = new Map();
+  const seededCapabilityIds = new Set(REAL_AGENT_CAPABILITY_SEEDS.map((seed) => normalizeLower(seed.capabilityId)));
+  const seededProviderIds = new Set(
+    REAL_AGENT_CAPABILITY_SEEDS.flatMap((seed) => [normalizeLower(seed.providerAgentId), normalizeLower(seed.providerKey)]).filter(Boolean)
+  );
+  rows.forEach((item) => {
+    const providerIds = [normalizeText(item?.providerAgentId), normalizeText(item?.providerKey)].filter(Boolean);
+    if (providerIds.length === 0) return;
+    const defaults = {
+      recipient: normalizeText(item?.recipient),
+      tokenAddress: normalizeText(item?.tokenAddress),
+      source: normalizeText(item?.source || ''),
+      sourceRequested: normalizeText(item?.sourceRequested || item?.source || ''),
+      pair: normalizeText(item?.pair || '')
+    };
+    providerIds.forEach((providerId) => {
+      if (!providerDefaults.has(providerId)) {
+        providerDefaults.set(providerId, defaults);
+      }
+    });
+  });
+
+  let rowsChanged = false;
+  const filteredRows = rows.filter((item) => {
+    const id = normalizeLower(item?.id);
+    const providerId = normalizeLower(item?.providerAgentId || item?.providerKey);
+    const publishedBy = normalizeLower(item?.publishedBy || '');
+    if (!id || !seededProviderIds.has(providerId)) return true;
+    if (publishedBy !== 'system') return true;
+    if (!id.startsWith('cap-')) return true;
+    return seededCapabilityIds.has(id);
+  });
+  if (filteredRows.length !== rows.length) {
+    rows.length = 0;
+    rows.push(...filteredRows);
+    rowsChanged = true;
+  }
+  for (const seed of REAL_AGENT_CAPABILITY_SEEDS) {
+    const existingIndex = rows.findIndex((item) => normalizeText(item?.id) === seed.capabilityId);
+    const existing = existingIndex >= 0 ? rows[existingIndex] : null;
+    const defaults = providerDefaults.get(seed.providerAgentId) || providerDefaults.get(seed.providerKey) || {};
+    const nextRecord = {
+      id: seed.capabilityId,
+      name: seed.name,
+      description: seed.description,
+      action: seed.action,
+      pair: normalizeText(defaults.pair || ''),
+      source: normalizeText(defaults.source || 'auto'),
+      sourceRequested: normalizeText(defaults.sourceRequested || defaults.source || 'auto'),
+      horizonMin: null,
+      resourceUrl: '',
+      maxChars: null,
+      providerAgentId: seed.providerAgentId,
+      providerKey: seed.providerKey,
+      recipient: normalizeText(defaults.recipient || ''),
+      tokenAddress: normalizeText(defaults.tokenAddress || ''),
+      price: normalizeText(seed.pricing?.amount),
+      pricing: seed.pricing,
+      tags: Array.isArray(seed.tags) ? seed.tags : [],
+      slaMs: 15000,
+      rateLimitPerMinute: 12,
+      budgetPerDay: 0,
+      allowlistPayers: [],
+      exampleInput: seed.exampleInput,
+      inputSchema: seed.inputSchema,
+      outputSchema: seed.outputSchema,
+      active: true,
+      createdAt: normalizeText(existing?.createdAt || now),
+      updatedAt: now,
+      publishedBy: 'system'
+    };
+    if (existing) {
+      const reconciled = {
+        ...existing,
+        ...nextRecord,
+        createdAt: normalizeText(existing?.createdAt || now)
+      };
+      const changed =
+        normalizeLower(existing?.providerAgentId) !== normalizeLower(reconciled?.providerAgentId) ||
+        normalizeLower(existing?.providerKey) !== normalizeLower(reconciled?.providerKey) ||
+        normalizeLower(existing?.action) !== normalizeLower(reconciled?.action) ||
+        normalizeText(existing?.price) !== normalizeText(reconciled?.price) ||
+        JSON.stringify(existing?.pricing || null) !== JSON.stringify(reconciled?.pricing || null) ||
+        JSON.stringify(existing?.tags || []) !== JSON.stringify(reconciled?.tags || []) ||
+        JSON.stringify(existing?.inputSchema || {}) !== JSON.stringify(reconciled?.inputSchema || {}) ||
+        JSON.stringify(existing?.outputSchema || {}) !== JSON.stringify(reconciled?.outputSchema || {});
+      rows[existingIndex] = reconciled;
+      if (changed) rowsChanged = true;
+    } else {
+      rows.unshift(nextRecord);
+      rowsChanged = true;
+    }
+  }
+
+  if (rowsChanged) {
+    writePublishedServices(rows);
+  }
+
+  const providers = ensureNetworkAgents().map((item) => ({ ...item }));
+  let providersChanged = false;
+  const providerCapabilityMap = new Map();
+  const publishedActionsByProvider = new Map();
+  rows.forEach((item) => {
+    const providerIds = [normalizeLower(item?.providerAgentId), normalizeLower(item?.providerKey)].filter(Boolean);
+    const action = normalizeLower(item?.action);
+    if (!action) return;
+    providerIds.forEach((providerId) => {
+      if (!publishedActionsByProvider.has(providerId)) publishedActionsByProvider.set(providerId, new Set());
+      publishedActionsByProvider.get(providerId).add(action);
+    });
+  });
+  for (const seed of REAL_AGENT_CAPABILITY_SEEDS) {
+    const providerId = normalizeLower(seed.providerAgentId);
+    if (!providerId) continue;
+    if (!providerCapabilityMap.has(providerId)) providerCapabilityMap.set(providerId, new Set());
+    providerCapabilityMap.get(providerId).add(normalizeLower(seed.action));
+  }
+  for (let providerIndex = 0; providerIndex < providers.length; providerIndex += 1) {
+    const provider = providers[providerIndex];
+    const providerId = normalizeLower(provider?.id);
+    const seededActions = providerCapabilityMap.get(providerId);
+    const publishedActions = publishedActionsByProvider.get(providerId);
+    const existingCapabilities = Array.isArray(provider?.capabilities) ? provider.capabilities : [];
+    const nextCapabilities = existingCapabilities.filter((item) => {
+      const action = normalizeLower(item);
+      if (!action) return false;
+      if (!publishedActions) return true;
+      return publishedActions.has(action);
+    });
+    const nextCapabilitySet = new Set(nextCapabilities.map((item) => normalizeLower(item)));
+    if (seededActions) {
+      for (const action of seededActions) {
+        if (!nextCapabilitySet.has(action)) {
+          nextCapabilities.push(action);
+          nextCapabilitySet.add(action);
+        }
+      }
+    }
+    const changed = JSON.stringify(existingCapabilities) !== JSON.stringify(nextCapabilities);
+    if (!changed) continue;
+    providers[providerIndex] = {
+      ...provider,
+      capabilities: nextCapabilities,
+      updatedAt: new Date().toISOString()
+    };
+    providersChanged = true;
+  }
+  if (providersChanged) {
+    writeNetworkAgents(providers);
+  }
+
+  return rows;
+}
+
 export function registerCapabilitiesV1Routes(app, deps) {
   const {
     ensureNetworkAgents,
@@ -206,108 +357,14 @@ export function registerCapabilitiesV1Routes(app, deps) {
   }
 
   function ensureSeededRealAgentCapabilities() {
-    const rows = ensureServiceCatalog().map((item) => ({ ...item }));
-    const now = new Date().toISOString();
-    const providerDefaults = new Map();
-    rows.forEach((item) => {
-      const providerIds = [normalizeText(item?.providerAgentId), normalizeText(item?.providerKey)].filter(Boolean);
-      if (providerIds.length === 0) return;
-      const defaults = {
-        recipient: normalizeText(item?.recipient),
-        tokenAddress: normalizeText(item?.tokenAddress),
-        source: normalizeText(item?.source || ''),
-        sourceRequested: normalizeText(item?.sourceRequested || item?.source || ''),
-        pair: normalizeText(item?.pair || '')
-      };
-      providerIds.forEach((providerId) => {
-        if (!providerDefaults.has(providerId)) {
-          providerDefaults.set(providerId, defaults);
-        }
-      });
+    return seedRealAgentCapabilities({
+      ensureServiceCatalog,
+      ensureNetworkAgents,
+      writePublishedServices,
+      writeNetworkAgents,
+      normalizeText,
+      normalizeLower
     });
-
-    let rowsChanged = false;
-    for (const seed of REAL_AGENT_CAPABILITY_SEEDS) {
-      const existingIndex = rows.findIndex((item) => normalizeText(item?.id) === seed.capabilityId);
-      const existing = existingIndex >= 0 ? rows[existingIndex] : null;
-      const defaults = providerDefaults.get(seed.providerAgentId) || providerDefaults.get(seed.providerKey) || {};
-      const nextRecord = {
-        id: seed.capabilityId,
-        name: seed.name,
-        description: seed.description,
-        action: seed.action,
-        pair: normalizeText(defaults.pair || ''),
-        source: normalizeText(defaults.source || 'auto'),
-        sourceRequested: normalizeText(defaults.sourceRequested || defaults.source || 'auto'),
-        horizonMin: null,
-        resourceUrl: '',
-        maxChars: null,
-        providerAgentId: seed.providerAgentId,
-        providerKey: seed.providerKey,
-        recipient: normalizeText(defaults.recipient || ''),
-        tokenAddress: normalizeText(defaults.tokenAddress || ''),
-        price: normalizeText(seed.pricing?.amount),
-        pricing: seed.pricing,
-        tags: Array.isArray(seed.tags) ? seed.tags : [],
-        slaMs: 15000,
-        rateLimitPerMinute: 12,
-        budgetPerDay: 0,
-        allowlistPayers: [],
-        exampleInput: seed.exampleInput,
-        inputSchema: seed.inputSchema,
-        outputSchema: seed.outputSchema,
-        active: true,
-        createdAt: normalizeText(existing?.createdAt || now),
-        updatedAt: now,
-        publishedBy: 'system'
-      };
-      if (existing) {
-        const reconciled = {
-          ...existing,
-          ...nextRecord,
-          createdAt: normalizeText(existing?.createdAt || now)
-        };
-        const changed =
-          normalizeLower(existing?.providerAgentId) !== normalizeLower(reconciled?.providerAgentId) ||
-          normalizeLower(existing?.providerKey) !== normalizeLower(reconciled?.providerKey) ||
-          normalizeLower(existing?.action) !== normalizeLower(reconciled?.action) ||
-          normalizeText(existing?.price) !== normalizeText(reconciled?.price) ||
-          JSON.stringify(existing?.pricing || null) !== JSON.stringify(reconciled?.pricing || null) ||
-          JSON.stringify(existing?.tags || []) !== JSON.stringify(reconciled?.tags || []) ||
-          JSON.stringify(existing?.inputSchema || {}) !== JSON.stringify(reconciled?.inputSchema || {}) ||
-          JSON.stringify(existing?.outputSchema || {}) !== JSON.stringify(reconciled?.outputSchema || {});
-        rows[existingIndex] = reconciled;
-        if (changed) rowsChanged = true;
-      } else {
-        rows.unshift(nextRecord);
-        rowsChanged = true;
-      }
-    }
-
-    if (rowsChanged) {
-      writePublishedServices(rows);
-    }
-
-    const providers = ensureNetworkAgents().map((item) => ({ ...item }));
-    let providersChanged = false;
-    for (const seed of REAL_AGENT_CAPABILITY_SEEDS) {
-      const providerIndex = providers.findIndex((item) => normalizeLower(item?.id) === normalizeLower(seed.providerAgentId));
-      if (providerIndex < 0) continue;
-      const provider = providers[providerIndex];
-      const capabilities = Array.isArray(provider?.capabilities) ? [...provider.capabilities] : [];
-      if (capabilities.map((item) => normalizeLower(item)).includes(normalizeLower(seed.action))) continue;
-      providers[providerIndex] = {
-        ...provider,
-        capabilities: [...capabilities, seed.action],
-        updatedAt: new Date().toISOString()
-      };
-      providersChanged = true;
-    }
-    if (providersChanged) {
-      writeNetworkAgents(providers);
-    }
-
-    return rows;
   }
 
   app.get('/api/v1/capabilities', requireRole('viewer'), (req, res) => {

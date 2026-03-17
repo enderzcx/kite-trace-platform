@@ -44,12 +44,33 @@ export function createArtifactCommandHandlers({
     const runtime = runtimeBundle.config;
     const reference = ensureReference(commandArgs);
     const options = parseArtifactArgs(commandArgs.slice(1));
-    const record = await resolveFlowReference(runtime, reference);
-    const traceId = String(record?.traceId || '').trim();
-    const payload = await requestJson(runtime, {
-      pathname: buildQueryPath('/api/evidence/export', { traceId }),
-      apiKey: String(runtime.apiKey || '').trim() || resolveAgentTransportApiKey(runtime)
-    });
+    const transportApiKey = String(runtime.apiKey || '').trim() || resolveAgentTransportApiKey(runtime);
+    let traceId = String(reference || '').trim();
+    let payload = null;
+
+    try {
+      payload = await requestJson(runtime, {
+        pathname: buildQueryPath('/api/evidence/export', { traceId }),
+        apiKey: transportApiKey
+      });
+    } catch (error) {
+      const code = String(error?.code || '').trim().toLowerCase();
+      const statusCode = Number(error?.statusCode || 0);
+      const shouldResolveReference =
+        code === 'request_failed' ||
+        code === 'workflow_not_found' ||
+        code === 'flow_not_found' ||
+        statusCode === 404;
+      if (!shouldResolveReference) {
+        throw error;
+      }
+      const record = await resolveFlowReference(runtime, reference);
+      traceId = String(record?.traceId || '').trim();
+      payload = await requestJson(runtime, {
+        pathname: buildQueryPath('/api/evidence/export', { traceId }),
+        apiKey: transportApiKey
+      });
+    }
     const downloadPath = options.download ? await writeArtifactDownload('evidence', traceId, payload.evidence || payload) : '';
     return createEnvelope({
       ok: true,

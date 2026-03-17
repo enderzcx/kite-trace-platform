@@ -2,7 +2,42 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+First, create an env file if you want the approval page and backend proxy to resolve correctly:
+
+```bash
+cp .env.example .env.local
+```
+
+Important vars:
+
+- `NEXT_PUBLIC_BACKEND_URL`: backend base URL, for example `http://127.0.0.1:3399`
+- `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`: enables WalletConnect QR on `/approval/[approvalRequestId]`
+
+## Local Desktop Wallet Approval
+
+For the first local pass, do not use WalletConnect. Open the approval page on the same desktop browser where your
+wallet extension is installed.
+
+Recommended flow:
+
+1. Start the backend on `http://127.0.0.1:3399`
+2. Start the frontend on `http://127.0.0.1:3000`
+3. Generate an approval request from the CLI:
+
+```bash
+cd ../backend
+npm run ktrace -- --base-url http://127.0.0.1:3399 --session-strategy external session request --eoa 0xYOUR_EOA --single-limit 1 --daily-limit 5
+```
+
+4. Open the returned `approvalUrl` in Chrome, Brave, or Edge
+5. Click `Desktop Browser Wallet`
+6. Switch the extension wallet to the target EOA shown on the page
+7. Click `Approve Session`
+8. Back in the agent terminal, run the `ktrace session wait ... --token ...` command shown after approval
+
+WalletConnect is optional and only needed later if you want a phone-wallet QR path.
+
+Then run the development server:
 
 ```bash
 npm run dev

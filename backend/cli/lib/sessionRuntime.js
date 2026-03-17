@@ -1,4 +1,6 @@
 import { ethers } from 'ethers';
+import { GokiteAASDK } from '../../lib/gokite-aa-sdk.js';
+import { getServiceProviderBytes32 } from '../../lib/addressPolicyHelpers.js';
 import { createCliError } from './errors.js';
 import { requestJson, resolveAdminTransportApiKey, resolveAgentTransportApiKey } from './httpRuntime.js';
 
@@ -162,6 +164,23 @@ export function buildSessionSnapshot(raw = {}) {
   };
 }
 
+export function buildLocalSessionRuntime(raw = {}) {
+  const snapshot = buildSessionSnapshot({
+    ...raw,
+    hasSessionPrivateKey: /^0x[0-9a-fA-F]{64}$/.test(String(raw?.sessionPrivateKey || '').trim())
+  });
+  const sessionPrivateKey = normalizePrivateKey(raw?.sessionPrivateKey || '');
+  return {
+    ...snapshot,
+    sessionPrivateKey: /^0x[0-9a-fA-F]{64}$/.test(sessionPrivateKey) ? sessionPrivateKey : '',
+    ready: Boolean(snapshot.aaWallet && snapshot.sessionAddress && snapshot.sessionId && /^0x[0-9a-fA-F]{64}$/.test(sessionPrivateKey))
+  };
+}
+
+export function readLocalSessionRuntime(runtime = {}) {
+  return buildLocalSessionRuntime(runtime?.localSessionRuntime || {});
+}
+
 export function sessionSnapshotMatchesWallet(session = {}, wallet = '') {
   const normalizedWallet = normalizeWalletAddress(wallet);
   if (!normalizedWallet) return true;
@@ -201,13 +220,27 @@ export async function ensureUsableSession(
   } = {}
 ) {
   const sessionStrategy = normalizeSessionStrategy(strategy, runtime?.sessionStrategy || 'managed');
+  const localRuntime = readLocalSessionRuntime(runtime);
   const current = await readSessionSnapshot(runtime).catch(() => ({
     traceId: '',
     session: buildSessionSnapshot({})
   }));
   const currentReady = current.session.ready && sessionSnapshotMatchesWallet(current.session, wallet);
+  const localReady = localRuntime.ready && sessionSnapshotMatchesWallet(localRuntime, wallet);
 
   if (sessionStrategy === 'external') {
+    if (localReady && !forceNewSession) {
+      return {
+        checked: true,
+        created: false,
+        reused: true,
+        renewed: false,
+        sessionStrategy,
+        traceId: current.traceId,
+        session: localRuntime,
+        local: true
+      };
+    }
     if (currentReady && !forceNewSession) {
       return {
         checked: true,
@@ -216,21 +249,25 @@ export async function ensureUsableSession(
         renewed: false,
         sessionStrategy,
         traceId: current.traceId,
-        session: current.session
+        session: current.session,
+        local: false
       };
     }
     throw createCliError(
-      current.session.sessionId || current.session.sessionAddress
-        ? 'External session is not currently usable. Refresh it in the owning agent before retrying.'
-        : 'No usable external session is available. Sync a valid session before retrying.',
+      localRuntime.sessionId || localRuntime.sessionAddress
+        ? 'Local external session is not currently usable. Re-authorize or recreate it in the owning agent.'
+        : current.session.sessionId || current.session.sessionAddress
+          ? 'External session exists on the backend but no local session key is available. Re-authorize on this agent.'
+          : 'No usable external session is available. Authorize a local session before retrying.',
       {
         code:
-          current.session.sessionId || current.session.sessionAddress
+          localRuntime.sessionId || localRuntime.sessionAddress || current.session.sessionId || current.session.sessionAddress
             ? 'external_session_not_usable'
             : 'external_session_missing',
         data: {
           sessionStrategy,
-          session: current.session
+          session: current.session,
+          localSession: localRuntime
         }
       }
     );
@@ -283,5 +320,425 @@ export async function ensureUsableSession(
     sessionStrategy,
     traceId: String(payload?.traceId || '').trim(),
     session
+  };
+}
+
+export function normalizePrivateKey(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.startsWith('0x') ? raw : `0x${raw}`;
+}
+
+export async function createSelfCustodialSession(
+  runtime = {},
+  {
+    ownerPrivateKey = '',
+    sessionPrivateKey = '',
+    sessionAddress = '',
+    singleLimit = '',
+    dailyLimit = '',
+    tokenAddress = '',
+    gatewayRecipient = '',
+    forceNewSession = false
+  } = {}
+) {
+  const normalizedOwnerKey = normalizePrivateKey(ownerPrivateKey);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(normalizedOwnerKey)) {
+    throw createCliError('A valid owner private key is required for self-custodial AA setup.', {
+      code: 'self_custodial_owner_key_required'
+    });
+  }
+  const normalizedSingleLimit = normalizeSessionGrantAmount(singleLimit);
+  const normalizedDailyLimit = normalizeSessionGrantAmount(dailyLimit);
+  if (!normalizedSingleLimit || !normalizedDailyLimit) {
+    throw createCliError('Self-custodial session creation requires positive single/daily limits.', {
+      code: 'self_custodial_limits_required'
+    });
+  }
+  const normalizedTokenAddress = normalizeSessionGrantAddress(tokenAddress);
+  if (!normalizedTokenAddress) {
+    throw createCliError('A valid token address is required for self-custodial session creation.', {
+      code: 'self_custodial_token_required'
+    });
+  }
+  const normalizedGatewayRecipient = normalizeSessionGrantAddress(gatewayRecipient);
+  if (!normalizedGatewayRecipient) {
+    throw createCliError('A valid gateway recipient is required for self-custodial session creation.', {
+      code: 'self_custodial_gateway_required'
+    });
+  }
+
+  const rpcUrl = String(process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/').trim();
+  const bundlerUrl = String(
+    process.env.KITEAI_BUNDLER_URL || 'https://bundler-service.staging.gokite.ai/rpc/'
+  ).trim();
+  const entryPointAddress = String(
+    process.env.KITE_ENTRYPOINT_ADDRESS || '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
+  ).trim();
+  const requiredAaVersion = String(
+    process.env.KITE_AA_REQUIRED_VERSION || 'GokiteAccountV2-session-userop'
+  ).trim();
+  const saltRaw = String(process.env.KITECLAW_AA_SALT || '0').trim() || '0';
+
+  let salt = 0n;
+  try {
+    salt = BigInt(saltRaw);
+  } catch {
+    throw createCliError(`Invalid KITECLAW_AA_SALT value: ${saltRaw}`, {
+      code: 'self_custodial_invalid_salt'
+    });
+  }
+
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const ownerWallet = new ethers.Wallet(normalizedOwnerKey, provider);
+  const owner = normalizeSessionGrantAddress(ownerWallet.address || '');
+  const sdk = new GokiteAASDK({
+    network: 'kite_testnet',
+    rpcUrl,
+    bundlerUrl,
+    entryPointAddress
+  });
+  const aaWallet = sdk.getAccountAddress(owner, salt);
+  const factory = new ethers.Contract(
+    sdk.config.accountFactoryAddress,
+    ['function createAccount(address owner, uint256 salt) returns (address)'],
+    ownerWallet
+  );
+
+  const beforeCode = await provider.getCode(aaWallet);
+  let accountCreatedNow = false;
+  let accountTxHash = '';
+  if (!beforeCode || beforeCode === '0x') {
+    const createTx = await factory.createAccount(owner, salt);
+    await createTx.wait();
+    accountCreatedNow = true;
+    accountTxHash = String(createTx.hash || '').trim();
+  }
+
+  const account = new ethers.Contract(
+    aaWallet,
+    [
+      'function addSupportedToken(address token) external',
+      'function createSession(bytes32 sessionId, address agent, tuple(uint256 timeWindow,uint160 budget,uint96 initialWindowStartTime,bytes32[] targetProviders)[] rules) external',
+      'function sessionExists(bytes32 sessionId) view returns (bool)',
+      'function getSessionAgent(bytes32 sessionId) view returns (address)',
+      'function owner() view returns (address)',
+      'function version() view returns (string)'
+    ],
+    ownerWallet
+  );
+
+  const onchainOwner = normalizeSessionGrantAddress(await account.owner().catch(() => ''));
+  if (onchainOwner && onchainOwner !== owner) {
+    throw createCliError(`AA owner mismatch. onchain=${onchainOwner}, local=${owner}`, {
+      code: 'self_custodial_owner_mismatch'
+    });
+  }
+  const aaVersion = String(await account.version().catch(() => '')).trim();
+  if (requiredAaVersion && aaVersion !== requiredAaVersion) {
+    throw createCliError(
+      `AA must be upgraded to V2 for session-userop payments. required=${requiredAaVersion}, current=${aaVersion || 'unknown_or_legacy'}`,
+      { code: 'self_custodial_aa_version_mismatch' }
+    );
+  }
+
+  try {
+    const tokenTx = await account.addSupportedToken(normalizedTokenAddress);
+    await tokenTx.wait();
+  } catch {
+    // addSupportedToken may already be configured.
+  }
+
+  const latestBlock = await provider.getBlock('latest');
+  const nowTs = Number(latestBlock?.timestamp || Math.floor(Date.now() / 1000));
+  const rules = [
+    {
+      timeWindow: 0n,
+      budget: ethers.parseUnits(normalizedSingleLimit, 18),
+      initialWindowStartTime: 0,
+      targetProviders: []
+    },
+    {
+      timeWindow: 86400n,
+      budget: ethers.parseUnits(normalizedDailyLimit, 18),
+      initialWindowStartTime: Math.max(0, nowTs - 1),
+      targetProviders: []
+    }
+  ];
+
+  const normalizedSessionPrivateKey = normalizePrivateKey(sessionPrivateKey);
+  const requestedSessionAddress = normalizeSessionGrantAddress(sessionAddress);
+  const hasSessionPrivateKey = /^0x[0-9a-fA-F]{64}$/.test(normalizedSessionPrivateKey);
+  const sessionSigner = hasSessionPrivateKey ? new ethers.Wallet(normalizedSessionPrivateKey) : null;
+  const resolvedSessionAddress = normalizeSessionGrantAddress(sessionSigner?.address || requestedSessionAddress || '');
+  if (!resolvedSessionAddress) {
+    throw createCliError(
+      'A valid session private key or session address is required for self-custodial session creation.',
+      {
+        code: 'self_custodial_session_address_required'
+      }
+    );
+  }
+  if (sessionSigner && requestedSessionAddress && requestedSessionAddress !== resolvedSessionAddress) {
+    throw createCliError('The supplied session key does not match the requested session address.', {
+      code: 'self_custodial_session_address_mismatch'
+    });
+  }
+  const sessionId = ethers.keccak256(
+    ethers.toUtf8Bytes(`${resolvedSessionAddress}-${Date.now()}-${Math.random()}`)
+  );
+  const sessionTx = await account.createSession(sessionId, resolvedSessionAddress, rules);
+  await sessionTx.wait();
+
+  const [exists, onchainAgent] = await Promise.all([
+    account.sessionExists(sessionId),
+    account.getSessionAgent(sessionId)
+  ]);
+  if (!exists) {
+    throw createCliError(`Session not found on-chain after tx: ${sessionId}`, {
+      code: 'self_custodial_session_missing'
+    });
+  }
+  if (normalizeSessionGrantAddress(onchainAgent || '') !== resolvedSessionAddress) {
+    throw createCliError(
+      `On-chain session agent mismatch. expected=${normalizeSessionGrantAddress(onchainAgent || '')}, local=${resolvedSessionAddress}`,
+      { code: 'self_custodial_session_agent_mismatch' }
+    );
+  }
+
+  return {
+    owner,
+    aaWallet,
+    sessionAddress: resolvedSessionAddress,
+    sessionPrivateKey: sessionSigner?.privateKey || '',
+    sessionId,
+    sessionTxHash: String(sessionTx.hash || '').trim(),
+    accountCreatedNow,
+    accountTxHash,
+    maxPerTx: Number(normalizedSingleLimit),
+    dailyLimit: Number(normalizedDailyLimit),
+    gatewayRecipient: normalizedGatewayRecipient,
+    source: forceNewSession ? 'cli-self-custodial-force-new' : 'cli-self-custodial',
+    ready: true
+  };
+}
+
+export async function sendLocalSessionPayment(
+  runtime = {},
+  {
+    tokenAddress = '',
+    recipient = '',
+    amount = '',
+    requestId = '',
+    action = '',
+    query = ''
+  } = {}
+) {
+  const localRuntime = readLocalSessionRuntime(runtime);
+  if (!localRuntime.ready || !localRuntime.sessionPrivateKey) {
+    throw createCliError('No usable local external session is available for agent-first payment.', {
+      code: 'local_session_missing',
+      data: {
+        session: localRuntime
+      }
+    });
+  }
+
+  const normalizedTokenAddress = normalizeSessionGrantAddress(tokenAddress);
+  const normalizedRecipient = normalizeSessionGrantAddress(recipient);
+  if (!normalizedTokenAddress) {
+    throw createCliError('A valid token address is required for local session payment.', {
+      code: 'local_payment_token_required'
+    });
+  }
+  if (!normalizedRecipient) {
+    throw createCliError('A valid recipient is required for local session payment.', {
+      code: 'local_payment_recipient_required'
+    });
+  }
+  const amountText = normalizeSessionGrantAmount(amount);
+  if (!amountText) {
+    throw createCliError('A positive amount is required for local session payment.', {
+      code: 'local_payment_amount_required'
+    });
+  }
+
+  const rpcUrl = String(process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/').trim();
+  const bundlerUrl = String(
+    process.env.KITEAI_BUNDLER_URL || 'https://bundler-service.staging.gokite.ai/rpc/'
+  ).trim();
+  const entryPointAddress = String(
+    process.env.KITE_ENTRYPOINT_ADDRESS || '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
+  ).trim();
+  const requiredAaVersion = String(
+    process.env.KITE_AA_REQUIRED_VERSION || 'GokiteAccountV2-session-userop'
+  ).trim();
+
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const sessionWallet = new ethers.Wallet(localRuntime.sessionPrivateKey, provider);
+  const sessionSignerAddress = normalizeSessionGrantAddress(await sessionWallet.getAddress());
+  const accountCode = await provider.getCode(localRuntime.aaWallet);
+  if (!accountCode || accountCode === '0x') {
+    throw createCliError(`No contract code found at local aaWallet: ${localRuntime.aaWallet}`, {
+      code: 'local_payment_aa_missing'
+    });
+  }
+
+  const versionReadAbi = ['function version() view returns (string)'];
+  let aaVersion = '';
+  try {
+    const versionContract = new ethers.Contract(localRuntime.aaWallet, versionReadAbi, provider);
+    aaVersion = String(await versionContract.version()).trim();
+  } catch {
+    aaVersion = '';
+  }
+  if (requiredAaVersion && aaVersion !== requiredAaVersion) {
+    throw createCliError(
+      `AA must be upgraded to V2 for session-userop payments. required=${requiredAaVersion}, current=${aaVersion || 'unknown_or_legacy'}`,
+      {
+        code: 'local_payment_aa_version_mismatch'
+      }
+    );
+  }
+
+  const tokenContract = new ethers.Contract(
+    normalizedTokenAddress,
+    [
+      'function balanceOf(address account) view returns (uint256)',
+      'function decimals() view returns (uint8)'
+    ],
+    provider
+  );
+  const decimalsRaw = await tokenContract.decimals().catch(() => 18);
+  const decimals = Number.isFinite(Number(decimalsRaw)) ? Number(decimalsRaw) : 18;
+  const amountRaw = ethers.parseUnits(amountText, decimals);
+
+  const sessionReadAbi = [
+    'function sessionExists(bytes32 sessionId) view returns (bool)',
+    'function getSessionAgent(bytes32 sessionId) view returns (address)',
+    'function checkSpendingRules(bytes32 sessionId, uint256 normalizedAmount, bytes32 serviceProvider) view returns (bool)'
+  ];
+  const account = new ethers.Contract(localRuntime.aaWallet, sessionReadAbi, provider);
+  const serviceProvider = getServiceProviderBytes32(action);
+  const [exists, agentAddr, rulePass, aaBalance] = await Promise.all([
+    account.sessionExists(localRuntime.sessionId),
+    account.getSessionAgent(localRuntime.sessionId),
+    account.checkSpendingRules(localRuntime.sessionId, amountRaw, serviceProvider),
+    tokenContract.balanceOf(localRuntime.aaWallet)
+  ]);
+  if (!exists) {
+    throw createCliError(`Session not found on-chain: ${localRuntime.sessionId}`, {
+      code: 'local_payment_session_missing'
+    });
+  }
+  if (normalizeSessionGrantAddress(agentAddr || '') !== sessionSignerAddress) {
+    throw createCliError(
+      `On-chain session agent mismatch. expected=${normalizeSessionGrantAddress(agentAddr || '')}, local=${sessionSignerAddress}`,
+      {
+        code: 'local_payment_session_agent_mismatch'
+      }
+    );
+  }
+  if (!rulePass) {
+    throw createCliError('Session spending rule precheck failed (amount/provider out of scope).', {
+      code: 'local_payment_rule_failed'
+    });
+  }
+  if (aaBalance < amountRaw) {
+    throw createCliError(`AA wallet ${localRuntime.aaWallet} has insufficient token balance.`, {
+      code: 'local_payment_insufficient_funds',
+      data: {
+        balance: ethers.formatUnits(aaBalance, decimals),
+        required: amountText
+      }
+    });
+  }
+
+  const sdk = new GokiteAASDK({
+    network: 'kite_testnet',
+    rpcUrl,
+    bundlerUrl,
+    entryPointAddress,
+    proxyAddress: localRuntime.aaWallet,
+    bundlerRpcTimeoutMs: Number(process.env.KITE_BUNDLER_RPC_TIMEOUT_MS || 15000),
+    bundlerRpcRetries: Number(process.env.KITE_BUNDLER_RPC_RETRIES || 3),
+    bundlerRpcBackoffBaseMs: Number(process.env.KITE_BUNDLER_RPC_BACKOFF_BASE_MS || 650),
+    bundlerRpcBackoffMaxMs: Number(process.env.KITE_BUNDLER_RPC_BACKOFF_MAX_MS || 6000),
+    bundlerRpcBackoffFactor: Number(process.env.KITE_BUNDLER_RPC_BACKOFF_FACTOR || 2),
+    bundlerRpcBackoffJitterMs: Number(process.env.KITE_BUNDLER_RPC_BACKOFF_JITTER_MS || 250),
+    bundlerReceiptPollIntervalMs: Number(process.env.KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS || 1000)
+  });
+  if (localRuntime.owner) {
+    sdk.config.ownerAddress = localRuntime.owner;
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const authPayload = {
+    from: localRuntime.aaWallet,
+    to: normalizedRecipient,
+    token: normalizedTokenAddress,
+    value: amountRaw,
+    validAfter: BigInt(Math.max(0, nowSec - 30)),
+    validBefore: BigInt(nowSec + 10 * 60),
+    nonce: ethers.hexlify(ethers.randomBytes(32))
+  };
+  const authSignature = await sdk.buildTransferAuthorizationSignature(sessionWallet, authPayload);
+  const metadata = ethers.hexlify(
+    ethers.toUtf8Bytes(
+      JSON.stringify({
+        requestId: String(requestId || '').trim(),
+        action: String(action || '').trim(),
+        query: String(query || '').trim()
+      })
+    )
+  );
+  const signFunction = async (userOpHash) => sessionWallet.signMessage(ethers.getBytes(userOpHash));
+  const result = await sdk.sendSessionTransferWithAuthorizationAndProvider(
+    {
+      sessionId: localRuntime.sessionId,
+      auth: authPayload,
+      authSignature,
+      serviceProvider,
+      metadata
+    },
+    signFunction,
+    {
+      callGasLimit: 320000n,
+      verificationGasLimit: 450000n,
+      preVerificationGas: 120000n
+    }
+  );
+  if (!result || result.status !== 'success' || !result.transactionHash) {
+    throw createCliError(String(result?.reason || 'local session payment failed').trim(), {
+      code: 'local_payment_failed',
+      data: {
+        result
+      }
+    });
+  }
+
+  return {
+    status: 'paid',
+    payment: {
+      requestId: String(requestId || '').trim(),
+      tokenAddress: normalizedTokenAddress,
+      recipient: normalizedRecipient,
+      amount: amountText,
+      amountWei: amountRaw.toString(),
+      aaWallet: localRuntime.aaWallet,
+      sessionAddress: localRuntime.sessionAddress,
+      sessionId: localRuntime.sessionId,
+      txHash: String(result.transactionHash || '').trim(),
+      userOpHash: String(result.userOpHash || '').trim(),
+      aaVersion
+    },
+    paymentProof: {
+      requestId: String(requestId || '').trim(),
+      txHash: String(result.transactionHash || '').trim(),
+      payer: localRuntime.aaWallet,
+      tokenAddress: normalizedTokenAddress,
+      recipient: normalizedRecipient,
+      amount: amountText
+    }
   };
 }

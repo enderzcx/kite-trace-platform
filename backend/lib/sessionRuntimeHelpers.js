@@ -14,6 +14,7 @@ export function createSessionRuntimeHelpers({
   readJsonArray,
   writeJsonArray,
   sessionRuntimePath,
+  sessionRuntimeIndexPath,
   sessionAuthorizationsPath,
   envSessionPrivateKey,
   envSessionAddress,
@@ -30,9 +31,19 @@ export function createSessionRuntimeHelpers({
     const maxPerTx = Number(input.maxPerTx || 0);
     const dailyLimit = Number(input.dailyLimit || 0);
     const gatewayRecipient = normalizeAddress(input.gatewayRecipient || '');
-    const authorizedBy = normalizeAddress(input.authorizedBy || '');
-    const authorizedAt = Number(input.authorizedAt || 0);
-    const authorizationMode = String(input.authorizationMode || '').trim();
+    const explicitAuthorizedBy = normalizeAddress(input.authorizedBy || '');
+    const authorizedBy = explicitAuthorizedBy || owner;
+    const updatedAt = Number(input.updatedAt || Date.now());
+    const explicitAuthorizedAt = Number(input.authorizedAt || 0);
+    const authorizedAt =
+      Number.isFinite(explicitAuthorizedAt) && explicitAuthorizedAt > 0
+        ? explicitAuthorizedAt
+        : authorizedBy
+          ? updatedAt
+          : 0;
+    const authorizationMode = String(
+      input.authorizationMode || (authorizedBy ? 'owner_runtime_sync' : '')
+    ).trim();
     const authorizationPayload =
       input.authorizationPayload && typeof input.authorizationPayload === 'object' && !Array.isArray(input.authorizationPayload)
         ? JSON.parse(JSON.stringify(input.authorizationPayload))
@@ -50,7 +61,6 @@ export function createSessionRuntimeHelpers({
           .filter(Boolean)
       : [];
     const source = String(input.source || 'frontend').trim();
-    const updatedAt = Number(input.updatedAt || Date.now());
 
     return {
       aaWallet: ethers.isAddress(aaWallet) ? aaWallet : '',
@@ -92,9 +102,113 @@ export function createSessionRuntimeHelpers({
     return sanitizeSessionRuntime(merged);
   }
 
-  function writeSessionRuntime(input = {}) {
+  function readSessionRuntimeIndex() {
+    const payload = readJsonObject(sessionRuntimeIndexPath);
+    const runtimes =
+      payload?.runtimes && typeof payload.runtimes === 'object' && !Array.isArray(payload.runtimes)
+        ? payload.runtimes
+        : {};
+    const normalizedRuntimes = {};
+    for (const [owner, runtime] of Object.entries(runtimes)) {
+      const normalizedOwner = normalizeAddress(owner || '');
+      const sanitized = sanitizeSessionRuntime(runtime);
+      if (!normalizedOwner || !sanitized.owner || normalizedOwner !== sanitized.owner) continue;
+      normalizedRuntimes[normalizedOwner] = sanitized;
+    }
+    return {
+      currentOwner: normalizeAddress(payload?.currentOwner || ''),
+      runtimes: normalizedRuntimes
+    };
+  }
+
+  function writeSessionRuntimeIndex(index = {}) {
+    const runtimes =
+      index?.runtimes && typeof index.runtimes === 'object' && !Array.isArray(index.runtimes)
+        ? index.runtimes
+        : {};
+    const normalizedRuntimes = {};
+    for (const [owner, runtime] of Object.entries(runtimes)) {
+      const normalizedOwner = normalizeAddress(owner || '');
+      const sanitized = sanitizeSessionRuntime(runtime);
+      if (!normalizedOwner || !sanitized.owner || normalizedOwner !== sanitized.owner) continue;
+      normalizedRuntimes[normalizedOwner] = sanitized;
+    }
+    const next = {
+      currentOwner: normalizeAddress(index?.currentOwner || ''),
+      runtimes: normalizedRuntimes
+    };
+    writeJsonObject(sessionRuntimeIndexPath, next);
+    return next;
+  }
+
+  function readSessionRuntimeByOwner(owner = '') {
+    const normalizedOwner = normalizeAddress(owner || '');
+    if (!normalizedOwner) return sanitizeSessionRuntime({});
+    const current = readSessionRuntime();
+    if (current.owner && current.owner === normalizedOwner) {
+      return current;
+    }
+    const index = readSessionRuntimeIndex();
+    return sanitizeSessionRuntime(index?.runtimes?.[normalizedOwner] || {});
+  }
+
+  function listSessionRuntimes() {
+    const current = readSessionRuntime();
+    const index = readSessionRuntimeIndex();
+    const byOwner = new Map();
+    if (current.owner) {
+      byOwner.set(current.owner, current);
+    }
+    for (const runtime of Object.values(index.runtimes || {})) {
+      const sanitized = sanitizeSessionRuntime(runtime);
+      if (!sanitized.owner) continue;
+      byOwner.set(sanitized.owner, sanitized);
+    }
+    return Array.from(byOwner.values());
+  }
+
+  function resolveSessionRuntime({ owner = '', aaWallet = '', sessionId = '' } = {}) {
+    const normalizedOwner = normalizeAddress(owner || '');
+    const normalizedAaWallet = normalizeAddress(aaWallet || '');
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (normalizedOwner) {
+      const runtimeByOwner = readSessionRuntimeByOwner(normalizedOwner);
+      if (runtimeByOwner.owner) return runtimeByOwner;
+    }
+    const current = readSessionRuntime();
+    if (
+      (normalizedAaWallet && current.aaWallet === normalizedAaWallet) ||
+      (normalizedSessionId && current.sessionId === normalizedSessionId)
+    ) {
+      return current;
+    }
+    for (const runtime of listSessionRuntimes()) {
+      if (
+        (normalizedAaWallet && runtime.aaWallet === normalizedAaWallet) ||
+        (normalizedSessionId && runtime.sessionId === normalizedSessionId)
+      ) {
+        return runtime;
+      }
+    }
+    return current;
+  }
+
+  function writeSessionRuntime(input = {}, options = {}) {
     const next = sanitizeSessionRuntime(input);
-    writeJsonObject(sessionRuntimePath, next);
+    const setCurrent = options?.setCurrent !== false;
+    const index = readSessionRuntimeIndex();
+    const nextIndex = {
+      ...index,
+      currentOwner: setCurrent ? next.owner || index.currentOwner || '' : index.currentOwner || '',
+      runtimes: {
+        ...(index.runtimes || {}),
+        ...(next.owner ? { [next.owner]: next } : {})
+      }
+    };
+    writeSessionRuntimeIndex(nextIndex);
+    if (setCurrent) {
+      writeJsonObject(sessionRuntimePath, next);
+    }
     return next;
   }
 
@@ -166,6 +280,11 @@ export function createSessionRuntimeHelpers({
   return {
     sanitizeSessionRuntime,
     readSessionRuntime,
+    readSessionRuntimeByOwner,
+    readSessionRuntimeIndex,
+    writeSessionRuntimeIndex,
+    listSessionRuntimes,
+    resolveSessionRuntime,
     writeSessionRuntime,
     sanitizeSessionAuthorizationRecord,
     readSessionAuthorizations,

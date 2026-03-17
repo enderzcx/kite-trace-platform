@@ -1,3 +1,5 @@
+import { mergeJobWithEscrowRead } from '../lib/escrowReadModel.js';
+
 function buildLatestWorkflowByRequestId(rows = []) {
   const map = new Map();
   const items = Array.isArray(rows) ? rows : [];
@@ -85,6 +87,7 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     gatewayRecipient,
     getActionConfig,
     getAllXmtpRuntimeStatuses,
+    getEscrowJob,
     getLatestIdentityChallengeSnapshot,
     handle,
     hasQuantity,
@@ -356,6 +359,157 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     allowedCapabilities: Array.isArray(runtime.allowedCapabilities) ? runtime.allowedCapabilities : []
   });
 
+  const buildJobAuditSnapshot = (job = null) => {
+    if (!job || typeof job !== 'object') return null;
+    const state = String(job?.state || '').trim().toLowerCase();
+    const executorStakeAmount = String(job?.executorStakeAmount || '').trim();
+    const hasStake = Boolean(executorStakeAmount && Number(executorStakeAmount) > 0);
+    const hasEscrowBacking = Boolean(
+      String(job?.escrowAddress || '').trim() ||
+      String(job?.escrowTokenAddress || '').trim() ||
+      String(job?.escrowAmount || '').trim()
+    );
+    const input =
+      job?.input && typeof job.input === 'object' && !Array.isArray(job.input)
+        ? job.input
+        : {};
+    const inputHash =
+      String(job?.inputHash || '').trim() ||
+      String(
+        digestStableObject?.({
+          scope: 'ktrace-job-input-v1',
+          jobId: String(job?.jobId || '').trim(),
+          traceId: String(job?.traceId || '').trim(),
+          input
+        })?.value || ''
+      ).trim();
+    const approved =
+      state === 'completed'
+        ? true
+        : state === 'rejected'
+          ? false
+          : null;
+    const resultHash = String(job?.resultHash || job?.submissionHash || '').trim();
+    const outcomeAnchorTxHash = String(job?.outcomeAnchorTxHash || '').trim();
+    const contractPrimitives = {
+      escrow: {
+        present: hasEscrowBacking,
+        enforcementMode: hasEscrowBacking ? 'onchain_backend_executed' : 'not_configured',
+        contractAddress: String(job?.escrowAddress || '').trim(),
+        tokenAddress: String(job?.escrowTokenAddress || '').trim()
+      },
+      conditionalPayment: {
+        present: Boolean(String(job?.escrowValidateTxHash || '').trim() || outcomeAnchorTxHash),
+        enforcementMode: hasEscrowBacking ? 'validator_outcome_then_settlement_with_stake_resolution' : 'not_configured',
+        validatorRequired: Boolean(String(job?.validator || '').trim())
+      },
+      deadline: {
+        present: Boolean(String(job?.expiresAt || '').trim()),
+        onchainEnforced: hasEscrowBacking,
+        enforcementMode: hasEscrowBacking ? 'onchain_job_escrow_v1' : 'backend_materialized',
+        timeoutResolution: hasEscrowBacking ? 'onchain_expire_refund_and_optional_slash' : 'backend_materialized',
+        refundOnTimeout: Boolean(String(job?.expiresAt || '').trim())
+      },
+      roleEnforcement: {
+        onchainEnforced: hasEscrowBacking,
+        executionMode: hasEscrowBacking ? 'requester_executor_validator_signers' : 'backend_owner_only',
+        requesterAddress: String(job?.payer || '').trim(),
+        executorAddress: String(job?.executor || '').trim(),
+        validatorAddress: String(job?.validator || '').trim()
+      },
+      staking: {
+        present: hasStake,
+        executionMode: hasStake ? 'executor_stake_locked_on_accept' : 'not_configured'
+      },
+      slashing: {
+        present: hasStake,
+        executionMode: hasStake ? 'slash_to_requester_on_reject_or_expire' : 'not_configured'
+      }
+    };
+    return {
+      jobId: String(job?.jobId || '').trim(),
+      traceId: String(job?.traceId || '').trim(),
+      state,
+      requester: String(job?.payer || '').trim(),
+      executor: String(job?.executor || '').trim(),
+      validator: String(job?.validator || '').trim(),
+      provider: String(job?.provider || '').trim(),
+      capability: String(job?.capability || '').trim(),
+      amount: String(job?.escrowAmount || job?.budget || '').trim(),
+      executorStakeAmount,
+      escrowAddress: String(job?.escrowAddress || '').trim(),
+      tokenAddress: String(job?.escrowTokenAddress || '').trim(),
+      inputHash,
+      resultHash,
+      approved,
+      approvalState: String(job?.approvalState || '').trim().toLowerCase(),
+      approvalRequestedAt: Number(job?.approvalRequestedAt || 0),
+      approvalDecidedAt: Number(job?.approvalDecidedAt || 0),
+      approvalDecidedBy: String(job?.approvalDecidedBy || '').trim(),
+      approvalReasonCode: String(job?.approvalReasonCode || '').trim(),
+      approvalDecisionNote: String(job?.approvalDecisionNote || '').trim(),
+      approvalPolicy:
+        job?.approvalPolicy && typeof job.approvalPolicy === 'object' && !Array.isArray(job.approvalPolicy)
+          ? job.approvalPolicy
+          : {},
+      authorizationId: String(job?.authorizationId || '').trim(),
+      authorizedBy: String(job?.authorizedBy || '').trim(),
+      authorizedAt: Number(job?.authorizedAt || 0),
+      authorizationMode: String(job?.authorizationMode || '').trim(),
+      authorizationPayloadHash: String(job?.authorizationPayloadHash || '').trim(),
+      authorizationExpiresAt: Number(job?.authorizationExpiresAt || 0),
+      authorizationAudience: String(job?.authorizationAudience || '').trim(),
+      allowedCapabilities: Array.isArray(job?.allowedCapabilities) ? job.allowedCapabilities : [],
+      createAnchorTxHash: String(job?.createAnchorTxHash || '').trim(),
+      fundingAnchorTxHash: String(job?.fundingAnchorTxHash || '').trim(),
+      acceptAnchorTxHash: String(job?.acceptAnchorTxHash || '').trim(),
+      submitAnchorTxHash: String(job?.submitAnchorTxHash || '').trim(),
+      outcomeAnchorTxHash: String(job?.outcomeAnchorTxHash || '').trim(),
+      escrowFundTxHash: String(job?.escrowFundTxHash || '').trim(),
+      escrowAcceptTxHash: String(job?.escrowAcceptTxHash || '').trim(),
+      escrowSubmitTxHash: String(job?.escrowSubmitTxHash || '').trim(),
+      escrowValidateTxHash: String(job?.escrowValidateTxHash || '').trim(),
+      receiptRef: String(job?.receiptRef || '').trim(),
+      evidenceRef: String(job?.evidenceRef || '').trim(),
+      deadline: {
+        expiresAt: String(job?.expiresAt || '').trim(),
+        expiredAt: String(job?.expiredAt || '').trim(),
+        isExpired: ['expired', 'approval_expired'].includes(state),
+        onchainEnforced: hasEscrowBacking,
+        enforcementMode: hasEscrowBacking ? 'onchain_job_escrow_v1' : 'backend_materialized'
+      },
+      contractPrimitives,
+      deliveryStandard: {
+        version: 'ktrace-delivery-v1',
+        definition: 'validator_approve + result_hash_submitted + outcome_anchor_onchain',
+        validatorApproved: approved === true,
+        resultHashSubmitted: Boolean(resultHash),
+        outcomeAnchored: Boolean(outcomeAnchorTxHash),
+        satisfied: approved === true && Boolean(resultHash) && Boolean(outcomeAnchorTxHash)
+      }
+    };
+  };
+
+  const hydrateJobForRead = async (job = null) => {
+    if (!job || typeof job !== 'object') return null;
+    const hasEscrowBacking = Boolean(
+      String(job?.escrowAddress || '').trim() ||
+      String(job?.escrowTokenAddress || '').trim() ||
+      (String(job?.escrowAmount || '').trim() && String(job?.executor || '').trim() && String(job?.validator || '').trim())
+    );
+    if (!getEscrowJob || !hasEscrowBacking || !String(job?.jobId || '').trim()) {
+      return job;
+    }
+    try {
+      const escrow = await getEscrowJob({
+        jobId: String(job?.jobId || '').trim()
+      });
+      return mergeJobWithEscrowRead(job, escrow);
+    } catch {
+      return job;
+    }
+  };
+
   const synthesizeWorkflowFromPurchase = (traceId = '') => {
     const normalizedTraceId = String(traceId || '').trim();
     if (!normalizedTraceId || typeof readPurchases !== 'function') return null;
@@ -389,7 +543,7 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     };
   };
 
-  const buildEvidenceExportPayloadForTrace = (traceId = '') => {
+  const buildEvidenceExportPayloadForTrace = async (traceId = '') => {
     const normalizedTraceId = String(traceId || '').trim();
     if (!normalizedTraceId) {
       return { ok: false, statusCode: 400, error: 'traceId_required' };
@@ -422,6 +576,10 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       runsEndpoint: '/api/network/runs'
     };
     const runtimeSnapshot = buildRuntimeSnapshot(runtime);
+    const jobs = typeof readJobs === 'function' ? readJobs() : [];
+    const jobCandidate = jobs.find((item) => String(item?.traceId || '').trim() === normalizedTraceId) || null;
+    const job = await hydrateJobForRead(jobCandidate);
+    const jobAudit = buildJobAuditSnapshot(job);
 
     const evidenceSchemaVersion = 'kiteclaw-evidence-v1.1.0';
     const digestInput = {
@@ -459,7 +617,8 @@ export function registerReceiptEvidenceRoutes(app, deps) {
             requestId: String(paymentRecord.requestId || '').trim()
           }
         : null,
-      runtimeSnapshot
+      runtimeSnapshot,
+      job: jobAudit
     };
     const evidenceDigest = digestStableObject(digestInput);
 
@@ -499,7 +658,34 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       xmtp,
       networkAuditRef,
       paymentRecord: paymentRecord || null,
-      runtimeSnapshot
+      runtimeSnapshot,
+      job: jobAudit,
+      authorization: jobAudit
+        ? {
+            authorizationId: jobAudit.authorizationId,
+            authorizedBy: jobAudit.authorizedBy,
+            authorizedAt: jobAudit.authorizedAt,
+            authorizationMode: jobAudit.authorizationMode,
+            authorizationPayloadHash: jobAudit.authorizationPayloadHash,
+            authorizationExpiresAt: jobAudit.authorizationExpiresAt,
+            authorizationAudience: jobAudit.authorizationAudience,
+            allowedCapabilities: jobAudit.allowedCapabilities
+          }
+        : null,
+      humanApproval: jobAudit
+        ? {
+            approvalState: jobAudit.approvalState,
+            approvalRequestedAt: jobAudit.approvalRequestedAt,
+            approvalDecidedAt: jobAudit.approvalDecidedAt,
+            approvalDecidedBy: jobAudit.approvalDecidedBy,
+            approvalReasonCode: jobAudit.approvalReasonCode,
+            approvalDecisionNote: jobAudit.approvalDecisionNote,
+            approvalPolicy: jobAudit.approvalPolicy
+          }
+        : null,
+      deadline: jobAudit?.deadline || null,
+      contractPrimitives: jobAudit?.contractPrimitives || null,
+      deliveryStandard: jobAudit?.deliveryStandard || null
     };
 
     return {
@@ -521,8 +707,17 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       purchases.find((item) => String(item?.traceId || '').trim() === String(traceId || '').trim()) || null;
     const runtimeSnapshot = exportPayload?.runtimeSnapshot || {};
     const x402 = exportPayload?.x402 || null;
+    const jobAudit = exportPayload?.job || null;
     const jobAnchorTxHash =
-      String(job?.outcomeAnchorTxHash || job?.fundingAnchorTxHash || job?.createAnchorTxHash || '').trim();
+      String(
+        jobAudit?.outcomeAnchorTxHash ||
+          jobAudit?.fundingAnchorTxHash ||
+          jobAudit?.createAnchorTxHash ||
+          job?.outcomeAnchorTxHash ||
+          job?.fundingAnchorTxHash ||
+          job?.createAnchorTxHash ||
+          ''
+      ).trim();
     const anchorContract = String(job?.anchorRegistry || process.env.ERC8183_JOB_ANCHOR_REGISTRY || '').trim();
 
     return {
@@ -537,12 +732,27 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       paymentTxHash: String(x402?.paymentTxHash || workflow?.txHash || '').trim(),
       authorizedBy: String(runtimeSnapshot.authorizedBy || '').trim(),
       authorizationMode: String(runtimeSnapshot.authorizationMode || '').trim(),
+      authorizationPayloadHash: String(jobAudit?.authorizationPayloadHash || runtimeSnapshot.authorizationPayloadHash || '').trim(),
+      authorizationExpiresAt: Number(jobAudit?.authorizationExpiresAt || runtimeSnapshot.authorizationExpiresAt || 0),
+      allowedCapabilities: Array.isArray(jobAudit?.allowedCapabilities)
+        ? jobAudit.allowedCapabilities
+        : Array.isArray(runtimeSnapshot.allowedCapabilities)
+          ? runtimeSnapshot.allowedCapabilities
+          : [],
+      approvalState: String(jobAudit?.approvalState || '').trim(),
+      approvalReasonCode: String(jobAudit?.approvalReasonCode || '').trim(),
+      approvalDecidedBy: String(jobAudit?.approvalDecidedBy || '').trim(),
+      approvalPolicy:
+        jobAudit?.approvalPolicy && typeof jobAudit.approvalPolicy === 'object' ? jobAudit.approvalPolicy : {},
+      deadline: jobAudit?.deadline || null,
+      contractPrimitives: jobAudit?.contractPrimitives || null,
+      deliveryStandard: jobAudit?.deliveryStandard || null,
       jobAnchorTxHash,
       anchorContract,
       anchorNetwork: 'kite-testnet',
       issuedAt: String(exportPayload?.exportedAt || new Date().toISOString()).trim(),
       evidenceRef: `/api/public/evidence/${encodeURIComponent(String(traceId || '').trim())}`,
-      receiptRef: String(job?.receiptRef || purchase?.receiptRef || '').trim(),
+      receiptRef: String(jobAudit?.receiptRef || job?.receiptRef || purchase?.receiptRef || '').trim(),
       requestId: String(x402?.requestId || workflow?.requestId || '').trim()
     };
   };
@@ -685,8 +895,8 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     });
   });
   
-  app.get('/api/evidence/export', requireRole('viewer'), (req, res) => {
-    const result = buildEvidenceExportPayloadForTrace(req.query.traceId);
+  app.get('/api/evidence/export', requireRole('viewer'), async (req, res) => {
+    const result = await buildEvidenceExportPayloadForTrace(req.query.traceId);
     if (!result?.ok) {
       return res.status(Number(result?.statusCode || 400)).json({
         ok: false,
@@ -705,8 +915,8 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     return res.json({ ok: true, traceId, evidence: exportPayload });
   });
 
-  app.get('/api/public/evidence/:traceId', (req, res) => {
-    const result = buildEvidenceExportPayloadForTrace(req.params.traceId);
+  app.get('/api/public/evidence/:traceId', async (req, res) => {
+    const result = await buildEvidenceExportPayloadForTrace(req.params.traceId);
     if (!result?.ok) {
       return res.status(Number(result?.statusCode || 400)).json({
         ok: false,
@@ -735,6 +945,11 @@ export function registerReceiptEvidenceRoutes(app, deps) {
   
     const workflowByRequestId = buildLatestWorkflowByRequestId(readWorkflows());
     const workflow = workflowByRequestId.get(requestId) || null;
+    const jobs = typeof readJobs === 'function' ? readJobs() : [];
+    const jobCandidate =
+      jobs.find((item) => String(item?.traceId || '').trim() === String(workflow?.traceId || '').trim()) || null;
+    const job = await hydrateJobForRead(jobCandidate);
+    const jobAudit = buildJobAuditSnapshot(job);
     const action = String(reqItem?.action || workflow?.type || '').trim().toLowerCase();
     const resultPayload = (workflow?.result && typeof workflow.result === 'object' ? workflow.result : null) ||
       (reqItem?.result && typeof reqItem.result === 'object' ? reqItem.result : {}) ||
@@ -760,9 +975,50 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       version: 'kiteclaw-receipt-v1',
       generatedAt: new Date().toISOString(),
       requestId,
+      traceId: String(workflow?.traceId || reqItem?.a2a?.traceId || '').trim(),
       workflowTraceId: String(workflow?.traceId || reqItem?.a2a?.traceId || '').trim(),
+      jobId: String(jobAudit?.jobId || '').trim(),
+      state: String(jobAudit?.state || normalizeExecutionState(workflow?.state || reqItem?.status || '', 'pending')).trim(),
       action,
+      capability: String(jobAudit?.capability || action || '').trim(),
       flow,
+      requester: String(jobAudit?.requester || reqItem?.payer || workflow?.payer || '').trim(),
+      executor: String(jobAudit?.executor || '').trim(),
+      validator: String(jobAudit?.validator || '').trim(),
+      executorStakeAmount: String(jobAudit?.executorStakeAmount || '').trim(),
+      inputHash: String(jobAudit?.inputHash || '').trim(),
+      resultHash: String(jobAudit?.resultHash || '').trim(),
+      approved: typeof jobAudit?.approved === 'boolean' ? jobAudit.approved : null,
+      approvalState: String(jobAudit?.approvalState || '').trim(),
+        approvalRequestedAt: Number(jobAudit?.approvalRequestedAt || 0),
+        approvalDecidedAt: Number(jobAudit?.approvalDecidedAt || 0),
+        approvalDecidedBy: String(jobAudit?.approvalDecidedBy || '').trim(),
+        approvalReasonCode: String(jobAudit?.approvalReasonCode || '').trim(),
+        approvalPolicy:
+          jobAudit?.approvalPolicy && typeof jobAudit.approvalPolicy === 'object' ? jobAudit.approvalPolicy : {},
+        authorizationId: String(jobAudit?.authorizationId || '').trim(),
+        authorizedBy: String(jobAudit?.authorizedBy || '').trim(),
+        authorizationMode: String(jobAudit?.authorizationMode || '').trim(),
+        authorizationPayloadHash: String(jobAudit?.authorizationPayloadHash || '').trim(),
+        authorizationExpiresAt: Number(jobAudit?.authorizationExpiresAt || 0),
+        allowedCapabilities: Array.isArray(jobAudit?.allowedCapabilities) ? jobAudit.allowedCapabilities : [],
+        deadline: jobAudit?.deadline || null,
+        contractPrimitives: jobAudit?.contractPrimitives || null,
+        deliveryStandard: jobAudit?.deliveryStandard || null,
+        escrowAddress: String(jobAudit?.escrowAddress || '').trim(),
+      tokenAddress: String(jobAudit?.tokenAddress || reqItem?.tokenAddress || '').trim(),
+      amount: String(jobAudit?.amount || reqItem?.amount || '').trim(),
+      createAnchorTxHash: String(jobAudit?.createAnchorTxHash || '').trim(),
+      fundingAnchorTxHash: String(jobAudit?.fundingAnchorTxHash || '').trim(),
+      acceptAnchorTxHash: String(jobAudit?.acceptAnchorTxHash || '').trim(),
+      submitAnchorTxHash: String(jobAudit?.submitAnchorTxHash || '').trim(),
+      outcomeAnchorTxHash: String(jobAudit?.outcomeAnchorTxHash || '').trim(),
+      escrowFundTxHash: String(jobAudit?.escrowFundTxHash || '').trim(),
+      escrowAcceptTxHash: String(jobAudit?.escrowAcceptTxHash || '').trim(),
+      escrowSubmitTxHash: String(jobAudit?.escrowSubmitTxHash || '').trim(),
+      escrowValidateTxHash: String(jobAudit?.escrowValidateTxHash || '').trim(),
+      receiptRef: String(jobAudit?.receiptRef || '').trim(),
+      evidenceRef: String(jobAudit?.evidenceRef || '').trim(),
       identity: {
         agentId: reqItem?.identity?.agentId || '',
         registry: reqItem?.identity?.registry || '',
@@ -788,6 +1044,29 @@ export function registerReceiptEvidenceRoutes(app, deps) {
             ? new Date(Number(reqItem.proofVerification.verifiedAt)).toISOString()
             : ''
       },
+      job: jobAudit,
+      authorization: jobAudit
+        ? {
+            authorizationId: jobAudit.authorizationId,
+            authorizedBy: jobAudit.authorizedBy,
+            authorizedAt: jobAudit.authorizedAt,
+            authorizationMode: jobAudit.authorizationMode,
+            authorizationPayloadHash: jobAudit.authorizationPayloadHash,
+            authorizationExpiresAt: jobAudit.authorizationExpiresAt,
+            authorizationAudience: jobAudit.authorizationAudience,
+            allowedCapabilities: jobAudit.allowedCapabilities
+          }
+        : null,
+      humanApproval: jobAudit
+        ? {
+            approvalState: jobAudit.approvalState,
+            approvalRequestedAt: jobAudit.approvalRequestedAt,
+            approvalDecidedAt: jobAudit.approvalDecidedAt,
+            approvalDecidedBy: jobAudit.approvalDecidedBy,
+            approvalReasonCode: jobAudit.approvalReasonCode,
+            approvalDecisionNote: jobAudit.approvalDecisionNote
+          }
+        : null,
       apiResult: {
         summary: String(resultPayload?.summary || '').trim(),
         payload: resultPayload,

@@ -17,8 +17,11 @@ export function registerAutomationX402Routes(app, deps) {
     sessionPayMetrics,
     markSessionPayFailure,
     readSessionRuntime,
+    resolveSessionRuntime,
+    resolveSessionOwnerByAaWallet,
     SETTLEMENT_TOKEN,
     BACKEND_RPC_URL,
+    PORT,
     getServiceProviderBytes32,
     KITE_REQUIRE_AA_V2,
     AA_V2_VERSION_TAG,
@@ -47,6 +50,109 @@ export function registerAutomationX402Routes(app, deps) {
     BACKEND_BUNDLER_URL,
     BACKEND_ENTRYPOINT_ADDRESS,
   } = deps;
+  const sessionPayInflightByPayer = new Map();
+  const SESSION_PAY_RECEIPT_WAIT_MS = Math.max(
+    180_000,
+    Number(KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 24,
+    360_000
+  );
+
+  function buildSessionPayPayerKey(value = '') {
+    return normalizeAddress(value || '') || String(value || '').trim().toLowerCase() || 'default';
+  }
+
+  function buildTrackedSessionPayResult(tracked = null) {
+    if (!tracked?.ok || !tracked?.receipt?.success || !tracked?.transactionHash) {
+      return null;
+    }
+    return {
+      status: 'success',
+      transactionHash: tracked.transactionHash,
+      userOpHash: String(tracked.userOpHash || '').trim(),
+      receipt: {
+        blockNumber: tracked?.receipt?.blockNumber || tracked?.receipt?.receipt?.blockNumber || null
+      }
+    };
+  }
+
+  function trackInflightSessionPay(lockKey = '', userOpHash = '', sdk = null) {
+    const key = buildSessionPayPayerKey(lockKey);
+    const normalizedUserOpHash = String(userOpHash || '').trim();
+    if (!key || !normalizedUserOpHash || !sdk || typeof sdk.waitForUserOperation !== 'function') {
+      return null;
+    }
+    const current = sessionPayInflightByPayer.get(key);
+    if (current && current.userOpHash === normalizedUserOpHash) {
+      return current.promise;
+    }
+    const promise = sdk
+      .waitForUserOperation(
+        normalizedUserOpHash,
+        SESSION_PAY_RECEIPT_WAIT_MS,
+        KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS
+      )
+      .then((receipt) => ({
+        ok: Boolean(receipt?.success && receipt?.transactionHash),
+        userOpHash: normalizedUserOpHash,
+        transactionHash: String(receipt?.transactionHash || '').trim(),
+        receipt
+      }))
+      .catch((error) => ({
+        ok: false,
+        userOpHash: normalizedUserOpHash,
+        reason: String(error?.message || 'userop_receipt_wait_failed').trim()
+      }))
+      .finally(() => {
+        const latest = sessionPayInflightByPayer.get(key);
+        if (latest && latest.promise === promise) {
+          sessionPayInflightByPayer.delete(key);
+        }
+      });
+    sessionPayInflightByPayer.set(key, {
+      userOpHash: normalizedUserOpHash,
+      startedAt: Date.now(),
+      promise
+    });
+    return promise;
+  }
+
+  async function awaitInflightSessionPay(lockKey = '') {
+    const key = buildSessionPayPayerKey(lockKey);
+    const current = sessionPayInflightByPayer.get(key);
+    if (!current?.promise) return null;
+    return current.promise.catch(() => null);
+  }
+
+  async function ensureManagedRuntimeForSessionPay({
+    owner = '',
+    payer = '',
+    tokenAddress = '',
+    recipient = ''
+  } = {}) {
+    const resolvedOwner =
+      normalizeAddress(owner || '') || resolveSessionOwnerByAaWallet?.(payer || '') || '';
+    if (!resolvedOwner) return null;
+
+    const headers = { 'Content-Type': 'application/json' };
+    const internalApiKey =
+      typeof deps.getInternalAgentApiKey === 'function' ? String(deps.getInternalAgentApiKey() || '').trim() : '';
+    if (internalApiKey) headers['x-api-key'] = internalApiKey;
+
+    const response = await fetch(`http://127.0.0.1:${PORT}/api/session/runtime/ensure`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        owner: resolvedOwner,
+        tokenAddress: tokenAddress || SETTLEMENT_TOKEN || '',
+        gatewayRecipient: recipient || ''
+      })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || !body?.ok) {
+      throw new Error(String(body?.reason || body?.error || 'session runtime ensure failed').trim());
+    }
+    return body;
+  }
 
   app.get('/api/automation/trade-plan/status', requireRole('viewer'), (req, res) => {
     return res.json({
@@ -251,6 +357,9 @@ export function registerAutomationX402Routes(app, deps) {
   
   // AA Session Payment Endpoint
   app.post('/api/session/pay', requireRole('agent'), async (req, res) => {
+    let requestIdForCatch = '';
+    let sessionIdForCatch = '';
+    let payerForCatch = '';
     let failSessionPay = (status = 500, { error = 'payment_failed', reason = 'session pay failed', details = {} } = {}) =>
       res.status(status).json({ ok: false, error, reason, details });
     try {
@@ -276,12 +385,81 @@ export function registerAutomationX402Routes(app, deps) {
           }
         });
       };
-      const runtime = readSessionRuntime();
-  
+      const body = req.body || {};
+      const requestId = String(body.requestId || '').trim();
+      requestIdForCatch = requestId;
+      const x402Request =
+        requestId
+          ? readX402Requests().find((item) => String(item?.requestId || '').trim() === requestId) || null
+          : null;
+      const requestedOwner = normalizeAddress(body.owner || '');
+      const requestedPayer = normalizeAddress(body.payer || body.aaWallet || x402Request?.payer || '');
+      let runtime = resolveSessionRuntime({
+        owner: requestedOwner,
+        aaWallet: requestedPayer,
+        sessionId: String(body.sessionId || '').trim()
+      });
+
+      const runtimeMatchedPayer =
+        !requestedPayer || normalizeAddress(runtime.aaWallet || '') === requestedPayer;
+      const runtimeMatchedOwner =
+        !requestedOwner || normalizeAddress(runtime.owner || '') === requestedOwner;
+      const runtimeMissingSecrets = !runtime.sessionPrivateKey || !runtime.aaWallet;
+      const inferredOwner = requestedOwner || resolveSessionOwnerByAaWallet?.(requestedPayer || '') || '';
+
+      if ((runtimeMissingSecrets || !runtimeMatchedPayer || !runtimeMatchedOwner) && (requestedPayer || inferredOwner)) {
+        try {
+          await ensureManagedRuntimeForSessionPay({
+            owner: inferredOwner,
+            payer: requestedPayer,
+            tokenAddress: body.tokenAddress || x402Request?.tokenAddress || SETTLEMENT_TOKEN || '',
+            recipient: body.recipient || x402Request?.recipient || ''
+          });
+          runtime = resolveSessionRuntime({
+            owner: inferredOwner || requestedOwner,
+            aaWallet: requestedPayer,
+            sessionId: String(body.sessionId || '').trim()
+          });
+        } catch (ensureError) {
+          const message = String(ensureError?.message || 'session runtime ensure failed').trim();
+          if (runtimeMissingSecrets) {
+            return failSessionPay(400, {
+              error: 'session_not_configured',
+              reason: message,
+              details: {
+                owner: inferredOwner || requestedOwner,
+                payer: requestedPayer,
+                requestId
+              }
+            });
+          }
+        }
+      }
+
       if (!runtime.sessionPrivateKey || !runtime.aaWallet) {
         return failSessionPay(400, {
           error: 'session_not_configured',
           reason: 'Session key not synced. Please configure via /api/session/runtime/sync first.'
+        });
+      }
+      if (requestedPayer && normalizeAddress(runtime.aaWallet || '') !== requestedPayer) {
+        return failSessionPay(400, {
+          error: 'session_not_configured',
+          reason: `No synced session runtime matched payer ${requestedPayer}.`,
+          details: {
+            payer: requestedPayer,
+            requestId
+          }
+        });
+      }
+      if (requestedOwner && normalizeAddress(runtime.owner || '') !== requestedOwner) {
+        return failSessionPay(400, {
+          error: 'session_not_configured',
+          reason: `No synced session runtime matched owner ${requestedOwner}.`,
+          details: {
+            owner: requestedOwner,
+            requestId
+          }
         });
       }
   
@@ -289,11 +467,10 @@ export function registerAutomationX402Routes(app, deps) {
         tokenAddress,
         recipient,
         amount,
-        requestId = '',
         action = 'kol-score',
         query = '',
         sessionId: bodySessionId = ''
-      } = req.body || {};
+      } = body;
   
       if (!tokenAddress || !ethers.isAddress(tokenAddress)) {
         return failSessionPay(400, { error: 'invalid_tokenAddress', reason: 'tokenAddress must be a valid address.' });
@@ -319,6 +496,8 @@ export function registerAutomationX402Routes(app, deps) {
       const decimals = 18;
       const amountRaw = ethers.parseUnits(String(amount), decimals);
       const sessionId = String(bodySessionId || runtime.sessionId || '').trim();
+      sessionIdForCatch = sessionId;
+      payerForCatch = String(runtime.aaWallet || requestedPayer || '').trim();
       if (!/^0x[0-9a-fA-F]{64}$/.test(sessionId)) {
         return failSessionPay(400, {
           error: 'invalid_session_id',
@@ -327,7 +506,9 @@ export function registerAutomationX402Routes(app, deps) {
         });
       }
   
-      const provider = new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+      const rpcRequest = new ethers.FetchRequest(BACKEND_RPC_URL);
+      rpcRequest.timeout = Math.max(60_000, Number(KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 4, 15_000);
+      const provider = new ethers.JsonRpcProvider(rpcRequest);
       const sessionWallet = new ethers.Wallet(runtime.sessionPrivateKey, provider);
       const sessionSignerAddress = await sessionWallet.getAddress();
       const serviceProvider = getServiceProviderBytes32(action);
@@ -485,11 +666,14 @@ export function registerAutomationX402Routes(app, deps) {
         sessionWallet.signMessage(ethers.getBytes(userOpHash));
   
       const maxAttempts = Math.max(1, Math.min(KITE_SESSION_PAY_RETRIES, 5));
-      const payerLockKey = normalizeAddress(runtime.aaWallet || '') || String(runtime.aaWallet || '').trim().toLowerCase();
+      const payerLockKey = buildSessionPayPayerKey(runtime.aaWallet || '');
       const lockStartedAt = Date.now();
-      const { result, attempts } = await withSessionUserOpLock(payerLockKey, async () => {
+      const { result, attempts, queueWaitMs } = await withSessionUserOpLock(payerLockKey, async () => {
         let innerResult = null;
         let innerAttempts = 0;
+        const queueStartedAt = Date.now();
+        await awaitInflightSessionPay(payerLockKey);
+        const innerQueueWaitMs = Math.max(0, Date.now() - queueStartedAt);
         for (let i = 0; i < maxAttempts; i += 1) {
           innerAttempts = i + 1;
           innerResult = await sdk.sendSessionTransferWithAuthorizationAndProvider(
@@ -507,6 +691,17 @@ export function registerAutomationX402Routes(app, deps) {
               preVerificationGas: 120000n
             }
           );
+          const submittedUserOpHash = String(
+            innerResult?.userOpHash || extractUserOpHashFromReason(String(innerResult?.reason || '').trim())
+          ).trim();
+          if ((!innerResult || innerResult.status !== 'success' || !innerResult.transactionHash) && submittedUserOpHash) {
+            const tracked = await trackInflightSessionPay(payerLockKey, submittedUserOpHash, sdk);
+            const recoveredResult = buildTrackedSessionPayResult(tracked);
+            if (recoveredResult) {
+              innerResult = recoveredResult;
+              break;
+            }
+          }
           if (innerResult?.status === 'success' && innerResult?.transactionHash) break;
           const reason = String(innerResult?.reason || '').trim();
           const reasonCategory = classifySessionPayFailure({ reason });
@@ -518,7 +713,7 @@ export function registerAutomationX402Routes(app, deps) {
           if (retryDelayMs > 0) await waitMs(retryDelayMs);
           continue;
         }
-        return { result: innerResult, attempts: innerAttempts };
+        return { result: innerResult, attempts: innerAttempts, queueWaitMs: innerQueueWaitMs };
       });
       const payElapsedMs = Math.max(0, Date.now() - lockStartedAt);
       const primaryReason = String(result?.reason || '').trim();
@@ -576,6 +771,7 @@ export function registerAutomationX402Routes(app, deps) {
             payer: runtime.aaWallet,
             attempts,
             payElapsedMs,
+            queueWaitMs,
             eoaRelayEnabled: KITE_ALLOW_EOA_RELAY_FALLBACK,
             fallbackAttempted,
             fallbackReason
@@ -626,6 +822,7 @@ export function registerAutomationX402Routes(app, deps) {
           txHash: finalResult.transactionHash,
           userOpHash: extractedUserOpHash,
           payElapsedMs,
+          queueWaitMs,
           eoaRelayEnabled: KITE_ALLOW_EOA_RELAY_FALLBACK,
           signerMode,
           relaySender,
@@ -638,7 +835,12 @@ export function registerAutomationX402Routes(app, deps) {
       console.error('Session pay error:', error);
       return failSessionPay(500, {
         error: 'payment_failed',
-        reason: error?.message || 'session pay failed'
+        reason: error?.message || 'session pay failed',
+        details: {
+          requestId: requestIdForCatch,
+          sessionId: sessionIdForCatch,
+          payer: payerForCatch
+        }
       });
     }
   });
