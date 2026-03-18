@@ -61,7 +61,6 @@ Testnet USDT: `0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63` · [Faucet](https://f
 | Capability | Description | Price |
 |------------|-------------|-------|
 | `cap-listing-alert` | Real-time exchange listing announcements (Binance, OKX, Coinbase...) with AI impact score | 0.002 USDT |
-| `cap-whale-alert` | On-chain large position & whale trade detection | 0.001 USDT |
 | `cap-news-signal` | AI-analyzed news signal (long/short/neutral) from Reuters, Bloomberg, CoinDesk & 50+ sources | 0.0005 USDT |
 | `cap-meme-sentiment` | Meme coin social sentiment & trending detection | 0.0001 USDT |
 | `cap-kol-monitor` | KOL tweet tracking including deleted tweets | 0.0003 USDT |

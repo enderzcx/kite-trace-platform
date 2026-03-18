@@ -6,7 +6,33 @@ const DEFAULT_TIMEOUT_MS = 8000;
 const ONCHAINOS_TIMEOUT_MS = 20000;
 const ONCHAINOS_RETRY_BACKOFF_MS = [400, 1200];
 const PUBLIC_FEED_RETRY_BACKOFF_MS = [300, 1000];
+const DAILY_NEWS_CATEGORY_CACHE_TTL_MS = 10 * 60 * 1000;
 const execFileAsync = promisify(execFile);
+
+const DAILY_NEWS_CATEGORY_DEFINITIONS = [
+  {
+    id: 'news',
+    name: 'Market News',
+    engineTypes: { news: ['Bloomberg', 'Reuters', 'Coindesk'] }
+  },
+  {
+    id: 'listing',
+    name: 'Exchange Listings',
+    engineTypes: { listing: ['binance', 'okx', 'coinbase', 'bybit', 'hyperliquid'] }
+  },
+  {
+    id: 'meme',
+    name: 'Meme Buzz',
+    engineTypes: { meme: ['twitter'] }
+  }
+];
+
+let dailyNewsCategoriesCache = {
+  fetchedAt: '',
+  expiresAt: 0,
+  items: [],
+  source: 'daily-news:categories'
+};
 
 function normalizeText(value = '') {
   return String(value || '').trim();
@@ -42,6 +68,28 @@ function clampScore(value, fallback = null) {
   return Math.max(0, Math.min(100, Math.round(numeric)));
 }
 
+function normalizeSignalValue(value = '', fallback = 'neutral') {
+  const normalized = normalizeLower(value);
+  if (!normalized) return fallback;
+  if (
+    normalized === 'long' ||
+    normalized.includes('bull') ||
+    normalized.includes('buy') ||
+    normalized.includes('positive')
+  ) {
+    return 'long';
+  }
+  if (
+    normalized === 'short' ||
+    normalized.includes('bear') ||
+    normalized.includes('sell') ||
+    normalized.includes('negative')
+  ) {
+    return 'short';
+  }
+  return 'neutral';
+}
+
 function buildSuccess(data, source, fetchedAt = new Date().toISOString()) {
   return {
     ok: true,
@@ -56,6 +104,39 @@ function buildError(error) {
     ok: false,
     error: normalizeText(error || 'request_failed') || 'request_failed'
   };
+}
+
+function classifyPublicFeedError(provider = '', error = null, fallback = 'request_failed') {
+  const providerPrefix = normalizeLower(provider || '').replace(/[^a-z0-9]+/g, '_');
+  const fallbackCode = normalizeLower(fallback || 'request_failed').replace(/[^a-z0-9]+/g, '_') || 'request_failed';
+  const message = normalizeText(error?.message || fallbackCode) || fallbackCode;
+  const lower = normalizeLower(message);
+
+  if (
+    lower.includes('429') ||
+    lower.includes('too many requests') ||
+    lower.includes('rate limit') ||
+    lower.includes('rate_limited')
+  ) {
+    return providerPrefix ? `${providerPrefix}_rate_limited` : 'upstream_rate_limited';
+  }
+
+  if (lower.includes('aborted') || lower.includes('aborterror')) {
+    return providerPrefix ? `${providerPrefix}_request_aborted` : 'request_aborted';
+  }
+
+  if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('etimedout')) {
+    return providerPrefix ? `${providerPrefix}_timeout` : 'request_timeout';
+  }
+
+  if (lower.startsWith('http ')) {
+    const digits = message.match(/\b(\d{3})\b/);
+    if (digits?.[1]) {
+      return providerPrefix ? `${providerPrefix}_http_${digits[1]}` : `http_${digits[1]}`;
+    }
+  }
+
+  return providerPrefix ? `${providerPrefix}_${fallbackCode}` : fallbackCode;
 }
 
 function waitMs(ms) {
@@ -126,6 +207,28 @@ function toIsoTimestamp(value) {
   const parsed = Date.parse(normalized);
   if (!Number.isFinite(parsed)) return null;
   return new Date(parsed).toISOString();
+}
+
+function normalizeLanguage(value = '') {
+  const normalized = normalizeLower(value);
+  if (['zh', 'cn', 'zh-cn', 'zh_hans'].includes(normalized)) return 'zh';
+  return 'en';
+}
+
+function pickAiSummary(aiRating = {}, lang = 'en', item = {}) {
+  const normalizedLang = normalizeLanguage(lang);
+  if (normalizedLang === 'zh') {
+    return (
+      normalizeText(aiRating?.summary) ||
+      normalizeText(aiRating?.enSummary) ||
+      normalizeText(item?.description || item?.text)
+    );
+  }
+  return (
+    normalizeText(aiRating?.enSummary) ||
+    normalizeText(aiRating?.summary) ||
+    normalizeText(item?.description || item?.text)
+  );
 }
 
 function pickTimestamp(item = {}) {
@@ -516,6 +619,189 @@ function buildNewsSearchBody({ limit = 10, coin, engineTypes = {} } = {}) {
   return body;
 }
 
+function resolveDailyNewsCategoryDefinition(category = '') {
+  const normalizedCategory = normalizeLower(category);
+  if (!normalizedCategory || normalizedCategory === 'all') return null;
+  return (
+    DAILY_NEWS_CATEGORY_DEFINITIONS.find((item) => {
+      if (item.id === normalizedCategory) return true;
+      return Object.values(item.engineTypes || {})
+        .flat()
+        .map((source) => normalizeLower(source))
+        .includes(normalizedCategory);
+    }) || null
+  );
+}
+
+function buildDailyNewsEngineTypes(category = '') {
+  const matchedCategory = resolveDailyNewsCategoryDefinition(category);
+  if (matchedCategory) {
+    return matchedCategory.engineTypes;
+  }
+  return DAILY_NEWS_CATEGORY_DEFINITIONS.reduce((acc, item) => {
+    return {
+      ...acc,
+      ...item.engineTypes
+    };
+  }, {});
+}
+
+function filterByKeyword(item = {}, keyword = '') {
+  const normalizedKeyword = normalizeLower(keyword);
+  if (!normalizedKeyword) return true;
+  const haystack = [
+    normalizeText(item?.title),
+    normalizeText(item?.headline),
+    normalizeText(item?.text),
+    normalizeText(item?.description),
+    normalizeText(item?.source),
+    normalizeText(item?.newsType),
+    normalizeText(item?.aiRating?.summary),
+    normalizeText(item?.aiRating?.enSummary)
+  ]
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(normalizedKeyword);
+}
+
+function sortByPublishedDesc(left = {}, right = {}) {
+  return Date.parse(right?.publishedAt || right?.ts || 0) - Date.parse(left?.publishedAt || left?.ts || 0);
+}
+
+function findDailyNewsCategoryId(item = {}) {
+  const normalizedEngineType = normalizeLower(item?.engineType);
+  const normalizedSource = normalizeLower(item?.newsType || item?.source || '');
+  const matchedCategory = DAILY_NEWS_CATEGORY_DEFINITIONS.find((category) => {
+    const engines = Object.keys(category.engineTypes || {}).map((value) => normalizeLower(value));
+    const sources = Object.values(category.engineTypes || {})
+      .flat()
+      .map((value) => normalizeLower(value));
+    return engines.includes(normalizedEngineType) || sources.includes(normalizedSource);
+  });
+  return matchedCategory?.id || normalizedEngineType || 'news';
+}
+
+function mapDailyNewsCategory(category = {}, previewItems = [], fetchedAt = new Date().toISOString()) {
+  const engineTypes = Object.keys(category.engineTypes || {});
+  const sources = Object.values(category.engineTypes || {}).flat();
+  const firstPreview = previewItems[0] || {};
+  return {
+    id: normalizeText(category?.id),
+    name: normalizeText(category?.name),
+    engineTypes,
+    sources,
+    available: previewItems.length > 0,
+    sampleSourceName: normalizeText(firstPreview?.newsType || firstPreview?.source || sources[0] || ''),
+    fetchedAt
+  };
+}
+
+function mapDailyNewsNewsSignalRecord(item = {}, fetchedAt = new Date().toISOString(), lang = 'en') {
+  const record = mapNewsRecord(item, fetchedAt);
+  return {
+    ...record,
+    summary: pickAiSummary(item?.aiRating || {}, lang, item),
+    signal: normalizeSignalValue(record.signal),
+    aiScore: clampScore(record.aiScore)
+  };
+}
+
+function mapDailyNewsListingRecord(item = {}, fetchedAt = new Date().toISOString(), lang = 'en') {
+  const record = mapListingRecord(item, fetchedAt);
+  return {
+    ...record,
+    summary: pickAiSummary(item?.aiRating || {}, lang, item),
+    signal: normalizeSignalValue(record.signal),
+    aiScore: clampScore(record.aiScore)
+  };
+}
+
+function mapDailyNewsMemeRecord(item = {}, fetchedAt = new Date().toISOString()) {
+  const record = mapMemeRecord(item, fetchedAt);
+  return {
+    ...record,
+    sentiment: normalizeSignalValue(record.sentiment),
+    trendScore: clampScore(record.trendScore)
+  };
+}
+
+function mapDailyNewsHotRecord(item = {}, fetchedAt = new Date().toISOString(), lang = 'en') {
+  const coins = extractCoinSymbols(item);
+  const aiRating = item?.aiRating || {};
+  return {
+    id: normalizeText(item?.id || ''),
+    category: findDailyNewsCategoryId(item),
+    engineType: normalizeLower(item?.engineType || 'news') || 'news',
+    title: normalizeText(item?.title || item?.headline || item?.text),
+    summary: pickAiSummary(aiRating, lang, item),
+    source: normalizeText(item?.newsType || item?.source || item?.engineType || 'news'),
+    coin: normalizeText(coins[0] || ''),
+    aiScore: clampScore(aiRating?.score ?? item?.score ?? item?.aiScore),
+    signal: normalizeSignalValue(aiRating?.signal || item?.signal || ''),
+    ...withCommonMeta(item, `daily-news:${findDailyNewsCategoryId(item)}`, fetchedAt)
+  };
+}
+
+async function fetchDailyNewsSearch({
+  limit = 10,
+  coin,
+  category = '',
+  keyword = '',
+  lang = 'en'
+} = {}) {
+  const token = normalizeText(process.env.OPENNEWS_TOKEN);
+  if (!token) {
+    return buildError('daily_news_not_configured');
+  }
+
+  try {
+    const fetchedAt = new Date().toISOString();
+    const timeoutMs = getEnvTimeout(['OPENNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS);
+    const response = await fetchOpenJson('/open/news_search', {
+      token,
+      method: 'POST',
+      timeoutMs,
+      body: {
+        ...buildNewsSearchBody({
+          limit,
+          coin,
+          engineTypes: buildDailyNewsEngineTypes(category)
+        }),
+        lang: normalizeLanguage(lang)
+      }
+    });
+    return buildSuccess(
+      {
+        items: compactList(response)
+          .filter((item) => filterByKeyword(item, keyword))
+          .slice(0, toBoundedInt(limit, 10, 1, 100))
+      },
+      'daily-news:search',
+      fetchedAt
+    );
+  } catch (error) {
+    return buildError(classifyDailyNewsError(error));
+  }
+}
+
+function classifyDailyNewsError(error = null) {
+  const message = normalizeLower(error?.message || '');
+  if (!message) return 'daily_news_upstream_unavailable';
+  if (message.includes('429') || message.includes('rate limit') || message.includes('too many requests')) {
+    return 'daily_news_rate_limited';
+  }
+  if (message.includes('abort') || message.includes('timeout') || message.includes('timed out')) {
+    return 'daily_news_timeout';
+  }
+  if (message.startsWith('http 5') || message.includes('service unavailable') || message.includes('bad gateway')) {
+    return 'daily_news_upstream_unavailable';
+  }
+  if (message.startsWith('http 4')) {
+    return 'daily_news_invalid_response';
+  }
+  return 'daily_news_upstream_unavailable';
+}
+
 function mapListingRecord(item = {}, fetchedAt = new Date().toISOString()) {
   const coins = extractCoinSymbols(item);
   return {
@@ -664,6 +950,198 @@ function mapCoinGeckoMarket(item = {}, fetchedAt = new Date().toISOString()) {
       fetchedAt
     )
   };
+}
+
+export async function fetchDailyNewsCategories({ includeStale = true } = {}) {
+  const now = Date.now();
+  if (Array.isArray(dailyNewsCategoriesCache.items) && dailyNewsCategoriesCache.items.length > 0 && dailyNewsCategoriesCache.expiresAt > now) {
+    return buildSuccess(
+      {
+        categories: dailyNewsCategoriesCache.items,
+        stale: false
+      },
+      dailyNewsCategoriesCache.source,
+      dailyNewsCategoriesCache.fetchedAt || new Date().toISOString()
+    );
+  }
+
+  const token = normalizeText(process.env.OPENNEWS_TOKEN);
+  if (!token) {
+    if (includeStale && Array.isArray(dailyNewsCategoriesCache.items) && dailyNewsCategoriesCache.items.length > 0) {
+      return buildSuccess(
+        {
+          categories: dailyNewsCategoriesCache.items,
+          stale: true
+        },
+        dailyNewsCategoriesCache.source,
+        dailyNewsCategoriesCache.fetchedAt || new Date().toISOString()
+      );
+    }
+    return buildError('daily_news_not_configured');
+  }
+
+  const fetchedAt = new Date().toISOString();
+  const timeoutMs = getEnvTimeout(['OPENNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS);
+
+  try {
+    const categoryResults = await Promise.allSettled(
+      DAILY_NEWS_CATEGORY_DEFINITIONS.map(async (category) => {
+        const body = {
+          ...buildNewsSearchBody({
+            limit: 1,
+            engineTypes: category.engineTypes
+          }),
+          lang: 'en'
+        };
+        const response = await fetchOpenJson('/open/news_search', {
+          token,
+          method: 'POST',
+          timeoutMs,
+          body
+        });
+        return mapDailyNewsCategory(category, compactList(response), fetchedAt);
+      })
+    );
+
+    const categories = categoryResults
+      .map((result, index) => {
+        if (result.status === 'fulfilled') {
+          return result.value;
+        }
+        return mapDailyNewsCategory(DAILY_NEWS_CATEGORY_DEFINITIONS[index], [], fetchedAt);
+      })
+      .filter(Boolean);
+
+    if (categories.every((item) => item.available !== true)) {
+      throw new Error('daily_news_invalid_response');
+    }
+
+    dailyNewsCategoriesCache = {
+      fetchedAt,
+      expiresAt: now + DAILY_NEWS_CATEGORY_CACHE_TTL_MS,
+      items: categories,
+      source: 'daily-news:categories'
+    };
+
+    return buildSuccess(
+      {
+        categories,
+        stale: false
+      },
+      'daily-news:categories',
+      fetchedAt
+    );
+  } catch (error) {
+    if (includeStale && Array.isArray(dailyNewsCategoriesCache.items) && dailyNewsCategoriesCache.items.length > 0) {
+      return buildSuccess(
+        {
+          categories: dailyNewsCategoriesCache.items,
+          stale: true
+        },
+        dailyNewsCategoriesCache.source,
+        dailyNewsCategoriesCache.fetchedAt || fetchedAt
+      );
+    }
+    return buildError(classifyDailyNewsError(error));
+  }
+}
+
+export async function fetchDailyNewsHotNews({ category = '', lang = 'en', limit = 20, keyword = '' } = {}) {
+  const response = await fetchDailyNewsSearch({
+    category,
+    keyword,
+    lang,
+    limit: toBoundedInt(limit, 20, 1, 100)
+  });
+  if (!response?.ok) return response;
+
+  const fetchedAt = normalizeText(response?.fetchedAt || '') || new Date().toISOString();
+  const items = compactList(response?.data?.items)
+    .map((item) => mapDailyNewsHotRecord(item, fetchedAt, lang))
+    .sort(sortByPublishedDesc)
+    .slice(0, toBoundedInt(limit, 20, 1, 100));
+
+  return buildSuccess(
+    {
+      items,
+      category: normalizeLower(category || '') || 'all',
+      lang: normalizeLanguage(lang)
+    },
+    'daily-news:hot',
+    fetchedAt
+  );
+}
+
+export async function fetchDailyNewsSignals({ coin, signal, minScore = 50, limit = 10, lang = 'en' } = {}) {
+  const response = await fetchDailyNewsSearch({
+    category: 'news',
+    coin,
+    lang,
+    limit
+  });
+  if (!response?.ok) return response;
+
+  const normalizedSignal = normalizeSignalValue(signal, '');
+  const minimumScore = Number.isFinite(Number(minScore)) ? Number(minScore) : 50;
+  const fetchedAt = normalizeText(response?.fetchedAt || '') || new Date().toISOString();
+  const articles = compactList(response?.data?.items)
+    .filter((item) => normalizeLower(item?.engineType) === 'news')
+    .map((item) => mapDailyNewsNewsSignalRecord(item, fetchedAt, lang))
+    .filter((item) => {
+      if (!filterByCoin(item, coin)) return false;
+      if (normalizedSignal && item.signal !== normalizedSignal) return false;
+      if (item.aiScore !== null && Number(item.aiScore) < minimumScore) return false;
+      return true;
+    })
+    .sort(sortByPublishedDesc)
+    .slice(0, toBoundedInt(limit, 10, 1, 100));
+
+  return buildSuccess({ articles }, 'daily-news:signals', fetchedAt);
+}
+
+export async function fetchDailyNewsListings({ exchange = 'all', coin, limit = 10, lang = 'en' } = {}) {
+  const normalizedExchange = normalizeLower(exchange || 'all');
+  const response = await fetchDailyNewsSearch({
+    category: normalizedExchange && normalizedExchange !== 'all' ? normalizedExchange : 'listing',
+    coin,
+    lang,
+    limit
+  });
+  if (!response?.ok) return response;
+
+  const fetchedAt = normalizeText(response?.fetchedAt || '') || new Date().toISOString();
+  const listings = compactList(response?.data?.items)
+    .filter((item) => normalizeLower(item?.engineType) === 'listing')
+    .map((item) => mapDailyNewsListingRecord(item, fetchedAt, lang))
+    .filter((item) => {
+      if (normalizedExchange && normalizedExchange !== 'all' && normalizeLower(item.exchange) !== normalizedExchange) {
+        return false;
+      }
+      return filterByCoin(item, coin);
+    })
+    .sort(sortByPublishedDesc)
+    .slice(0, toBoundedInt(limit, 10, 1, 100));
+
+  return buildSuccess({ listings }, 'daily-news:listings', fetchedAt);
+}
+
+export async function fetchDailyNewsMemes({ limit = 20, lang = 'en', keyword = '' } = {}) {
+  const response = await fetchDailyNewsSearch({
+    category: 'meme',
+    keyword,
+    lang,
+    limit
+  });
+  if (!response?.ok) return response;
+
+  const fetchedAt = normalizeText(response?.fetchedAt || '') || new Date().toISOString();
+  const memes = compactList(response?.data?.items)
+    .filter((item) => normalizeLower(item?.engineType) === 'meme')
+    .map((item) => mapDailyNewsMemeRecord(item, fetchedAt))
+    .sort(sortByPublishedDesc)
+    .slice(0, toBoundedInt(limit, 20, 1, 100));
+
+  return buildSuccess({ memes }, 'daily-news:memes', fetchedAt);
 }
 
 export async function fetchListingAlert({ exchange = 'all', coin, limit = 10 } = {}) {
@@ -881,7 +1359,7 @@ export async function fetchWeatherContext({
       fetchedAt
     );
   } catch (error) {
-    return buildError(error?.message || 'weather_context_failed');
+    return buildError(classifyPublicFeedError('open-meteo', error, 'weather_context_failed'));
   }
 }
 
@@ -907,7 +1385,7 @@ export async function fetchTechBuzzSignal({ limit = 10 } = {}) {
       .map((item) => mapHackerNewsStory(item, fetchedAt));
     return buildSuccess({ stories }, 'hackernews:topstories', fetchedAt);
   } catch (error) {
-    return buildError(error?.message || 'tech_buzz_signal_failed');
+    return buildError(classifyPublicFeedError('hackernews', error, 'tech_buzz_signal_failed'));
   }
 }
 
@@ -951,7 +1429,7 @@ export async function fetchMarketPriceFeed({
       fetchedAt
     );
   } catch (error) {
-    return buildError(error?.message || 'market_price_feed_failed');
+    return buildError(classifyPublicFeedError('coingecko', error, 'market_price_feed_failed'));
   }
 }
 

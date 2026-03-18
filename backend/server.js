@@ -1,3 +1,5 @@
+import { createRequestLogger } from './lib/logger.js';
+
 if (
   !String(process.env.NODE_USE_ENV_PROXY || '').trim() &&
   (
@@ -10,16 +12,33 @@ if (
 }
 
 const { startServer, shutdownServer } = await import('./app.js');
+const logger = createRequestLogger('backend-server');
 
 startServer().catch((error) => {
-  console.error(`Backend startup failed: ${error?.message || error}`);
+  logger.error('backend_startup_failed', {
+    error: error?.message || String(error || 'backend_startup_failed')
+  });
   process.exit(1);
 });
 
 process.on('SIGINT', () => {
-  shutdownServer().finally(() => process.exit(0));
+  shutdownServer()
+    .catch((error) => {
+      logger.error('backend_shutdown_failed', {
+        signal: 'SIGINT',
+        error: error?.message || String(error || 'backend_shutdown_failed')
+      });
+    })
+    .finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
-  shutdownServer().finally(() => process.exit(0));
+  shutdownServer()
+    .catch((error) => {
+      logger.error('backend_shutdown_failed', {
+        signal: 'SIGTERM',
+        error: error?.message || String(error || 'backend_shutdown_failed')
+      });
+    })
+    .finally(() => process.exit(0));
 });

@@ -1,0 +1,22 @@
+[
+  "function owner() view returns (address)",
+  "function settlementToken() view returns (address)",
+  "function traceAnchorGuard() view returns (address)",
+  "function transferOwnership(address newOwner)",
+  "function setTraceAnchorGuard(address guard)",
+  "function lockFunds(string jobId, address requester, address executor, address validator, uint256 amount, uint64 deadlineAt, uint256 executorStakeAmount)",
+  "function acceptJob(string jobId)",
+  "function submitResult(string jobId, bytes32 resultHash)",
+  "function validate(string jobId, bool approved)",
+  "function expireJob(string jobId)",
+  "function getJob(string jobId) view returns (address requester, address executor, address validator, uint256 amount, uint256 executorStakeAmount, uint8 state, bytes32 resultHash, uint64 deadlineAt, uint64 fundedAt, uint64 acceptedAt, uint64 submittedAt, uint64 resolvedAt, uint64 stakeFundedAt)",
+  "event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)",
+  "event TraceAnchorGuardSet(address indexed guard)",
+  "event JobFundsLocked(string indexed jobId, address indexed requester, address indexed executor, address validator, uint256 amount, uint64 deadlineAt, uint256 executorStakeAmount)",
+  "event JobStakeLocked(string indexed jobId, address indexed executor, uint256 amount)",
+  "event JobAccepted(string indexed jobId, address indexed executor, uint256 executorStakeAmount)",
+  "event JobSubmitted(string indexed jobId, bytes32 indexed resultHash)",
+  "event JobValidated(string indexed jobId, bool indexed approved, address recipient, uint256 escrowAmount, uint256 executorStakeAmount)",
+  "event JobExpired(string indexed jobId, address indexed recipient, uint256 escrowAmount, uint256 executorStakeAmount)",
+  "event JobSlashed(string indexed jobId, address indexed recipient, uint256 executorStakeAmount, string reason)"
+]

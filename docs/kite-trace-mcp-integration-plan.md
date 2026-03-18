@@ -39,6 +39,44 @@ Two design corrections are recommended before approval:
 - remote MCP should be presented as a connector URL flow
 - generating `claude_desktop_config.json` only makes sense if a local `stdio` bridge is added later
 
+## Status Snapshot
+
+Current status as of 2026-03-18:
+
+- Backend Phase 0, Phase 1, and Phase 2 are implemented
+- Frontend Phase 3 remains pending CC implementation
+- `/.well-known/mcp.json` and `/mcp` are live in the backend codebase
+- active capability discovery is exposed as stable `ktrace__*` MCP tool names
+- MCP tool calls reuse the existing invoke, x402 session-pay, audit, trace, receipt, and evidence flow
+- audit caller tagging is in place with `sourceAgentId = mcp-client`
+- backend smoke/auth/paid verification scripts are added under `backend/scripts/`
+- real paid MCP success path has been validated end to end
+- paid verification now also confirms `/api/receipt/:requestId` and `/api/evidence/export?traceId=...`
+- backend release verification can be run as a single command
+- backend release verification has passed in local protected-mode validation
+
+Latest backend validation outcome:
+
+- paid MCP verification succeeded with `ktrace__svc_btcusd_minute`
+- result state: `unlocked`
+- traceId: `mcp_paid_1773770471482_svc_btcusd_minute`
+- invocationId: `svc_call_1773770471629_6d96b381`
+- requestId: `x402_1773770479148_005f1789`
+- receipt verification: passed
+- evidence verification: passed
+- release verification: passed
+
+Implementation anchors now present in repo:
+
+- `backend/mcp/mcpServer.js`
+- `backend/mcp/toolsAdapter.js`
+- `backend/mcp/invokeAdapter.js`
+- `backend/scripts/verify-mcp-smoke.mjs`
+- `backend/scripts/verify-mcp-auth.mjs`
+- `backend/scripts/verify-mcp-paid.mjs`
+- `backend/scripts/verify-mcp-release.mjs`
+- `backend/docs/mcp-server-runbook.md`
+
 ## Goals
 
 - Expose active `cap-*` capability records as MCP tools
@@ -92,6 +130,12 @@ Reason:
 - better fit for remote connector usage
 - less likely to create short-term protocol churn
 
+Decision:
+
+- phase 1 implements Streamable HTTP first
+- SSE is not an open decision in this plan
+- SSE may be added later only if a concrete client integration requires it
+
 ### D2. Tool Naming
 
 Tool names should be deterministic and derived from capability IDs.
@@ -137,6 +181,21 @@ This keeps:
 
 fully consistent across HTTP and MCP callers.
 
+Caller-source tagging requirement:
+
+- MCP calls must remain distinguishable from ordinary HTTP callers in audit views
+- invocation records created from MCP should carry a caller marker through existing persisted fields
+
+Recommended default tagging:
+
+- `sourceAgentId = mcp-client`
+
+Optional finer-grained tagging:
+
+- `mcp:{toolName}` in a summary or metadata field if a non-breaking path is available
+
+This preserves one audit model while still keeping operator-facing traces readable.
+
 ### D5. Trace Propagation
 
 Canonical trace mapping:
@@ -169,9 +228,30 @@ Optional later addition:
 
 - local `stdio` bridge and local desktop config snippet
 
+### D7. Hosted Payment Default
+
+Default hosted MCP behavior:
+
+- payment-required capability calls should automatically reuse `postSessionPayWithRetry(...)`
+- phase 1 should not expect general MCP clients to manually resolve a raw x402 challenge
+
+Optional override:
+
+- an agent-managed mode can be added through an explicit request header or adapter option
+- when enabled, the adapter may return the payment-required response instead of auto-paying
+
+Reason:
+
+- Claude, Cursor, and similar MCP clients do not reliably recover from raw `402` challenge flows
+- hosted MCP should feel like a normal tool call unless the caller explicitly asks to manage payment itself
+
 ## Proposed Delivery Plan
 
 ## Phase 0: Protocol And Scope Lock
+
+Status:
+
+- complete
 
 Estimate:
 
@@ -196,6 +276,10 @@ Approval gate:
 
 ## Phase 1: MCP Server Core
 
+Status:
+
+- complete
+
 Estimate:
 
 - 1.5 to 2 days
@@ -219,10 +303,11 @@ Wire in:
 Add dependency:
 
 - `@modelcontextprotocol/sdk`
-
-Recommended helper dependency:
-
 - `zod`
+
+Reason:
+
+- `zod` should be treated as a required dependency for tool input schema normalization and validation in this integration
 
 ### `backend/mcp/mcpServer.js`
 
@@ -263,16 +348,29 @@ Therefore the adapter should:
 
 - accept simple schema-like objects from the catalog
 - normalize them into valid MCP-compatible JSON Schema
-- fall back to permissive object schema if a capability schema cannot be fully normalized
+- fall back to a minimally guided object schema if a capability schema cannot be fully normalized
 
 Recommended fallback shape:
 
 ```json
 {
   "type": "object",
+  "properties": {
+    "symbol": { "type": "string" },
+    "limit": { "type": "string" }
+  },
   "additionalProperties": true
 }
 ```
+
+Fallback generation rule:
+
+- if strict normalization fails, derive `properties` from `exampleInput`
+- use the `exampleInput` keys as property names
+- default fallback property types to `string` unless a safe obvious primitive type can be inferred
+- preserve capability description so the caller still sees expected usage context
+
+This is preferred over a completely open schema because it gives MCP clients enough shape to avoid blind hallucinated calls.
 
 ### `backend/mcp/invokeAdapter.js`
 
@@ -300,6 +398,15 @@ Call flow:
 5. return normalized MCP result
 6. on all paths, preserve `traceId`
 
+Default mode:
+
+- phase 1 should run in hosted-payment mode by default
+
+Recommended source tagging during invoke:
+
+- set `sourceAgentId` to `mcp-client` when the caller does not provide a stronger upstream identity
+- keep `targetAgentId` resolution unchanged from the current service invoke behavior
+
 ### Route Mounting In `appRuntime.js`
 
 Add:
@@ -312,6 +419,10 @@ Suggested shape:
 - keep it outside unrelated route modules to avoid inflating route files further
 
 ## Phase 2: Discovery, Audit, And Error Alignment
+
+Status:
+
+- complete
 
 Estimate:
 
@@ -401,6 +512,10 @@ Every mapped error should preserve:
 - backend `reason`
 
 ## Phase 3: Frontend Status And Onboarding
+
+Status:
+
+- pending CC implementation
 
 Estimate:
 
@@ -586,7 +701,7 @@ Risk:
 Mitigation:
 
 - normalize what is valid
-- fall back to permissive object schema
+- fall back to a minimally guided schema derived from `exampleInput`
 - keep tool descriptions rich enough to compensate in phase 1
 
 ## Risk 3: Duplicate Execution Logic
@@ -623,23 +738,37 @@ Mitigation:
 - preserve `traceId` in all error responses
 - let frontend show degraded but explicit server status
 
+## Risk 6: Upstream Market Data Rate Limits
+
+Risk:
+
+- MCP clients may call market-data capabilities much more aggressively than human CLI users
+- data-node paths such as `cap-market-price-feed` can hit upstream provider limits, including CoinGecko free-tier rate limits
+
+Mitigation:
+
+- make upstream rate-limit failures explicit in MCP error mapping
+- consider lightweight per-capability throttling if market-data tools become hot
+- surface degraded status in frontend health when repeated upstream rate limits are detected
+- keep tool descriptions honest about provider dependency and freshness
+
 ## Acceptance Criteria
 
 Backend acceptance:
 
-- `GET /.well-known/mcp.json` returns a valid minimal server descriptor
-- `/mcp` is reachable and lists active capability-derived tools
-- at least one query capability works end to end through MCP
-- at least one paid capability works end to end through MCP
-- MCP calls create normal service invocation audit entries
-- `traceId` survives through invocation, receipt, and evidence layers
+- done: `GET /.well-known/mcp.json` returns a valid minimal server descriptor
+- done: `/mcp` is reachable and lists active capability-derived tools
+- done: at least one query capability works end to end through MCP
+- done: at least one paid capability works end to end through MCP
+- done: MCP calls create normal service invocation audit entries
+- done: `traceId` survives through invocation, receipt, and evidence layers
 
 Frontend acceptance:
 
-- frontend can show MCP server reachability
-- frontend can display MCP tool names for capability rows
-- frontend can present a correct remote MCP onboarding guide
-- frontend does not present invalid remote desktop JSON config
+- pending: frontend can show MCP server reachability
+- pending: frontend can display MCP tool names for capability rows
+- pending: frontend can present a correct remote MCP onboarding guide
+- pending: frontend does not present invalid remote desktop JSON config
 
 ## Suggested Validation Checklist
 
@@ -654,6 +783,15 @@ Backend validation:
 7. Query `/api/service-invocations?traceId=...`
 8. Query `/api/evidence/export?traceId=...`
 
+Completed backend validation in repo:
+
+1. `node --check backend/mcp/*.js`
+2. `npm run verify:mcp:smoke`
+3. `npm run verify:mcp:auth`
+4. `npm run verify:mcp:paid`
+5. `npm run verify:mcp:release`
+6. live paid MCP success confirmed on `ktrace__svc_btcusd_minute`
+
 Frontend validation:
 
 1. status card reflects `.well-known` availability
@@ -665,11 +803,10 @@ Frontend validation:
 
 These should be closed during review before coding starts:
 
-1. Do we want SSE compatibility in phase 1, or only Streamable HTTP?
-2. Should hosted MCP invocation always auto-run session pay when possible, or only when explicitly enabled?
-3. Do we want to mark specific capabilities as read-only in MCP metadata now, or wait for a cleaner capability taxonomy?
-4. Does the frontend want onboarding as a full page, modal, or inline card?
-5. Do we want a future optional local `stdio` bridge, or is remote-only enough for this milestone?
+1. Do we want to expose an explicit agent-managed payment override in phase 1, or defer that option to a later phase?
+2. Do we want to mark specific capabilities as read-only in MCP metadata now, or wait for a cleaner capability taxonomy?
+3. Does the frontend want onboarding as a full page, modal, or inline card?
+4. Do we want a future optional local `stdio` bridge, or is remote-only enough for this milestone?
 
 ## Recommended Approval Outcome
 

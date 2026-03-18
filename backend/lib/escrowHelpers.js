@@ -5,7 +5,7 @@ let cachedJobEscrowAbi = null;
 
 function loadJobEscrowAbi() {
   if (cachedJobEscrowAbi) return cachedJobEscrowAbi;
-  const raw = fs.readFileSync(new URL('./abi/JobEscrowV1.json', import.meta.url), 'utf8');
+  const raw = fs.readFileSync(new URL('./abi/JobEscrowV2.json', import.meta.url), 'utf8');
   const parsed = JSON.parse(raw);
   cachedJobEscrowAbi = Array.isArray(parsed) ? parsed : [];
   return cachedJobEscrowAbi;
@@ -13,6 +13,21 @@ function loadJobEscrowAbi() {
 
 function normalizeText(value = '') {
   return String(value || '').trim();
+}
+
+function isTraceAnchorRequiredError(error = null) {
+  const message = normalizeText(
+    [
+      error?.message,
+      error?.shortMessage,
+      error?.code,
+      error?.cause?.message,
+      error?.cause?.code
+    ]
+      .filter(Boolean)
+      .join(' ')
+  ).toLowerCase();
+  return message.includes('trace_anchor_required');
 }
 
 function isRetryableOnchainError(error = null) {
@@ -294,9 +309,20 @@ export function createEscrowHelpers({
       };
     }
 
-    const tx = await runWithOnchainRetry(() =>
-      contract.submitResult(normalizeText(jobId), normalizeBytes32(resultHash))
-    );
+    let tx;
+    try {
+      tx = await runWithOnchainRetry(() =>
+        contract.submitResult(normalizeText(jobId), normalizeBytes32(resultHash))
+      );
+    } catch (error) {
+      if (isTraceAnchorRequiredError(error)) {
+        const guardError = new Error('trace_anchor_required');
+        guardError.code = 'trace_anchor_required';
+        guardError.cause = error;
+        throw guardError;
+      }
+      throw error;
+    }
     await runWithOnchainRetry(() => tx.wait());
     return {
       configured: true,

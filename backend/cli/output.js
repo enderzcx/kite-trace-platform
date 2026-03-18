@@ -481,6 +481,7 @@ function printJobSubmit(envelope) {
   console.log(`evidenceRef: ${job.evidenceRef || '-'}`);
   console.log(`submitAnchorId: ${job.submitAnchorId || '-'}`);
   console.log(`submitAnchorTxHash: ${job.submitAnchorTxHash || '-'}`);
+  console.log(`submitAnchorConfirmedAt: ${job.submitAnchorConfirmedAt || '-'}`);
   console.log(`escrowSubmitTxHash: ${job.escrowSubmitTxHash || '-'}`);
   console.log(`sessionPreflight: ${preflight.created ? 'created' : preflight.reused ? 'ready' : preflight.checked ? 'checked' : '-'}`);
   console.log(`sessionStrategy: ${preflight.sessionStrategy || envelope?.runtime?.sessionStrategy || '-'}`);
@@ -521,6 +522,14 @@ function printJobShow(envelope) {
   console.log(`fundingAnchorId: ${job.fundingAnchorId || '-'}`);
   console.log(`acceptAnchorId: ${job.acceptAnchorId || '-'}`);
   console.log(`submitAnchorId: ${job.submitAnchorId || '-'}`);
+  console.log(`submitAnchorConfirmedAt: ${job.submitAnchorConfirmedAt || '-'}`);
+  console.log(`guardConfigured: ${typeof job.guardConfigured === 'boolean' ? String(job.guardConfigured) : '-'}`);
+  console.log(`guardAddress: ${job.guardAddress || '-'}`);
+  console.log(`verificationMode: ${job.verificationMode || '-'}`);
+  console.log(
+    `verifiedOnchain: ${typeof job.verifiedOnchain === 'boolean' ? String(job.verifiedOnchain) : job.verifiedOnchain === null ? 'unknown' : '-'}`
+  );
+  console.log(`latestAnchorIdOnChain: ${job.latestAnchorIdOnChain || '-'}`);
   console.log(`outcomeAnchorId: ${job.outcomeAnchorId || '-'}`);
   console.log(`escrowFundTxHash: ${job.escrowFundTxHash || '-'}`);
   console.log(`escrowAcceptTxHash: ${job.escrowAcceptTxHash || '-'}`);
@@ -530,6 +539,41 @@ function printJobShow(envelope) {
   console.log(`expiresAt: ${job.expiresAt || '-'}`);
   console.log(`summary: ${job.summary || envelope?.message || '-'}`);
   console.log(`error: ${job.error || '-'}`);
+}
+
+function printJobAudit(envelope) {
+  const audit = envelope?.data?.audit || {};
+  const summary = audit?.summary || {};
+  const traceAnchor = audit?.traceAnchor || {};
+  const anchor = traceAnchor?.anchor || {};
+  console.log('ktrace job audit');
+  console.log(`jobId: ${audit?.jobId || '-'}`);
+  console.log(`traceId: ${audit?.traceId || '-'}`);
+  console.log(`state: ${summary?.state || '-'}`);
+  console.log(`provider: ${summary?.provider || '-'}`);
+  console.log(`capability: ${summary?.capability || '-'}`);
+  console.log(`requester: ${summary?.requester || '-'}`);
+  console.log(`executor: ${summary?.executor || '-'}`);
+  console.log(`validator: ${summary?.validator || '-'}`);
+  console.log(`escrowAddress: ${summary?.escrowAddress || '-'}`);
+  console.log(`expiresAt: ${summary?.expiresAt || '-'}`);
+  console.log(`guardConfigured: ${typeof traceAnchor?.guardConfigured === 'boolean' ? String(traceAnchor.guardConfigured) : '-'}`);
+  console.log(`guardAddress: ${traceAnchor?.guardAddress || '-'}`);
+  console.log(`verificationMode: ${traceAnchor?.verificationMode || '-'}`);
+  console.log(`submitAnchorId: ${anchor?.anchorId || '-'}`);
+  console.log(`submitAnchorTxHash: ${anchor?.txHash || '-'}`);
+  console.log(`submitAnchorConfirmedAt: ${anchor?.anchoredAt || '-'}`);
+  console.log(
+    `verifiedOnchain: ${
+      typeof anchor?.verifiedOnchain === 'boolean'
+        ? String(anchor.verifiedOnchain)
+        : anchor?.verifiedOnchain === null
+          ? 'unknown'
+          : '-'
+    }`
+  );
+  console.log(`latestAnchorIdOnChain: ${anchor?.latestAnchorIdOnChain || '-'}`);
+  console.log(`summary: ${envelope?.message || 'Job audit loaded.'}`);
 }
 
 function printJobLifecycleAction(envelope) {
@@ -900,6 +944,11 @@ export function writeEnvelope(envelope, helpText = '') {
 
   if (envelope?.command?.family === 'job' && envelope?.command?.action === 'show') {
     printJobShow(envelope);
+    return;
+  }
+
+  if (envelope?.command?.family === 'job' && envelope?.command?.action === 'audit') {
+    printJobAudit(envelope);
     return;
   }
 

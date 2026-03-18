@@ -6,9 +6,21 @@ const KITE_EXPLORER = (
   process.env.NEXT_PUBLIC_KITE_EXPLORER || "https://testnet.kitescan.ai"
 ).replace(/\/+$/, "");
 
+export type TraceAnchor = {
+  anchorRequired?: boolean;
+  anchor?: {
+    published?: boolean;
+    anchorId?: string;
+    txHash?: string;
+    registryAddress?: string;
+    anchoredAt?: string;
+  };
+};
+
 export type JobAudit = {
   jobId: string;
   traceId: string;
+  traceAnchor?: TraceAnchor;
   summary: {
     state: string;
     provider: string;
@@ -323,6 +335,78 @@ function StatusDot({ value }: { value?: boolean }) {
   );
 }
 
+function TraceAnchorSection({ anchor }: { anchor: TraceAnchor }) {
+  const published = Boolean(anchor?.anchor?.published);
+  const required = anchor?.anchorRequired !== false;
+  const txHash = anchor?.anchor?.txHash || "";
+  const anchorId = anchor?.anchor?.anchorId || "";
+  const registryAddress = anchor?.anchor?.registryAddress || "";
+  const anchoredAt = anchor?.anchor?.anchoredAt || "";
+
+  const statusColor = published
+    ? { borderColor: "rgba(58,66,32,0.22)", background: "rgba(58,66,32,0.06)", color: "#3a4220" }
+    : required
+      ? { borderColor: "rgba(180,60,40,0.18)", background: "rgba(180,60,40,0.04)", color: "#9a4332" }
+      : { borderColor: "rgba(90,80,50,0.14)", background: "#faf7f1", color: "#7a6e56" };
+
+  return (
+    <Section
+      title="Submit Anchor"
+      subtitle="On-chain ordering proof required before escrow submit."
+    >
+      <div className="grid gap-3">
+        <div
+          className="inline-flex items-center gap-2 rounded-2xl border px-4 py-3 text-[12px]"
+          style={statusColor}
+        >
+          {published ? (
+            <CheckCircle2 className="size-4 shrink-0" />
+          ) : (
+            <XCircle className="size-4 shrink-0" />
+          )}
+          <span>
+            {published
+              ? "Anchor published — escrow submit order confirmed."
+              : required
+                ? "Anchor not yet published."
+                : "Anchor not required for this job."}
+          </span>
+        </div>
+
+        {txHash ? (
+          <div className="rounded-2xl border border-[rgba(90,80,50,0.1)] bg-[#faf7f1] px-4 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#9e8e76]">
+              Anchor tx
+            </p>
+            <a
+              href={explorerTxUrl(txHash)}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1.5 flex items-center gap-1 break-all text-[12px] text-[#2f351a] hover:text-[#3a4220]"
+              style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
+            >
+              {shorten(txHash, 10, 6)}
+              <ExternalLink className="size-3 shrink-0 opacity-50" />
+            </a>
+          </div>
+        ) : null}
+
+        {anchoredAt ? (
+          <div className="rounded-2xl border border-[rgba(90,80,50,0.1)] bg-[#faf7f1] px-4 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#9e8e76]">
+              Anchored at
+            </p>
+            <p className="mt-1.5 text-[12px] text-[#2f351a]">{formatDate(anchoredAt)}</p>
+          </div>
+        ) : null}
+
+        {anchorId ? <MonoCard label="Anchor ID" value={anchorId} /> : null}
+        {registryAddress ? <MonoCard label="Registry" value={registryAddress} /> : null}
+      </div>
+    </Section>
+  );
+}
+
 export default function JobAuditView({
   audit,
   backendUrl,
@@ -620,6 +704,10 @@ export default function JobAuditView({
                 </div>
               </div>
             </Section>
+
+            {audit.traceAnchor ? (
+              <TraceAnchorSection anchor={audit.traceAnchor} />
+            ) : null}
 
             <Section title="Policy & Deadline" subtitle="Backend-enforced rules that shaped this run.">
               <div className="grid gap-3">

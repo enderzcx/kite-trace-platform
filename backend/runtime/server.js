@@ -1,0 +1,225 @@
+export function createApiRateLimit({
+  extractApiKey,
+  rateLimitMax,
+  rateLimitWindowMs
+} = {}) {
+  const rateLimitStore = new Map();
+
+  function getRateKey(req) {
+    const key = extractApiKey(req);
+    if (key) return `k:${key.slice(0, 8)}`;
+    return `ip:${String(req.ip || req.socket?.remoteAddress || 'unknown')}`;
+  }
+
+  return function apiRateLimit(req, res, next) {
+    const now = Date.now();
+    const key = getRateKey(req);
+    const current = rateLimitStore.get(key);
+    if (!current || now - current.startMs >= rateLimitWindowMs) {
+      rateLimitStore.set(key, { startMs: now, count: 1 });
+      return next();
+    }
+    current.count += 1;
+    if (current.count > rateLimitMax) {
+      return res.status(429).json({
+        ok: false,
+        error: 'rate_limited',
+        reason: 'Too many API requests',
+        traceId: req.traceId || ''
+      });
+    }
+    return next();
+  };
+}
+
+export function applyRuntimeServerMiddleware(app, deps = {}) {
+  const {
+    cors,
+    createTraceId,
+    express,
+    allowedOrigins = [],
+    adminKey = ''
+  } = deps;
+  const normalizedAllowedOrigins = Array.isArray(allowedOrigins)
+    ? allowedOrigins.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+
+  app.use(
+    cors((req, callback) => {
+      const origin = String(req.headers.origin || '').trim();
+      const path = String(req.path || req.originalUrl || '').trim();
+      const hasExplicitAllowlist = normalizedAllowedOrigins.length > 0;
+      const isApprovalSurface = path.startsWith('/api/approvals');
+
+      let corsOptions;
+      if (!origin) {
+        corsOptions = {
+          origin: true,
+          credentials: false,
+          exposedHeaders: ['x-trace-id', 'x-request-id']
+        };
+      } else if (
+        normalizedAllowedOrigins.includes(origin) ||
+        (!hasExplicitAllowlist && !(adminKey && isApprovalSurface))
+      ) {
+        corsOptions = {
+          origin: true,
+          credentials: false,
+          exposedHeaders: ['x-trace-id', 'x-request-id']
+        };
+      } else {
+        corsOptions = {
+          origin: false,
+          credentials: false,
+          exposedHeaders: ['x-trace-id', 'x-request-id']
+        };
+      }
+
+      callback(null, corsOptions);
+    })
+  );
+  app.use(express.json());
+  app.use((req, res, next) => {
+    const incoming =
+      String(req.headers['x-trace-id'] || '').trim() ||
+      String(req.query.traceId || '').trim() ||
+      String(req.body?.traceId || '').trim();
+    const traceId = incoming || createTraceId('req');
+    req.traceId = traceId;
+    req.requestId = traceId;
+    res.setHeader('x-trace-id', traceId);
+    res.setHeader('x-request-id', traceId);
+    next();
+  });
+}
+
+export function registerHealthRoutes(app, deps = {}) {
+  const {
+    getAutoJobExpiryStatus,
+    kiteNetworkName,
+    packageVersion,
+    startedAtMs
+  } = deps;
+
+  const buildPayload = (req) => ({
+    ok: true,
+    version: packageVersion,
+    uptime: Math.max(0, Math.round(process.uptime())),
+    network: kiteNetworkName,
+    publicUrl: String(process.env.BACKEND_PUBLIC_URL || '').trim(),
+    startedAt: new Date(startedAtMs).toISOString(),
+    traceId: String(req.traceId || '').trim(),
+    autoJobExpiry: getAutoJobExpiryStatus?.() || null
+  });
+
+  app.get('/health', (req, res) => {
+    res.json(buildPayload(req));
+  });
+
+  app.get('/api/public/health', (req, res) => {
+    res.json(buildPayload(req));
+  });
+}
+
+export function createRuntimeServerLifecycle(deps = {}) {
+  const {
+    app,
+    autoTradePlan,
+    autoXmtp,
+    parseAgentIdList,
+    persistenceStore,
+    port,
+    startXmtpRuntimes,
+    stopAutoJobExpiryLoop,
+    stopAutoTradePlanLoop,
+    stopAutoXmtpNetworkLoop,
+    stopXmtpRuntimes,
+    xmtpAnyRuntimeEnabled
+  } = deps;
+
+  let httpServer = null;
+
+  function logXmtpRuntimeStartup(name = '', runtimeStatus = null) {
+    if (!runtimeStatus?.enabled) return;
+    if (runtimeStatus?.running) {
+      console.log(
+        `[xmtp/${name}] env=${runtimeStatus.env} address=${runtimeStatus.address || '-'} inbox=${runtimeStatus.inboxId || '-'}`
+      );
+      return;
+    }
+    console.warn(`[xmtp/${name}] failed to start: ${runtimeStatus?.lastError || 'unknown_error'}`);
+  }
+
+  async function startServer() {
+    await deps.initializePersistence();
+    deps.ensureServiceCatalog();
+    deps.ensureTemplateCatalog();
+    deps.ensureNetworkAgents();
+    httpServer = app.listen(port, () => {
+      console.log(`Backend listening on http://localhost:${port}`);
+      if (autoTradePlan.enabled) {
+        autoTradePlan.start({
+          intervalMs: autoTradePlan.intervalMs,
+          symbol: autoTradePlan.symbol,
+          horizonMin: autoTradePlan.horizonMin,
+          prompt: autoTradePlan.prompt,
+          immediate: true,
+          reason: 'startup'
+        });
+        console.log(
+          `[auto-trade-plan] enabled intervalMs=${autoTradePlan.intervalMs} symbol=${autoTradePlan.symbol} horizon=${autoTradePlan.horizonMin}m`
+        );
+      }
+      if (deps.autoJobExpiry.enabled) {
+        deps.autoJobExpiry.start({
+          intervalMs: deps.autoJobExpiry.intervalMs,
+          immediate: true,
+          reason: 'startup'
+        });
+        console.log(`[auto-job-expiry] enabled intervalMs=${deps.autoJobExpiry.intervalMs}`);
+      }
+    });
+    if (xmtpAnyRuntimeEnabled) {
+      const status = await startXmtpRuntimes();
+      logXmtpRuntimeStartup('router', status?.router);
+      logXmtpRuntimeStartup('risk', status?.risk);
+      logXmtpRuntimeStartup('reader', status?.reader);
+      logXmtpRuntimeStartup('price', status?.price);
+      logXmtpRuntimeStartup('executor', status?.executor);
+      if (status?.router?.running && autoXmtp.enabled) {
+        autoXmtp.start({
+          intervalMs: autoXmtp.intervalMs,
+          sourceAgentId: autoXmtp.sourceAgentId,
+          targetAgentIds: autoXmtp.targetAgentIds,
+          capability: autoXmtp.capability,
+          immediate: true,
+          reason: 'startup'
+        });
+        console.log(
+          `[auto-xmtp] enabled intervalMs=${autoXmtp.intervalMs} source=${autoXmtp.sourceAgentId} targets=${parseAgentIdList(autoXmtp.targetAgentIds).join(',')}`
+        );
+      }
+    }
+  }
+
+  async function shutdownServer() {
+    stopAutoTradePlanLoop();
+    stopAutoJobExpiryLoop();
+    stopAutoXmtpNetworkLoop();
+    await stopXmtpRuntimes();
+    try {
+      if (httpServer) {
+        await new Promise((resolve) => httpServer.close(resolve));
+        httpServer = null;
+      }
+    } catch {
+      // ignore server close errors
+    }
+    await persistenceStore.close();
+  }
+
+  return {
+    startServer,
+    shutdownServer
+  };
+}

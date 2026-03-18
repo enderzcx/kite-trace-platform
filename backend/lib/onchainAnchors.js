@@ -1,5 +1,6 @@
 export function createOnchainAnchorHelpers({
   backendSigner,
+  backendRpcUrl = '',
   digestStableObject,
   erc8004TrustAnchorRegistry,
   erc8183JobAnchorRegistry,
@@ -53,6 +54,13 @@ export function createOnchainAnchorHelpers({
       }
     }
     throw lastError || new Error('onchain anchor publish failed');
+  }
+
+  function getReadProvider() {
+    if (backendSigner?.provider) return backendSigner.provider;
+    const rpcUrl = normalizeText(backendRpcUrl);
+    if (!rpcUrl) return null;
+    return new ethers.JsonRpcProvider(rpcUrl);
   }
 
   async function publishTrustPublicationOnChain(input = {}) {
@@ -205,8 +213,46 @@ export function createOnchainAnchorHelpers({
     };
   }
 
+  async function checkAnchorExistsOnChain(jobId = '') {
+    const registryAddress = String(erc8183JobAnchorRegistry || '').trim();
+    const provider = getReadProvider();
+    if (!provider || !ethers.isAddress(registryAddress)) {
+      return {
+        configured: false,
+        registryAddress: registryAddress || '',
+        jobId: normalizeText(jobId),
+        hasAnchor: false,
+        latestAnchorId: ''
+      };
+    }
+    const contract = new ethers.Contract(registryAddress, jobLifecycleAnchorAbi, provider);
+    const normalizedJobId = normalizeText(jobId);
+    const [hasAnchor, latestAnchorId] = await runWithOnchainRetry(() =>
+      Promise.all([contract.hasAnchor(normalizedJobId), contract.latestAnchorId(normalizedJobId)])
+    );
+    return {
+      configured: true,
+      registryAddress,
+      jobId: normalizedJobId,
+      hasAnchor: Boolean(hasAnchor),
+      latestAnchorId: String(latestAnchorId || '').trim()
+    };
+  }
+
+  async function readLatestAnchorIdOnChain(jobId = '') {
+    const status = await checkAnchorExistsOnChain(jobId);
+    return {
+      configured: status.configured,
+      registryAddress: status.registryAddress,
+      jobId: status.jobId,
+      latestAnchorId: status.latestAnchorId
+    };
+  }
+
   return {
+    checkAnchorExistsOnChain,
     publishTrustPublicationOnChain,
-    publishJobLifecycleAnchorOnChain
+    publishJobLifecycleAnchorOnChain,
+    readLatestAnchorIdOnChain
   };
 }

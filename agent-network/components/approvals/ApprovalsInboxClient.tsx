@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -16,6 +16,8 @@ const DEFAULT_BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/+$/, "") ||
   "http://127.0.0.1:3399";
 const ADMIN_KEY_STORAGE_KEY = "ktrace.approvals.adminKey";
+const POLL_INTERVAL_MS = 30_000;
+const NEW_HIGHLIGHT_MS = 8_000;
 
 /* ── Types ───────────────────────────────────────────────────── */
 
@@ -65,6 +67,10 @@ function fmtTime(v: string | number | undefined): string {
   });
 }
 
+function itemKey(item: ApprovalItem): string {
+  return item.approvalId || item.approvalRequestId || "";
+}
+
 /* ── Small primitives ────────────────────────────────────────── */
 
 function StateChip({ state }: { state: string }) {
@@ -93,9 +99,7 @@ function StateChip({ state }: { state: string }) {
 
 function KindBadge({ kind }: { kind: string }) {
   return (
-    <span
-      className="inline-flex items-center rounded border border-[rgba(90,80,50,0.12)] bg-[#faf7f1] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[#9e8e76]"
-    >
+    <span className="inline-flex items-center rounded border border-[rgba(90,80,50,0.12)] bg-[#faf7f1] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[#9e8e76]">
       {kind}
     </span>
   );
@@ -147,25 +151,44 @@ function GhostBtn({
 function StateIcon({ state }: { state: string }) {
   const s = state.toLowerCase();
   if (["approved", "completed"].includes(s)) return <CheckCircle2 className="size-4 text-[#3a4220]" />;
-  if (["rejected", "approval_rejected", "expired", "approval_expired"].includes(s)) return <XCircle className="size-4 text-[#9a4332]" />;
+  if (["rejected", "approval_rejected", "expired", "approval_expired"].includes(s))
+    return <XCircle className="size-4 text-[#9a4332]" />;
   if (s === "pending" || s === "pending_approval") return <Clock className="size-4 text-[#8a6020]" />;
   return <AlertCircle className="size-4 text-[#9e8e76]" />;
 }
 
 /* ── Row component ───────────────────────────────────────────── */
-function ApprovalRow({ item }: { item: ApprovalItem }) {
-  const id = item.approvalId || item.approvalRequestId || "";
+function ApprovalRow({ item, isNew }: { item: ApprovalItem; isNew: boolean }) {
+  const id = itemKey(item);
   const approvalUrl = item.approvalUrl || `/approval/${id}`;
   const isPending = ["pending", "pending_approval"].includes(item.state.toLowerCase());
 
   return (
-    <div className="flex items-start gap-4 rounded-2xl border border-[rgba(90,80,50,0.12)] bg-[#f2ebe0] px-5 py-4 transition hover:border-[rgba(90,80,50,0.22)]">
+    <div
+      className="flex items-start gap-4 rounded-2xl border px-5 py-4 transition-all"
+      style={
+        isNew
+          ? {
+              borderColor: "rgba(138,96,32,0.35)",
+              background: "rgba(138,96,32,0.06)",
+            }
+          : {
+              borderColor: "rgba(90,80,50,0.12)",
+              background: "#f2ebe0",
+            }
+      }
+    >
       <div className="mt-0.5 shrink-0">
         <StateIcon state={item.state} />
       </div>
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
+          {isNew && (
+            <span className="inline-flex items-center rounded-full border border-[rgba(138,96,32,0.3)] bg-[rgba(138,96,32,0.1)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.2em] text-[#8a6020]">
+              New
+            </span>
+          )}
           <span
             className="text-[12.5px] font-semibold text-[#2f351a]"
             style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
@@ -184,23 +207,44 @@ function ApprovalRow({ item }: { item: ApprovalItem }) {
           style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
         >
           {item.jobId ? (
-            <span><span className="text-[#9e8e76]">job </span>{shorten(item.jobId)}</span>
+            <span>
+              <span className="text-[#9e8e76]">job </span>
+              {shorten(item.jobId)}
+            </span>
           ) : null}
           {item.capability ? (
-            <span><span className="text-[#9e8e76]">cap </span>{item.capability}</span>
+            <span>
+              <span className="text-[#9e8e76]">cap </span>
+              {item.capability}
+            </span>
           ) : null}
           {item.budget ? (
-            <span><span className="text-[#9e8e76]">budget </span>{item.budget}</span>
+            <span>
+              <span className="text-[#9e8e76]">budget </span>
+              {item.budget}
+            </span>
           ) : null}
           {item.requestedByOwnerEoa ? (
-            <span><span className="text-[#9e8e76]">eoa </span>{shorten(item.requestedByOwnerEoa)}</span>
+            <span>
+              <span className="text-[#9e8e76]">eoa </span>
+              {shorten(item.requestedByOwnerEoa)}
+            </span>
           ) : null}
-          <span><span className="text-[#9e8e76]">created </span>{fmtTime(item.createdAt)}</span>
+          <span>
+            <span className="text-[#9e8e76]">created </span>
+            {fmtTime(item.createdAt)}
+          </span>
           {item.expiresAt ? (
-            <span><span className="text-[#9e8e76]">expires </span>{fmtTime(item.expiresAt)}</span>
+            <span>
+              <span className="text-[#9e8e76]">expires </span>
+              {fmtTime(item.expiresAt)}
+            </span>
           ) : null}
           {item.decidedAt ? (
-            <span><span className="text-[#9e8e76]">decided </span>{fmtTime(item.decidedAt)}</span>
+            <span>
+              <span className="text-[#9e8e76]">decided </span>
+              {fmtTime(item.decidedAt)}
+            </span>
           ) : null}
         </div>
       </div>
@@ -234,15 +278,24 @@ export default function ApprovalsInboxClient() {
   const [keyInput, setKeyInput] = useState("");
   const [items, setItems] = useState<ApprovalItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [stale, setStale] = useState(false);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
+
+  // Refs to avoid stale closure issues in poll callback
+  const inflightRef = useRef(false);
+  const prevIdsRef = useRef<Set<string>>(new Set());
+  const newIdsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const backendUrl =
     (typeof window !== "undefined"
       ? (window as Window & { __BACKEND_URL__?: string }).__BACKEND_URL__
       : undefined) || DEFAULT_BACKEND_URL;
 
+  // Restore key from sessionStorage on mount
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedKey = window.sessionStorage.getItem(ADMIN_KEY_STORAGE_KEY) || "";
@@ -252,43 +305,91 @@ export default function ApprovalsInboxClient() {
     }
   }, []);
 
+  // Highlight new items, then clear after NEW_HIGHLIGHT_MS
+  function applyNewHighlights(incoming: ApprovalItem[]) {
+    const prev = prevIdsRef.current;
+    const arrived = new Set<string>();
+    for (const item of incoming) {
+      const k = itemKey(item);
+      if (k && !prev.has(k)) arrived.add(k);
+    }
+    prevIdsRef.current = new Set(incoming.map(itemKey).filter(Boolean));
+
+    if (arrived.size > 0) {
+      setNewIds(arrived);
+      if (newIdsTimerRef.current) clearTimeout(newIdsTimerRef.current);
+      newIdsTimerRef.current = setTimeout(() => setNewIds(new Set()), NEW_HIGHLIGHT_MS);
+    }
+  }
+
   const fetchApprovals = useCallback(
-    async (key: string) => {
-      setLoading(true);
-      setError("");
+    async (key: string, { quiet = false }: { quiet?: boolean } = {}) => {
+      if (inflightRef.current) return;
+      inflightRef.current = true;
+
+      if (!quiet) {
+        setLoading(true);
+        setError("");
+        setStale(false);
+      }
+
       try {
         const params = new URLSearchParams();
         if (filter !== "all") params.set("state", filter);
         params.set("limit", "100");
-        const res = await fetch(
-          `${backendUrl}/api/approvals?${params.toString()}`,
-          {
-            headers: {
-              Accept: "application/json",
-              "X-Admin-Key": key,
-            },
-            cache: "no-store",
-          }
-        );
+        const res = await fetch(`${backendUrl}/api/approvals?${params.toString()}`, {
+          headers: { Accept: "application/json", "X-Admin-Key": key },
+          cache: "no-store",
+        });
         const payload = (await res.json()) as ListResponse;
         if (!res.ok || payload?.ok === false) {
           throw new Error(String(payload?.reason || "Failed to fetch approvals."));
         }
-        setItems(payload.items || []);
+        const incoming = payload.items || [];
+        applyNewHighlights(incoming);
+        setItems(incoming);
         setLastFetched(new Date());
+        setStale(false);
+        if (!quiet) setError("");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to fetch approvals.");
+        if (quiet) {
+          // On polling failure: keep stale list, show subtle indicator
+          setStale(true);
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to fetch approvals.");
+        }
       } finally {
-        setLoading(false);
+        inflightRef.current = false;
+        if (!quiet) setLoading(false);
       }
     },
-    [backendUrl, filter]
+    [backendUrl, filter] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
-  // Re-fetch when filter changes and we already have a key
+  // Initial fetch + filter re-fetch
   useEffect(() => {
     if (adminKey) void fetchApprovals(adminKey);
   }, [adminKey, fetchApprovals]);
+
+  // Auto-poll every 30 s
+  useEffect(() => {
+    if (!adminKey) return;
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    pollIntervalRef.current = setInterval(() => {
+      void fetchApprovals(adminKey, { quiet: true });
+    }, POLL_INTERVAL_MS);
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, [adminKey, fetchApprovals]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (newIdsTimerRef.current) clearTimeout(newIdsTimerRef.current);
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
 
   function handleKeySubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -298,6 +399,20 @@ export default function ApprovalsInboxClient() {
       window.sessionStorage.setItem(ADMIN_KEY_STORAGE_KEY, key);
     }
     setAdminKey(key);
+  }
+
+  function lock() {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
+    }
+    setAdminKey("");
+    setKeyInput("");
+    setItems([]);
+    setError("");
+    setStale(false);
+    setNewIds(new Set());
+    prevIdsRef.current = new Set();
   }
 
   const pendingCount = items.filter((i) =>
@@ -312,8 +427,10 @@ export default function ApprovalsInboxClient() {
         : filter === "approved"
           ? items.filter((i) => ["approved", "completed"].includes(i.state.toLowerCase()))
           : items.filter((i) =>
-            ["rejected", "approval_rejected", "expired", "approval_expired"].includes(i.state.toLowerCase())
-          );
+              ["rejected", "approval_rejected", "expired", "approval_expired"].includes(
+                i.state.toLowerCase()
+              )
+            );
 
   /* ── Key gate ── */
   if (!adminKey) {
@@ -329,10 +446,14 @@ export default function ApprovalsInboxClient() {
               Operator <em className="not-italic text-[#3a4220]">access</em>
             </h1>
             <p className="text-[13px] leading-relaxed text-[#7a6e56]">
-              This page requires an admin key. Enter your <code
+              This page requires an admin key. Enter your{" "}
+              <code
                 className="rounded bg-[#f2ebe0] px-1.5 py-0.5 text-[12px]"
                 style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
-              >KTRACE_ADMIN_KEY</code> to continue.
+              >
+                KTRACE_ADMIN_KEY
+              </code>{" "}
+              to continue.
             </p>
           </div>
 
@@ -346,7 +467,9 @@ export default function ApprovalsInboxClient() {
               className="w-full rounded-xl border border-[rgba(90,80,50,0.2)] bg-[#f2ebe0] px-4 py-3 text-[13px] text-[#2f351a] outline-none placeholder:text-[#c4b89e] focus:border-[rgba(58,66,32,0.4)]"
               style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
             />
-            <OliveBtn onClick={() => handleKeySubmit({ preventDefault: () => {} } as React.FormEvent)}>
+            <OliveBtn
+              onClick={() => handleKeySubmit({ preventDefault: () => {} } as React.FormEvent)}
+            >
               <ShieldCheck className="size-3.5" />
               Enter Inbox
             </OliveBtn>
@@ -382,14 +505,30 @@ export default function ApprovalsInboxClient() {
                   approval{pendingCount !== 1 ? "s" : ""}
                 </>
               ) : (
-                <>All <em className="not-italic text-[#3a4220]">approvals</em></>
+                <>
+                  All <em className="not-italic text-[#3a4220]">approvals</em>
+                </>
               )}
             </h1>
-            {lastFetched ? (
-              <p className="text-[11px] text-[#9e8e76]">
-                Last fetched {lastFetched.toLocaleTimeString()}
-              </p>
-            ) : null}
+            <div className="flex flex-wrap items-center gap-3">
+              {lastFetched ? (
+                <p className="text-[11px] text-[#9e8e76]">
+                  Last fetched {lastFetched.toLocaleTimeString()}
+                </p>
+              ) : null}
+              {/* Auto-refresh indicator */}
+              <span className="inline-flex items-center gap-1 rounded-full border border-[rgba(58,66,32,0.14)] bg-[rgba(58,66,32,0.05)] px-2 py-0.5 text-[10px] text-[#6a7840]">
+                <span className="size-1.5 rounded-full bg-[#3a4220] opacity-60" />
+                auto-refresh every 30s
+              </span>
+              {/* Stale indicator */}
+              {stale ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-[rgba(180,60,40,0.2)] bg-[rgba(180,60,40,0.05)] px-2 py-0.5 text-[10px] text-[#9a4332]">
+                  <AlertCircle className="size-3" />
+                  poll failed — showing last known data
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -397,17 +536,7 @@ export default function ApprovalsInboxClient() {
               {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               Refresh
             </GhostBtn>
-            <GhostBtn onClick={() => {
-              if (typeof window !== "undefined") {
-                window.sessionStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
-              }
-              setAdminKey("");
-              setKeyInput("");
-              setItems([]);
-              setError("");
-            }}>
-              Lock
-            </GhostBtn>
+            <GhostBtn onClick={lock}>Lock</GhostBtn>
           </div>
         </div>
 
@@ -421,7 +550,11 @@ export default function ApprovalsInboxClient() {
               className="flex-1 rounded-xl px-3 py-2 text-[12px] font-semibold capitalize transition"
               style={
                 filter === f
-                  ? { background: "#faf7f1", color: "#2f351a", boxShadow: "0 1px 3px rgba(90,80,50,0.12)" }
+                  ? {
+                      background: "#faf7f1",
+                      color: "#2f351a",
+                      boxShadow: "0 1px 3px rgba(90,80,50,0.12)",
+                    }
                   : { background: "transparent", color: "#9e8e76" }
               }
             >
@@ -464,7 +597,11 @@ export default function ApprovalsInboxClient() {
         {filteredItems.length > 0 ? (
           <div className="flex flex-col gap-3">
             {filteredItems.map((item) => (
-              <ApprovalRow key={item.approvalId || item.approvalRequestId} item={item} />
+              <ApprovalRow
+                key={itemKey(item)}
+                item={item}
+                isNew={newIds.has(itemKey(item))}
+              />
             ))}
           </div>
         ) : null}

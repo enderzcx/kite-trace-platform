@@ -1,6 +1,25 @@
 import { spawn } from 'node:child_process';
 import { createCliError } from './errors.js';
 
+function extractPayloadErrorCode(payload = {}) {
+  if (typeof payload?.error === 'string') return payload.error;
+  if (payload?.error && typeof payload.error === 'object') {
+    return String(payload.error.code || '').trim();
+  }
+  return '';
+}
+
+function extractPayloadErrorMessage(payload = {}, status = 0) {
+  if (typeof payload?.reason === 'string' && payload.reason.trim()) {
+    return payload.reason.trim();
+  }
+  if (payload?.error && typeof payload.error === 'object') {
+    const message = String(payload.error.message || '').trim();
+    if (message) return message;
+  }
+  return `HTTP ${status}`;
+}
+
 function shouldRetryCliTransportError(error = null) {
   const text = [
     String(error?.message || ''),
@@ -145,8 +164,8 @@ export async function requestJson(
   }
 
   if (!response.ok || payload?.ok === false) {
-    throw createCliError(payload?.reason || `HTTP ${response.status}`, {
-      code: payload?.error || `http_${response.status}`,
+    throw createCliError(extractPayloadErrorMessage(payload, response.status), {
+      code: extractPayloadErrorCode(payload) || `http_${response.status}`,
       statusCode: response.status,
       data: payload
     });

@@ -20,10 +20,8 @@ function isDeadlineReached(job = {}) {
 export function createAutoJobExpiryLoop({
   state = null,
   intervalMs,
-  port,
-  getInternalAgentApiKey,
   readJobs,
-  fetchImpl
+  expireJob
 } = {}) {
   const autoJobExpiryState =
     state && typeof state === 'object'
@@ -42,7 +40,6 @@ export function createAutoJobExpiryLoop({
           failedCount: 0
         };
 
-  const runtimeFetch = typeof fetchImpl === 'function' ? fetchImpl : fetch;
   let autoJobExpiryTimer = null;
   let autoJobExpiryBusy = false;
 
@@ -64,33 +61,6 @@ export function createAutoJobExpiryLoop({
     });
   }
 
-  async function expireJob(job = {}) {
-    const normalizedJobId = normalizeText(job?.jobId);
-    if (!normalizedJobId) return { ok: false, error: 'job_id_required' };
-    const headers = {
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    };
-    const apiKey = normalizeText(getInternalAgentApiKey?.());
-    if (apiKey) headers['x-api-key'] = apiKey;
-    const response = await runtimeFetch(
-      `http://127.0.0.1:${String(port || '').trim() || '3001'}/api/jobs/${encodeURIComponent(normalizedJobId)}/expire`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          summary: 'Job expired by auto job expiry watcher.'
-        })
-      }
-    );
-    const payload = await response.json().catch(() => ({}));
-    return {
-      ok: response.ok && payload?.ok !== false,
-      status: response.status,
-      payload
-    };
-  }
-
   async function runAutoJobExpiryTick(reason = 'timer') {
     if (autoJobExpiryBusy) return;
     autoJobExpiryBusy = true;
@@ -106,7 +76,12 @@ export function createAutoJobExpiryLoop({
 
       let expiredThisRun = 0;
       for (const job of overdueJobs) {
-        const result = await expireJob(job);
+        const result =
+          typeof expireJob === 'function'
+            ? await expireJob(job, {
+                summary: 'Job expired by auto job expiry watcher.'
+              })
+            : { ok: false, error: 'expire_job_not_configured' };
         if (result?.ok) {
           expiredThisRun += 1;
           autoJobExpiryState.expiredCount += 1;

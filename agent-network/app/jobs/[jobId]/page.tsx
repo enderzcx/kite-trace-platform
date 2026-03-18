@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import JobAuditView from "@/components/jobs/JobAuditView";
-import type { JobAudit } from "@/components/jobs/JobAuditView";
+import type { JobAudit, TraceAnchor } from "@/components/jobs/JobAuditView";
 
 const BACKEND_URL = (
   process.env.NEXT_PUBLIC_BACKEND_URL ||
@@ -15,9 +15,7 @@ async function fetchJobAudit(jobId: string): Promise<JobAudit | null> {
     const response = await fetch(
       `${BACKEND_URL}/api/public/jobs/${encodeURIComponent(jobId)}/audit`,
       {
-        headers: {
-          Accept: "application/json",
-        },
+        headers: { Accept: "application/json" },
         cache: "no-store",
       }
     );
@@ -30,13 +28,40 @@ async function fetchJobAudit(jobId: string): Promise<JobAudit | null> {
   }
 }
 
+async function fetchTraceAnchor(jobId: string): Promise<TraceAnchor | null> {
+  try {
+    const response = await fetch(
+      `${BACKEND_URL}/api/public/jobs/${encodeURIComponent(jobId)}/trace-anchor`,
+      {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      }
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { ok?: boolean } & TraceAnchor;
+    if (!payload?.ok) return null;
+    return {
+      anchorRequired: payload.anchorRequired,
+      anchor: payload.anchor,
+    };
+  } catch {
+    return null;
+  }
+}
+
 type JobPageProps = {
   params: Promise<{ jobId: string }>;
 };
 
 export default async function JobPage(props: JobPageProps) {
   const { jobId } = await props.params;
-  const audit = await fetchJobAudit(jobId);
+  const [audit, traceAnchor] = await Promise.all([
+    fetchJobAudit(jobId),
+    fetchTraceAnchor(jobId),
+  ]);
   if (!audit) notFound();
-  return <JobAuditView audit={audit} backendUrl={BACKEND_URL} />;
+  const auditWithAnchor: JobAudit = traceAnchor
+    ? { ...audit, traceAnchor }
+    : audit;
+  return <JobAuditView audit={auditWithAnchor} backendUrl={BACKEND_URL} />;
 }

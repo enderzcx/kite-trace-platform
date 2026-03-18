@@ -1,3 +1,5 @@
+import { sendErrorResponse } from './errorResponse.js';
+
 export function createAuthHelpers({
   AUTH_DISABLED = false,
   API_KEY_ADMIN = '',
@@ -39,21 +41,23 @@ export function createAuthHelpers({
       const providedKey = extractApiKey(req);
       const role = resolveRoleByApiKey(providedKey);
       if (!role) {
-        return res.status(401).json({
-          ok: false,
-          error: 'unauthorized',
-          reason: 'Missing or invalid API key.',
-          traceId: req.traceId || ''
+        return sendErrorResponse(req, res, {
+          status: 401,
+          code: 'unauthorized',
+          message: 'Missing or invalid API key.'
         });
       }
       const roleRank = ROLE_RANK[role] || 0;
       const requiredRank = ROLE_RANK[requiredRole] || ROLE_RANK.viewer;
       if (roleRank < requiredRank) {
-        return res.status(403).json({
-          ok: false,
-          error: 'forbidden',
-          reason: `Role "${role}" cannot access "${requiredRole}" endpoint.`,
-          traceId: req.traceId || ''
+        return sendErrorResponse(req, res, {
+          status: 403,
+          code: 'forbidden',
+          message: `Role "${role}" cannot access "${requiredRole}" endpoint.`,
+          detail: {
+            role,
+            requiredRole
+          }
         });
       }
       req.authRole = role;

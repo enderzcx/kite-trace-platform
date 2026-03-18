@@ -1878,6 +1878,8 @@ export function registerMarketAgentServiceRoutes(app, deps) {
           traceId: String(item?.traceId || '').trim(),
           requestId: String(item?.requestId || '').trim(),
           state: String(item?.state || '').trim().toLowerCase(),
+          sourceAgentId: String(item?.sourceAgentId || '').trim(),
+          targetAgentId: String(item?.targetAgentId || '').trim(),
           payer: String(item?.payer || '').trim(),
           amount: String(item?.amount || '').trim(),
           tokenAddress: String(item?.tokenAddress || '').trim(),

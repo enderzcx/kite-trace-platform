@@ -15,6 +15,30 @@ export function createJobCommandHandlers({
   normalizeWalletAddress,
   normalizeCapability
 }) {
+  async function fetchTraceAnchorStatus(runtime, { jobId = '', publicRead = false } = {}) {
+    const normalizedJobId = String(jobId || '').trim();
+    if (!normalizedJobId) return null;
+    return requestJson(runtime, {
+      pathname: publicRead
+        ? `/api/public/jobs/${encodeURIComponent(normalizedJobId)}/trace-anchor`
+        : `/api/jobs/${encodeURIComponent(normalizedJobId)}/trace-anchor`,
+      apiKey: publicRead ? '' : resolveAgentTransportApiKey(runtime),
+      omitRuntimeApiKey: publicRead
+    });
+  }
+
+  function mergeTraceAnchorIntoJob(job = {}, traceAnchor = null) {
+    if (!traceAnchor || typeof traceAnchor !== 'object') return job;
+    return {
+      ...job,
+      guardConfigured: Boolean(traceAnchor?.guardConfigured),
+      guardAddress: String(traceAnchor?.guardAddress || '').trim(),
+      verificationMode: String(traceAnchor?.verificationMode || '').trim(),
+      verifiedOnchain: traceAnchor?.anchor?.verifiedOnchain ?? null,
+      latestAnchorIdOnChain: String(traceAnchor?.anchor?.latestAnchorIdOnChain || '').trim()
+    };
+  }
+
   async function handleJobCreate(runtimeBundle, commandArgs = []) {
     const runtime = runtimeBundle.config;
     const options = parseJobCreateArgs(commandArgs);
@@ -209,13 +233,25 @@ export function createJobCommandHandlers({
     if (options.input) {
       body.input = await readStructuredInput(options.input);
     }
-    const payload = await requestJson(runtime, {
-      method: 'POST',
-      pathname: `/api/jobs/${encodeURIComponent(jobId)}/submit`,
-      apiKey: resolveAgentTransportApiKey(runtime),
-      timeoutMs: Math.max(Number(runtime.timeoutMs || 0), 90_000),
-      body
-    });
+    let payload;
+    try {
+      payload = await requestJson(runtime, {
+        method: 'POST',
+        pathname: `/api/jobs/${encodeURIComponent(jobId)}/submit`,
+        apiKey: resolveAgentTransportApiKey(runtime),
+        timeoutMs: Math.max(Number(runtime.timeoutMs || 0), 90_000),
+        body
+      });
+    } catch (error) {
+      if (['trace_anchor_publish_failed', 'trace_anchor_required_before_submit'].includes(String(error?.code || '').trim())) {
+        throw createCliError('trace anchor required before submit', {
+          code: String(error?.code || 'trace_anchor_publish_failed').trim(),
+          statusCode: error?.statusCode,
+          data: error?.data
+        });
+      }
+      throw error;
+    }
     const job = payload?.job || {};
     return createEnvelope({
       ok: true,
@@ -249,6 +285,7 @@ export function createJobCommandHandlers({
           anchorRegistry: String(job?.anchorRegistry || '').trim(),
           submitAnchorId: String(job?.submitAnchorId || '').trim(),
           submitAnchorTxHash: String(job?.submitAnchorTxHash || '').trim(),
+          submitAnchorConfirmedAt: String(job?.submitAnchorConfirmedAt || '').trim(),
           escrowSubmitTxHash: String(job?.escrowSubmitTxHash || '').trim(),
           summary: String(job?.summary || '').trim(),
           error: String(job?.error || '').trim()
@@ -267,13 +304,14 @@ export function createJobCommandHandlers({
       pathname: `/api/jobs/${encodeURIComponent(jobId)}`,
       apiKey: resolveAgentTransportApiKey(runtime)
     });
-    const job = payload?.job || {};
+    const traceAnchor = await fetchTraceAnchorStatus(runtime, { jobId });
+    const job = mergeTraceAnchorIntoJob(payload?.job || {}, traceAnchor);
     return createEnvelope({
       ok: true,
       exitCode: 0,
       command: { family: 'job', action: 'show', display: 'ktrace job show' },
       runtime,
-      data: { job },
+      data: { job, traceAnchor },
       message: String(job?.summary || `Job ${jobId}`).trim()
     });
   }
@@ -294,13 +332,20 @@ export function createJobCommandHandlers({
       apiKey: options.public ? '' : resolveAgentTransportApiKey(runtime),
       omitRuntimeApiKey: options.public
     });
-    const audit = payload?.audit || {};
+    const traceAnchor = await fetchTraceAnchorStatus(runtime, {
+      jobId: String(payload?.audit?.jobId || jobId).trim(),
+      publicRead: options.public
+    });
+    const audit = {
+      ...(payload?.audit || {}),
+      traceAnchor
+    };
     return createEnvelope({
       ok: true,
       exitCode: 0,
       command: { family: 'job', action: 'audit', display: 'ktrace job audit' },
       runtime,
-      data: { audit },
+      data: { audit, traceAnchor },
       message: String(audit?.summary?.state || '').trim()
         ? `Job audit loaded for ${options.trace ? traceId : jobId}.`
         : `Job audit loaded.`

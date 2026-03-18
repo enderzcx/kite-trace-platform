@@ -1,4 +1,5 @@
 export function createCommandExecutor({ createConfigEnvelope, createNotImplementedEnvelope, handlers = {} } = {}) {
+  void createNotImplementedEnvelope;
   const dispatchTable = new Map([
     ['auth:login', handlers.handleAuthLogin],
     ['auth:whoami', handlers.handleAuthWhoami],
@@ -68,6 +69,8 @@ export function createCommandExecutor({ createConfigEnvelope, createNotImplement
       return handler(runtimeBundle, commandArgs);
     }
 
-    return createNotImplementedEnvelope(commandMeta, runtimeBundle.config);
+    const error = new Error(`No handler is registered for ${commandMeta.family}:${commandMeta.action}.`);
+    error.code = 'command_dispatch_missing';
+    throw error;
   };
 }
