@@ -1,83 +1,170 @@
 import { config as loadEnv } from 'dotenv';
-import { ethers } from 'ethers';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+import { ethers } from 'ethers';
+
+import { GokiteAASDK } from '../lib/gokite-aa-sdk.js';
+import { resolveAaAccountImplementation, resolveAaFactoryAddress } from '../lib/aaConfig.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 loadEnv({ path: path.resolve(__dirname, '..', '.env') });
 
-const RPC_URL = process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/';
+const RPC_URL = process.env.BACKEND_RPC_URL || process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/';
+const BUNDLER_URL =
+  process.env.BACKEND_BUNDLER_URL || process.env.KITEAI_BUNDLER_URL || process.env.KITEAA_BUNDLER_URL || '';
+const ENTRYPOINT_ADDRESS =
+  process.env.KITEAA_ENTRYPOINT_ADDRESS ||
+  process.env.BACKEND_ENTRYPOINT_ADDRESS ||
+  '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108';
+const ACCOUNT_FACTORY_ADDRESS = resolveAaFactoryAddress();
+const ACCOUNT_IMPLEMENTATION_ADDRESS = resolveAaAccountImplementation();
 const TOKEN_ADDRESS = process.env.KITE_SETTLEMENT_TOKEN || '';
 const ESCROW_ADDRESS = process.env.ERC8183_ESCROW_ADDRESS || '';
-const ERC20_ABI = [
-  'function allowance(address owner, address spender) view returns (uint256)',
-  'function approve(address spender, uint256 amount) returns (bool)'
-];
+const SESSION_RUNTIME_PATH = path.resolve(__dirname, '..', 'data', 'session_runtime.json');
+const SESSION_RUNTIME_INDEX_PATH = path.resolve(__dirname, '..', 'data', 'session_runtimes.json');
 
 function requireEnv(name, value) {
   if (!value) throw new Error(`Missing env: ${name}`);
 }
 
-function isRetryableOnchainError(error = null) {
-  const message = [
-    error?.message,
-    error?.shortMessage,
-    error?.code,
-    error?.cause?.message,
-    error?.cause?.code
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .trim()
-    .toLowerCase();
-  if (!message) return false;
-  return (
-    message.includes('tls') ||
-    message.includes('fetch failed') ||
-    message.includes('socket') ||
-    message.includes('econnreset') ||
-    message.includes('before secure tls connection') ||
-    message.includes('timeout') ||
-    message.includes('network')
-  );
+function normalizeText(value = '') {
+  return String(value || '').trim();
 }
 
-async function wait(ms = 0) {
-  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
+function normalizeAddress(value = '') {
+  const normalized = normalizeText(value);
+  if (!normalized || !ethers.isAddress(normalized)) return '';
+  return ethers.getAddress(normalized);
 }
 
-async function runWithRetry(operation) {
-  let lastError = null;
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-      if (attempt >= 5 || !isRetryableOnchainError(error)) {
-        throw error;
-      }
-      await wait(1000 * attempt);
-    }
+function normalizePrivateKey(value = '') {
+  const normalized = normalizeText(value);
+  if (!normalized) return '';
+  if (/^0x[0-9a-fA-F]{64}$/.test(normalized)) return normalized;
+  if (/^[0-9a-fA-F]{64}$/.test(normalized)) return `0x${normalized}`;
+  return '';
+}
+
+function readJsonObject(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return {};
   }
-  throw lastError || new Error('erc8183 approve failed');
 }
 
-function buildRoleWalletSpecs() {
+function readRuntimes() {
+  const current = readJsonObject(SESSION_RUNTIME_PATH);
+  const index = readJsonObject(SESSION_RUNTIME_INDEX_PATH);
+  const runtimes = [];
+  if (current && typeof current === 'object') {
+    runtimes.push(current);
+  }
+  const indexed = index?.runtimes && typeof index.runtimes === 'object' ? Object.values(index.runtimes) : [];
+  for (const runtime of indexed) {
+    runtimes.push(runtime);
+  }
+  const unique = new Map();
+  for (const runtime of runtimes) {
+    const aaWallet = normalizeAddress(runtime?.aaWallet || '');
+    if (!aaWallet) continue;
+    unique.set(aaWallet, {
+      aaWallet,
+      owner: normalizeAddress(runtime?.owner || ''),
+      sessionPrivateKey: normalizeText(runtime?.sessionPrivateKey || ''),
+      sessionId: normalizeText(runtime?.sessionId || '')
+    });
+  }
+  return Array.from(unique.values());
+}
+
+function findRuntimeByAaWallet(aaWallet = '') {
+  const normalizedAaWallet = normalizeAddress(aaWallet);
+  if (!normalizedAaWallet) return null;
+  return readRuntimes().find((runtime) => runtime.aaWallet === normalizedAaWallet) || null;
+}
+
+function buildRoleSpecs() {
   return [
     {
       role: 'requester',
-      privateKey:
+      aaWallet: normalizeAddress(process.env.ERC8183_REQUESTER_AA_ADDRESS || ''),
+      ownerPrivateKey: normalizePrivateKey(
         process.env.ERC8183_REQUESTER_PRIVATE_KEY ||
-        process.env.ERC8004_REGISTRAR_PRIVATE_KEY ||
-        process.env.KITECLAW_BACKEND_SIGNER_PRIVATE_KEY ||
-        ''
+          process.env.ERC8004_REGISTRAR_PRIVATE_KEY ||
+          process.env.KITECLAW_BACKEND_SIGNER_PRIVATE_KEY ||
+          ''
+      )
     },
     {
       role: 'executor',
-      privateKey: process.env.ERC8183_EXECUTOR_PRIVATE_KEY || ''
+      aaWallet: normalizeAddress(process.env.ERC8183_EXECUTOR_AA_ADDRESS || ''),
+      ownerPrivateKey: normalizePrivateKey(process.env.ERC8183_EXECUTOR_PRIVATE_KEY || '')
     }
+  ].filter((spec) => spec.aaWallet);
+}
+
+async function ensureAllowance({ role, runtime, provider, ownerPrivateKey }) {
+  const tokenAbi = [
+    'function allowance(address owner, address spender) view returns (uint256)',
+    'function approve(address spender, uint256 amount) returns (bool)'
   ];
+  const token = new ethers.Contract(TOKEN_ADDRESS, tokenAbi, provider);
+  const currentAllowance = await token.allowance(runtime.aaWallet, ESCROW_ADDRESS);
+  if (currentAllowance === ethers.MaxUint256) {
+    return {
+      role,
+      owner: runtime.owner,
+      aaWallet: runtime.aaWallet,
+      approved: false,
+      skipped: true,
+      allowance: currentAllowance.toString(),
+      txHash: ''
+    };
+  }
+
+  if (!ownerPrivateKey || !/^0x[0-9a-fA-F]{64}$/.test(ownerPrivateKey)) {
+    throw new Error(`Missing owner private key for ${role} AA setup approval.`);
+  }
+  const ownerWallet = new ethers.Wallet(ownerPrivateKey, provider);
+  const sdk = new GokiteAASDK({
+    network: 'kite_testnet',
+    rpcUrl: RPC_URL,
+    bundlerUrl: BUNDLER_URL,
+    entryPointAddress: ENTRYPOINT_ADDRESS,
+    accountFactoryAddress: ACCOUNT_FACTORY_ADDRESS,
+    accountImplementationAddress: ACCOUNT_IMPLEMENTATION_ADDRESS,
+    proxyAddress: runtime.aaWallet,
+    ownerAddress: runtime.owner,
+    bundlerRpcTimeoutMs: Number(process.env.KITE_BUNDLER_RPC_TIMEOUT_MS || 15000),
+    bundlerRpcRetries: Number(process.env.KITE_BUNDLER_RPC_RETRIES || 3),
+    bundlerReceiptPollIntervalMs: Number(process.env.KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS || 3000)
+  });
+  const signFunction = async (userOpHash) => ownerWallet.signMessage(ethers.getBytes(userOpHash));
+  const approval = await sdk.approveERC20(
+    {
+      tokenAddress: TOKEN_ADDRESS,
+      spender: ESCROW_ADDRESS,
+      amount: ethers.MaxUint256
+    },
+    signFunction
+  );
+  if (!approval || approval.status !== 'success' || !normalizeText(approval.transactionHash)) {
+    throw new Error(`${role} AA approval failed: ${normalizeText(approval?.reason || approval?.error?.message || '')}`);
+  }
+  return {
+    role,
+    owner: runtime.owner,
+    aaWallet: runtime.aaWallet,
+    approved: true,
+    skipped: false,
+    allowance: ethers.MaxUint256.toString(),
+    txHash: normalizeText(approval.transactionHash),
+    userOpHash: normalizeText(approval.userOpHash || '')
+  };
 }
 
 async function main() {
@@ -90,57 +177,33 @@ async function main() {
     throw new Error(`Invalid ERC8183_ESCROW_ADDRESS: ${ESCROW_ADDRESS}`);
   }
 
-  const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const uniqueWallets = new Map();
-
-  for (const spec of buildRoleWalletSpecs()) {
-    const privateKey = String(spec?.privateKey || '').trim();
-    if (!privateKey) continue;
-    const wallet = new ethers.Wallet(privateKey, provider);
-    const key = wallet.address.toLowerCase();
-    const existing = uniqueWallets.get(key);
-    if (existing) {
-      existing.roles.push(spec.role);
-      continue;
+  const rpcRequest = new ethers.FetchRequest(RPC_URL);
+  rpcRequest.timeout = 60_000;
+  const staticNetwork = ethers.Network.from({
+    chainId: 2368,
+    name: 'kite_testnet'
+  });
+  const provider = new ethers.JsonRpcProvider(
+    rpcRequest,
+    staticNetwork,
+    {
+      staticNetwork
     }
-    uniqueWallets.set(key, {
-      wallet,
-      roles: [spec.role]
-    });
-  }
-
-  if (!uniqueWallets.size) {
-    throw new Error(
-      'Missing escrow signer envs: set ERC8183_REQUESTER_PRIVATE_KEY and, when staking is enabled, ERC8183_EXECUTOR_PRIVATE_KEY.'
-    );
-  }
-
+  );
   const approvals = [];
-  for (const { wallet, roles } of uniqueWallets.values()) {
-    const token = new ethers.Contract(TOKEN_ADDRESS, ERC20_ABI, wallet);
-    const currentAllowance = await runWithRetry(() => token.allowance(wallet.address, ESCROW_ADDRESS));
-    if (currentAllowance === ethers.MaxUint256) {
-      approvals.push({
-        roles,
-        owner: wallet.address,
-        approved: false,
-        skipped: true,
-        allowance: currentAllowance.toString(),
-        txHash: ''
-      });
-      continue;
+  for (const spec of buildRoleSpecs()) {
+    const runtime = findRuntimeByAaWallet(spec.aaWallet);
+    if (!runtime || !runtime.sessionPrivateKey || !runtime.sessionId) {
+      throw new Error(`Missing AA runtime for ${spec.role}: ${spec.aaWallet}`);
     }
-
-    const tx = await runWithRetry(() => token.approve(ESCROW_ADDRESS, ethers.MaxUint256));
-    await runWithRetry(() => tx.wait());
-    approvals.push({
-      roles,
-      owner: wallet.address,
-      approved: true,
-      skipped: false,
-      allowance: ethers.MaxUint256.toString(),
-      txHash: tx.hash || ''
-    });
+    approvals.push(
+      await ensureAllowance({
+        role: spec.role,
+        runtime,
+        provider,
+        ownerPrivateKey: spec.ownerPrivateKey
+      })
+    );
   }
 
   console.log(
@@ -158,6 +221,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('ERC-8183 escrow approval failed:', error.message);
+  console.error('ERC-8183 AA escrow approval failed:', error.message);
   process.exit(1);
 });

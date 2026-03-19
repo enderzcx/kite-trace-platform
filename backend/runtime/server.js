@@ -64,7 +64,7 @@ export function applyRuntimeServerMiddleware(app, deps = {}) {
       ) {
         corsOptions = {
           origin: true,
-          credentials: false,
+          credentials: true,
           exposedHeaders: ['x-trace-id', 'x-request-id']
         };
       } else {

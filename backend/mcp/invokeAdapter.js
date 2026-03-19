@@ -80,7 +80,7 @@ function buildInvokeInput(args = {}) {
   return input;
 }
 
-function buildInvokePayload(tool = {}, args = {}, extra = {}, paymentMode = '') {
+function buildInvokePayload(tool = {}, args = {}, extra = {}, paymentMode = '', requestContext = {}) {
   const normalizedArgs = isPlainObject(args) ? args : {};
   const traceId = pickTraceId(normalizedArgs, extra);
   const payload = {
@@ -101,6 +101,10 @@ function buildInvokePayload(tool = {}, args = {}, extra = {}, paymentMode = '') 
   if (paymentProof) payload.paymentProof = paymentProof;
   if (x402Mode) payload.x402Mode = x402Mode;
   if (normalizeText(tool?.action || '')) payload.action = normalizeText(tool.action);
+  if (normalizeText(requestContext?.ownerEoa || '')) payload.ownerEoa = normalizeText(requestContext.ownerEoa);
+  if (normalizeText(requestContext?.aaWallet || '')) payload.aaWallet = normalizeText(requestContext.aaWallet);
+  if (normalizeText(requestContext?.authSource || '')) payload.authSource = normalizeText(requestContext.authSource);
+  if (normalizeText(requestContext?.grantId || '')) payload.connectorGrantId = normalizeText(requestContext.grantId);
 
   return payload;
 }
@@ -177,9 +181,18 @@ export function createMcpInvokeAdapter({ fetchLoopbackJson }) {
     args = {},
     extra = {},
     apiKey = '',
-    paymentMode = ''
+    paymentMode = '',
+    ownerEoa = '',
+    aaWallet = '',
+    authSource = '',
+    grantId = ''
   } = {}) {
-    const invokePayload = buildInvokePayload(tool, args, extra, paymentMode);
+    const invokePayload = buildInvokePayload(tool, args, extra, paymentMode, {
+      ownerEoa,
+      aaWallet,
+      authSource,
+      grantId
+    });
     const traceId = normalizeText(invokePayload.traceId || '');
 
     try {

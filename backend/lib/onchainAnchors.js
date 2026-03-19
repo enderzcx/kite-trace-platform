@@ -40,11 +40,25 @@ export function createOnchainAnchorHelpers({
     return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
   }
 
-  async function runWithOnchainRetry(operation) {
+  function withTimeout(promise, ms, label = 'operation') {
+    if (!ms || ms <= 0) return promise;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      promise.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); }
+      );
+    });
+  }
+
+  async function runWithOnchainRetry(operation, { timeoutMs = 0 } = {}) {
     let lastError = null;
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
-        return await operation();
+        const result = timeoutMs > 0
+          ? await withTimeout(operation(), timeoutMs, 'onchain retry')
+          : await operation();
+        return result;
       } catch (error) {
         lastError = error;
         if (attempt >= 5 || !isRetryableOnchainError(error)) {
@@ -95,6 +109,7 @@ export function createOnchainAnchorHelpers({
       ? `0x${String(digest.value).trim()}`
       : ethers.ZeroHash;
 
+    const anchorTimeoutMs = 30000;
     const contract = new ethers.Contract(registryAddress, trustPublicationAnchorAbi, signer);
     const tx = await runWithOnchainRetry(() =>
       contract.publishTrustPublication(
@@ -105,9 +120,10 @@ export function createOnchainAnchorHelpers({
         traceId,
         payloadHash,
         detailsURI
-      )
+      ),
+      { timeoutMs: anchorTimeoutMs }
     );
-    const receipt = await runWithOnchainRetry(() => tx.wait());
+    const receipt = await runWithOnchainRetry(() => tx.wait(), { timeoutMs: anchorTimeoutMs });
     const anchorInterface = new ethers.Interface(trustPublicationAnchorAbi);
     const anchorLog = receipt?.logs
       ?.filter((log) => String(log?.address || '').toLowerCase() === registryAddress.toLowerCase())
@@ -173,6 +189,7 @@ export function createOnchainAnchorHelpers({
       ? `0x${String(digest.value).trim()}`
       : ethers.ZeroHash;
 
+    const anchorTimeoutMs = 30000;
     const contract = new ethers.Contract(registryAddress, jobLifecycleAnchorAbi, signer);
     const tx = await runWithOnchainRetry(() =>
       contract.publishJobLifecycleAnchor(
@@ -188,9 +205,10 @@ export function createOnchainAnchorHelpers({
         referenceId,
         payloadHash,
         detailsURI
-      )
+      ),
+      { timeoutMs: anchorTimeoutMs }
     );
-    const receipt = await runWithOnchainRetry(() => tx.wait());
+    const receipt = await runWithOnchainRetry(() => tx.wait(), { timeoutMs: anchorTimeoutMs });
     const anchorInterface = new ethers.Interface(jobLifecycleAnchorAbi);
     const anchorLog = receipt?.logs
       ?.filter((log) => String(log?.address || '').toLowerCase() === registryAddress.toLowerCase())

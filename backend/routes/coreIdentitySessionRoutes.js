@@ -6,14 +6,34 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     PORT,
     createTraceId,
     crypto,
+    createOnboardingChallengeMessage,
     ensureAAAccountDeployment,
+    BACKEND_PUBLIC_URL,
+    buildAccountApiKeyPublicRecord,
+    buildClaudeConnectorGrantPublicRecord,
+    buildClaudeConnectorInstallCodePublicRecord,
+    clearOnboardingAuthCookie,
+    findActiveClaudeConnectorGrant,
+    findActiveAccountApiKey,
+    findPendingClaudeConnectorInstallCode,
+    generateAccountApiKey,
+    issueClaudeConnectorInstallCode,
+    issueOnboardingAuthChallenge,
     maskSecret,
     readRecords,
     readSessionRuntime,
     requireRole,
+    revokeClaudeConnectorGrant,
+    revokeAccountApiKey,
     sessionPayConfigSnapshot,
     sessionPayMetrics,
     sessionRuntimePath,
+    materializeAuthority,
+    revokeConsumerAuthorityPolicy,
+    validateConsumerAuthority,
+    verifyOnboardingAuthChallenge,
+    writeConsumerAuthorityPolicy,
+    writeOnboardingAuthCookie,
     writeJsonObject,
     writeRecords,
     writeSessionRuntime
@@ -24,13 +44,245 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     buildSessionApprovalRequestPayload,
     buildSessionRuntimePayload,
     ensureBackendSessionRuntime,
+    finalizeSelfServeSessionRuntime,
     finalizeSessionAuthorization,
     getBackendSignerState,
     listSessionApprovalRequests,
     normalizeSessionGrantAddress,
     normalizeSessionGrantPayload,
-    normalizeSessionGrantText
+    normalizeSessionGrantText,
+    prepareSelfServeSessionRuntime
   } = helpers;
+
+  function normalizeText(value = '') {
+    return String(value || '').trim();
+  }
+
+  function getScopedOwnerFromAuth(req) {
+    return normalizeSessionGrantAddress(req?.authOwnerEoa || req?.accountCtx?.ownerEoa || '');
+  }
+
+  function normalizeOwnerInput(value = '') {
+    return normalizeSessionGrantAddress(value || '');
+  }
+
+  function buildSetupRouteBody(req, body = {}, { includeUserEoa = false } = {}) {
+    const scopedOwner = getScopedOwnerFromAuth(req);
+    if (!scopedOwner || normalizeText(req?.authSource || '') !== 'onboarding-cookie') {
+      return {
+        ...body
+      };
+    }
+    const requestedOwner = normalizeOwnerInput(body.owner || body.ownerEoa || body.userEoa || '');
+    const requestedRuntimeOwner = normalizeOwnerInput(body?.runtime?.owner || '');
+    if (
+      (requestedOwner && requestedOwner !== scopedOwner) ||
+      (requestedRuntimeOwner && requestedRuntimeOwner !== scopedOwner)
+    ) {
+      return {
+        error: {
+          statusCode: 403,
+          code: 'onboarding_owner_mismatch',
+          reason: 'Setup routes infer ownerEoa from the onboarding cookie.'
+        }
+      };
+    }
+    return {
+      ...body,
+      owner: scopedOwner,
+      ownerEoa: scopedOwner,
+      ...(includeUserEoa ? { userEoa: scopedOwner } : {}),
+      runtime:
+        body?.runtime && typeof body.runtime === 'object' && !Array.isArray(body.runtime)
+          ? {
+              ...body.runtime,
+              owner: scopedOwner
+            }
+          : body?.runtime
+    };
+  }
+
+  function resolveAccountOwner(req, body = {}) {
+    const scopedOwner = getScopedOwnerFromAuth(req);
+    if (scopedOwner) return scopedOwner;
+    return normalizeOwnerInput(
+      body.owner || body.ownerEoa || req.query.owner || req.query.ownerEoa || ''
+    );
+  }
+
+  function buildRuntimeLookup(req) {
+    const scopedOwner = getScopedOwnerFromAuth(req);
+    return {
+      owner: scopedOwner || req.query.owner,
+      aaWallet: req.query.aaWallet,
+      sessionId: req.query.sessionId,
+      runtimePurpose: req.query.runtimePurpose
+    };
+  }
+
+  function sendRouteFailure(req, res, failure = {}) {
+    return res.status(Number(failure?.statusCode || 400)).json({
+      ok: false,
+      error: normalizeText(failure?.code || 'request_failed') || 'request_failed',
+      reason: normalizeText(failure?.reason || 'request failed') || 'request failed',
+      traceId: req.traceId || ''
+    });
+  }
+
+  function buildPublicBaseUrl(req) {
+    const configured = normalizeText(BACKEND_PUBLIC_URL || '');
+    if (configured) return configured.replace(/\/+$/, '');
+    const forwardedProto = normalizeText(req.headers['x-forwarded-proto'] || '');
+    const forwardedHost = normalizeText(req.headers['x-forwarded-host'] || '');
+    const protocol = forwardedProto || req.protocol || 'http';
+    const host = forwardedHost || req.get('host') || `127.0.0.1:${normalizeText(PORT || '3001') || '3001'}`;
+    return `${protocol}://${host}`.replace(/\/+$/, '');
+  }
+
+  function evaluateClaudeConnectorSetup(ownerEoa = '') {
+    const normalizedOwner = normalizeOwnerInput(ownerEoa || '');
+    const missing = [];
+    if (!normalizedOwner) {
+      return {
+        ready: false,
+        missing: ['owner_eoa_missing'],
+        runtime: null,
+        authority: null
+      };
+    }
+
+    const runtime = deps.resolveSessionRuntime({
+      owner: normalizedOwner,
+      strictOwnerMatch: true
+    });
+    if (!runtime?.owner || normalizeOwnerInput(runtime.owner) !== normalizedOwner) {
+      missing.push('runtime_owner_missing');
+    }
+    if (!normalizeText(runtime?.aaWallet || '')) missing.push('aa_wallet_missing');
+    if (!normalizeText(runtime?.sessionAddress || '')) missing.push('session_address_missing');
+    if (!normalizeText(runtime?.sessionId || '')) missing.push('session_id_missing');
+    if (!normalizeText(runtime?.authorizationSignature || '')) missing.push('authorization_signature_missing');
+    if (!normalizeText(runtime?.authorizationPayloadHash || '')) missing.push('authorization_payload_hash_missing');
+
+    const authorityResult = materializeAuthority?.({
+      owner: normalizedOwner
+    });
+    if (!authorityResult?.ok || !authorityResult?.authority) {
+      missing.push('authority_missing');
+      return {
+        ready: false,
+        missing,
+        runtime,
+        authority: null,
+        authorityResult
+      };
+    }
+
+    const authority = authorityResult.authority;
+    const now = Date.now();
+    if (normalizeText(authority?.status || '').toLowerCase() !== 'active') {
+      missing.push('authority_inactive');
+    }
+    if (Number(authority?.revokedAt || 0) > 0) {
+      missing.push('authority_revoked');
+    }
+    if (Number(authority?.expiresAt || 0) > 0 && Number(authority.expiresAt) <= now) {
+      missing.push('authority_expired');
+    }
+
+    return {
+      ready: missing.length === 0,
+      missing,
+      runtime: authorityResult?.runtime || runtime,
+      authority,
+      authorityResult
+    };
+  }
+
+  function buildClaudeConnectorStatus(ownerEoa = '', req) {
+    const setup = evaluateClaudeConnectorSetup(ownerEoa);
+    const pendingInstallCode = findPendingClaudeConnectorInstallCode?.(ownerEoa) || null;
+    const activeGrant = findActiveClaudeConnectorGrant?.(ownerEoa) || null;
+    let state = 'not_connected';
+    if (!setup.ready) state = 'not_ready';
+    else if (activeGrant) state = 'connected';
+    else if (pendingInstallCode) state = 'install_code_issued';
+    return {
+      ok: true,
+      traceId: req?.traceId || '',
+      ownerEoa: normalizeOwnerInput(ownerEoa || ''),
+      setup: {
+        ready: setup.ready,
+        missing: setup.missing,
+        runtime: buildSessionRuntimePayload(setup.runtime || {})
+      },
+      connector: {
+        client: 'claude',
+        state,
+        pendingInstallCode: pendingInstallCode
+          ? buildClaudeConnectorInstallCodePublicRecord?.(pendingInstallCode) || null
+          : null,
+        activeGrant: activeGrant
+          ? buildClaudeConnectorGrantPublicRecord?.(activeGrant) || null
+          : null
+      }
+    };
+  }
+
+  function normalizePolicyExpiry(value = 0) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+    const raw = normalizeText(value);
+    if (!raw) return 0;
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  function stableSerialize(value) {
+    if (value === null || value === undefined) return 'null';
+    if (typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+    }
+    const entries = Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`).join(',')}}`;
+  }
+
+  function buildAuthorityPolicySnapshotHash(authority = null) {
+    const snapshot = authority && typeof authority === 'object' ? authority : {};
+    return `sha256:${crypto.createHash('sha256').update(stableSerialize(snapshot), 'utf8').digest('hex')}`;
+  }
+
+  function buildAuthorityRouteInput(req, body = {}) {
+    return {
+      owner: body.owner || req.query.owner,
+      aaWallet: body.aaWallet || req.query.aaWallet,
+      sessionId: body.sessionId || req.query.sessionId,
+      consumerAgentLabel: body.consumerAgentLabel,
+      allowedCapabilities: body.allowedCapabilities,
+      allowedProviders: body.allowedProviders,
+      allowedRecipients: body.allowedRecipients,
+      singleLimit: body.singleLimit,
+      dailyLimit: body.dailyLimit,
+      totalLimit: body.totalLimit,
+      expiresAt: normalizePolicyExpiry(body.expiresAt),
+      revocationReason: body.revocationReason
+    };
+  }
+
+  function sendAuthorityFailure(req, res, result = {}) {
+    return res.status(Number(result?.statusCode || 400)).json({
+      ok: false,
+      error: String(result?.code || 'authority_validation_failed').trim(),
+      reason: String(result?.reason || 'authority validation failed').trim(),
+      traceId: req.traceId || '',
+      authority: result?.authorityPublic || null,
+      ...(result?.detail && typeof result.detail === 'object' ? { detail: result.detail } : {})
+    });
+  }
 
   app.get('/api/records', requireRole('viewer'), (req, res) => {
     res.json(readRecords());
@@ -63,15 +315,264 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     res.json(getBackendSignerState());
   });
 
-  app.get('/api/session/runtime', requireRole('viewer'), (req, res) => {
+  app.post('/api/onboarding/auth/challenge', (req, res) => {
+    try {
+      const body = req.body || {};
+      const result = issueOnboardingAuthChallenge?.({
+        ownerEoa: body.ownerEoa || body.owner || '',
+        chainId: body.chainId || '',
+        traceId: req.traceId || ''
+      });
+      if (!result?.ok) {
+        return sendRouteFailure(req, res, result);
+      }
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        challenge: {
+          challengeId: result.challenge.challengeId,
+          ownerEoa: result.challenge.ownerEoa,
+          chainId: result.challenge.chainId,
+          issuedAt: result.challenge.issuedAt,
+          expiresAt: result.challenge.expiresAt,
+          message: result.challenge.message
+        }
+      });
+    } catch (error) {
+      return sendRouteFailure(req, res, {
+        statusCode: 500,
+        code: 'onboarding_challenge_internal_error',
+        reason: normalizeText(error?.message || 'onboarding challenge failed') || 'onboarding challenge failed'
+      });
+    }
+  });
+
+  app.post('/api/onboarding/auth/verify', (req, res) => {
+    try {
+      const body = req.body || {};
+      const result = verifyOnboardingAuthChallenge?.({
+        challengeId: body.challengeId || '',
+        ownerEoa: body.ownerEoa || body.owner || '',
+        chainId: body.chainId || '',
+        signature: body.signature || body.userSignature || '',
+        traceId: req.traceId || ''
+      });
+      if (!result?.ok) {
+        return sendRouteFailure(req, res, result);
+      }
+      writeOnboardingAuthCookie?.(res, {
+        ownerEoa: result.ownerEoa,
+        chainId: result.chainId
+      });
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        auth: {
+          ownerEoa: result.ownerEoa,
+          chainId: result.chainId,
+          authSource: 'onboarding-cookie'
+        }
+      });
+    } catch (error) {
+      return sendRouteFailure(req, res, {
+        statusCode: 500,
+        code: 'onboarding_verify_internal_error',
+        reason: normalizeText(error?.message || 'onboarding verification failed') || 'onboarding verification failed'
+      });
+    }
+  });
+
+  app.post('/api/onboarding/auth/logout', (req, res) => {
+    clearOnboardingAuthCookie?.(res);
+    return res.json({
+      ok: true,
+      traceId: req.traceId || '',
+      cleared: true
+    });
+  });
+
+  app.get(
+    '/api/session/runtime',
+    requireRole('viewer', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    (req, res) => {
+    const lookup = buildRuntimeLookup(req);
+    const explicitOwnerLookup = normalizeOwnerInput(req.query.owner || req.query.ownerEoa || '');
     const runtime = deps.resolveSessionRuntime({
-      owner: req.query.owner,
-      aaWallet: req.query.aaWallet,
-      sessionId: req.query.sessionId
+      ...lookup,
+      strictOwnerMatch: Boolean(
+        explicitOwnerLookup ||
+          (normalizeText(req?.authSource || '') === 'onboarding-cookie' && getScopedOwnerFromAuth(req))
+      )
     });
     return res.json({
       ok: true,
       runtime: buildSessionRuntimePayload(runtime)
+    });
+  });
+
+  app.post(
+    '/api/setup/runtime/prepare',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    async (req, res) => {
+      try {
+        const scopedBody = buildSetupRouteBody(req, req.body || {});
+        if (scopedBody?.error) {
+          return sendRouteFailure(req, res, scopedBody.error);
+        }
+        const body = scopedBody || {};
+        const prepared = await prepareSelfServeSessionRuntime({
+          owner: body.owner || body.ownerEoa,
+          singleLimit: body.singleLimit,
+          dailyLimit: body.dailyLimit,
+          tokenAddress: body.tokenAddress || body.token,
+          gatewayRecipient: body.gatewayRecipient
+        });
+        return res.json({
+          ok: true,
+          traceId: req.traceId || '',
+          bootstrap: prepared
+        });
+      } catch (error) {
+        const reason = normalizeText(error?.message || 'setup_runtime_prepare_failed') || 'setup_runtime_prepare_failed';
+        const status =
+          /invalid|required|mismatch/i.test(reason)
+            ? 400
+            : 500;
+        return res.status(status).json({
+          ok: false,
+          error: 'setup_runtime_prepare_failed',
+          reason,
+          traceId: req.traceId || ''
+        });
+      }
+    }
+  );
+
+  app.post(
+    '/api/setup/runtime/finalize',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    async (req, res) => {
+      try {
+        const scopedBody = buildSetupRouteBody(req, req.body || {}, { includeUserEoa: true });
+        if (scopedBody?.error) {
+          return sendRouteFailure(req, res, scopedBody.error);
+        }
+        const body = scopedBody || {};
+        const runtimeInput =
+          body?.runtime && typeof body.runtime === 'object' && !Array.isArray(body.runtime)
+            ? body.runtime
+            : {};
+        const finalized = await finalizeSelfServeSessionRuntime({
+          owner: body.owner || body.ownerEoa || body.userEoa,
+          runtime: runtimeInput,
+          singleLimit: body.singleLimit || runtimeInput.maxPerTx,
+          dailyLimit: body.dailyLimit || runtimeInput.dailyLimit,
+          tokenAddress: body.tokenAddress || runtimeInput.tokenAddress || body.token,
+          gatewayRecipient: body.gatewayRecipient || runtimeInput.gatewayRecipient,
+          userEoa: body.userEoa || body.ownerEoa || body.owner
+        });
+        return res.json({
+          ok: true,
+          traceId: req.traceId || '',
+          bootstrap: finalized.prepared,
+          runtime: buildSessionRuntimePayload(finalized.runtime)
+        });
+      } catch (error) {
+        const reason = normalizeText(error?.message || 'setup_runtime_finalize_failed') || 'setup_runtime_finalize_failed';
+        const status =
+          /invalid|required|mismatch|not found|No contract code/i.test(reason)
+            ? 400
+            : 500;
+        return res.status(status).json({
+          ok: false,
+          error: 'setup_runtime_finalize_failed',
+          reason,
+          traceId: req.traceId || ''
+        });
+      }
+    }
+  );
+
+  app.get('/api/session/policy', requireRole('viewer'), (req, res) => {
+    const result = materializeAuthority?.({
+      owner: req.query.owner,
+      aaWallet: req.query.aaWallet,
+      sessionId: req.query.sessionId
+    });
+    if (!result?.ok) {
+      return sendAuthorityFailure(req, res, result);
+    }
+    return res.json({
+      ok: true,
+      traceId: req.traceId || '',
+      authority: result?.authority || null,
+      runtime: buildSessionRuntimePayload(result?.runtime || {})
+    });
+  });
+
+  app.post('/api/session/policy', requireRole('agent'), (req, res) => {
+    const result = writeConsumerAuthorityPolicy?.(buildAuthorityRouteInput(req, req.body || {}));
+    if (!result?.ok) {
+      return sendAuthorityFailure(req, res, result);
+    }
+    return res.json({
+      ok: true,
+      traceId: req.traceId || '',
+      authority: result?.authority || null,
+      runtime: buildSessionRuntimePayload(result?.runtime || {})
+    });
+  });
+
+  app.post('/api/session/policy/revoke', requireRole('agent'), (req, res) => {
+    const result = revokeConsumerAuthorityPolicy?.(buildAuthorityRouteInput(req, req.body || {}));
+    if (!result?.ok) {
+      return sendAuthorityFailure(req, res, result);
+    }
+    return res.json({
+      ok: true,
+      traceId: req.traceId || '',
+      authority: result?.authority || null,
+      runtime: buildSessionRuntimePayload(result?.runtime || {})
+    });
+  });
+
+  app.post('/api/session/validate', requireRole('agent'), (req, res) => {
+    const body = req.body || {};
+    const routeInput = buildAuthorityRouteInput(req, body);
+    const result = validateConsumerAuthority?.({
+      ...routeInput,
+      payer: body.payer,
+      provider: body.provider,
+      capability: body.capability,
+      recipient: body.recipient,
+      amount: body.amount,
+      intentId: body.intentId || body.idempotencyKey,
+      actionKind: body.actionKind || body.lane || body.kind,
+      referenceId: body.referenceId || body.serviceId || body.jobId || body.templateId,
+      traceId: req.traceId || ''
+    });
+    if (!result?.ok) {
+      return sendAuthorityFailure(req, res, result);
+    }
+    return res.json({
+      ok: true,
+      traceId: req.traceId || '',
+      allowed: true,
+      authority: result?.authority || null,
+      policySnapshotHash: normalizeText(result?.policySnapshotHash || ''),
+      detail: result?.detail || null
     });
   });
 
@@ -134,10 +635,14 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
       sessionPrivateKey: body.sessionPrivateKey,
       sessionId: body.sessionId,
       sessionTxHash: body.sessionTxHash,
+      tokenAddress: body.tokenAddress,
       expiresAt: body.expiresAt,
       maxPerTx: body.maxPerTx,
       dailyLimit: body.dailyLimit,
       gatewayRecipient: body.gatewayRecipient,
+      accountVersion: body.accountVersion,
+      accountFactoryAddress: body.accountFactoryAddress,
+      accountImplementationAddress: body.accountImplementationAddress,
       authorizedBy: body.authorizedBy,
       authorizedAt: body.authorizedAt,
       authorizationMode: body.authorizationMode,
@@ -159,11 +664,30 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     });
   });
 
-  app.post('/api/session/runtime/ensure', requireRole('agent'), async (req, res) => {
+  app.post(
+    '/api/session/runtime/ensure',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    async (req, res) => {
     try {
-      const body = req.body || {};
+      const scopedBody = buildSetupRouteBody(req, req.body || {});
+      if (scopedBody?.error) {
+        return sendRouteFailure(req, res, scopedBody.error);
+      }
+      if (normalizeText(req?.authSource || '') === 'onboarding-cookie') {
+        return sendRouteFailure(req, res, {
+          statusCode: 409,
+          code: 'self_serve_runtime_prepare_required',
+          reason:
+            'Self-serve setup must use /api/setup/runtime/prepare and /api/setup/runtime/finalize. Backend-managed runtime ensure remains a demo/dev compatibility path only.'
+        });
+      }
+      const body = scopedBody || {};
       const ensured = await ensureBackendSessionRuntime({
-        owner: body.owner,
+        owner: body.owner || body.ownerEoa,
         singleLimit: body.singleLimit,
         dailyLimit: body.dailyLimit,
         tokenAddress: body.tokenAddress || body.token,
@@ -205,10 +729,21 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     }
   });
 
-  app.post('/api/v1/session/authorize', requireRole('agent'), async (req, res) => {
+  app.post(
+    '/api/v1/session/authorize',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    async (req, res) => {
     try {
+      const scopedBody = buildSetupRouteBody(req, req.body || {}, { includeUserEoa: true });
+      if (scopedBody?.error) {
+        return sendRouteFailure(req, res, scopedBody.error);
+      }
       const finalized = await finalizeSessionAuthorization({
-        body: req.body || {},
+        body: scopedBody || {},
         traceId: req.traceId || ''
       });
 
@@ -250,6 +785,14 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     } catch (error) {
       const reason = error?.message || 'session_authorize_failed';
       const status = Number(error?.statusCode || 0) || (/already used|reused/i.test(reason) ? 409 : 400);
+      console.error('[api/v1/session/authorize]', {
+        traceId: req.traceId || '',
+        authSource: normalizeText(req?.authSource || ''),
+        ownerEoa: getScopedOwnerFromAuth(req) || normalizeOwnerInput(req.body?.userEoa || req.body?.owner || ''),
+        executionMode: normalizeText(req.body?.executionMode || ''),
+        reason,
+        stack: error?.stack || ''
+      });
       return res.status(status).json({
         ok: false,
         schemaVersion: 'v1',
@@ -260,6 +803,236 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
       });
     }
   });
+
+  app.get(
+    '/api/account/api-key',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    (req, res) => {
+      const ownerEoa = resolveAccountOwner(req);
+      if (!ownerEoa) {
+        return sendRouteFailure(req, res, {
+          statusCode: 400,
+          code: 'account_owner_required',
+          reason: 'A valid ownerEoa is required.'
+        });
+      }
+      const record = findActiveAccountApiKey?.(ownerEoa) || null;
+      if (!record) {
+        return res.status(404).json({
+          ok: false,
+          error: 'account_api_key_not_found',
+          reason: 'No active account API key was found.',
+          traceId: req.traceId || ''
+        });
+      }
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        ownerEoa,
+        apiKey: buildAccountApiKeyPublicRecord?.(record) || null
+      });
+    }
+  );
+
+  app.post(
+    '/api/account/api-key/generate',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    (req, res) => {
+      const body = req.body || {};
+      const ownerEoa = resolveAccountOwner(req, body);
+      if (!ownerEoa) {
+        return sendRouteFailure(req, res, {
+          statusCode: 400,
+          code: 'account_owner_required',
+          reason: 'A valid ownerEoa is required.'
+        });
+      }
+      const result = generateAccountApiKey?.({
+        ownerEoa,
+        label: body.label || '',
+        role: 'agent',
+        createdBy: normalizeText(req.authSource || req.authRole || '')
+      });
+      if (!result?.ok) {
+        return sendRouteFailure(req, res, result);
+      }
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        ownerEoa,
+        apiKey: {
+          ...result.publicRecord,
+          key: result.key
+        }
+      });
+    }
+  );
+
+  app.post(
+    '/api/account/api-key/revoke',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    (req, res) => {
+      const body = req.body || {};
+      const ownerEoa = resolveAccountOwner(req, body);
+      if (!ownerEoa) {
+        return sendRouteFailure(req, res, {
+          statusCode: 400,
+          code: 'account_owner_required',
+          reason: 'A valid ownerEoa is required.'
+        });
+      }
+      const result = revokeAccountApiKey?.({
+        ownerEoa,
+        keyId: body.keyId || '',
+        reason: body.reason || body.revocationReason || ''
+      });
+      if (!result?.ok) {
+        return sendRouteFailure(req, res, result);
+      }
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        ownerEoa,
+        apiKey: result.publicRecord || null
+      });
+    }
+  );
+
+  app.get(
+    '/api/connector/claude/status',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    (req, res) => {
+      const ownerEoa = resolveAccountOwner(req);
+      return res.json(buildClaudeConnectorStatus(ownerEoa, req));
+    }
+  );
+
+  app.post(
+    '/api/connector/claude/install-code',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    (req, res) => {
+      const body = req.body || {};
+      const ownerEoa = resolveAccountOwner(req, body);
+      const setup = evaluateClaudeConnectorSetup(ownerEoa);
+      if (!normalizeOwnerInput(ownerEoa)) {
+        return sendRouteFailure(req, res, {
+          statusCode: 400,
+          code: 'connector_setup_incomplete',
+          reason: 'A valid ownerEoa is required to issue a Claude connector install code.'
+        });
+      }
+      if (!normalizeText(setup?.runtime?.owner || '')) {
+        return res.status(409).json({
+          ok: false,
+          error: 'connector_runtime_not_ready',
+          reason: 'Claude connector setup requires a ready owner-scoped runtime.',
+          traceId: req.traceId || '',
+          missing: setup.missing
+        });
+      }
+      if (
+        !normalizeText(setup?.runtime?.aaWallet || '') ||
+        !normalizeText(setup?.runtime?.sessionAddress || '') ||
+        !normalizeText(setup?.runtime?.sessionId || '') ||
+        !normalizeText(setup?.runtime?.authorizationSignature || '') ||
+        !normalizeText(setup?.runtime?.authorizationPayloadHash || '')
+      ) {
+        return res.status(409).json({
+          ok: false,
+          error: 'connector_runtime_not_ready',
+          reason: 'Claude connector setup requires a ready AA session runtime.',
+          traceId: req.traceId || '',
+          missing: setup.missing
+        });
+      }
+      if (!setup.authority || setup.missing.some((item) => item.startsWith('authority_'))) {
+        return res.status(409).json({
+          ok: false,
+          error: 'connector_authority_inactive',
+          reason: 'Claude connector setup requires an active consumer authority policy.',
+          traceId: req.traceId || '',
+          missing: setup.missing
+        });
+      }
+
+      const issued = issueClaudeConnectorInstallCode?.({
+        ownerEoa,
+        aaWallet: setup.runtime?.aaWallet || '',
+        authorityId: setup.authority?.authorityId || '',
+        policySnapshotHash: buildAuthorityPolicySnapshotHash(setup.authority),
+        client: 'claude'
+      });
+      if (!issued?.ok) {
+        return sendRouteFailure(req, res, issued);
+      }
+
+      const connectorUrl = `${buildPublicBaseUrl(req)}/mcp/connect/${encodeURIComponent(issued.token)}`;
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        ownerEoa,
+        connector: {
+          client: 'claude',
+          state: 'install_code_issued',
+          installCodeId: issued.publicRecord?.installCodeId || '',
+          maskedPreview: issued.publicRecord?.maskedPreview || '',
+          expiresAt: issued.publicRecord?.expiresAt || 0,
+          connectorUrl
+        }
+      });
+    }
+  );
+
+  app.post(
+    '/api/connector/claude/revoke',
+    requireRole('agent', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    (req, res) => {
+      const body = req.body || {};
+      const ownerEoa = resolveAccountOwner(req, body);
+      const result = revokeClaudeConnectorGrant?.({
+        ownerEoa,
+        reason: body.reason || body.revocationReason || 'revoked'
+      });
+      if (!result?.ok) {
+        return sendRouteFailure(req, res, result);
+      }
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        ownerEoa,
+        connector: {
+          client: 'claude',
+          revoked: true,
+          grant: result.grant || null,
+          pendingInstallCode: result.pendingInstallCode || null
+        }
+      });
+    }
+  );
 
   app.post('/api/v1/session/approval-requests', requireRole('agent'), async (req, res) => {
     try {
@@ -403,6 +1176,9 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
         ...runtime,
         aaWallet: ensured.accountAddress,
         owner: ensured.owner,
+        accountFactoryAddress: runtime.accountFactoryAddress || deps.KITE_AA_FACTORY_ADDRESS || '',
+        accountImplementationAddress:
+          runtime.accountImplementationAddress || deps.KITE_AA_ACCOUNT_IMPLEMENTATION || '',
         source: 'aa-ensure',
         updatedAt: Date.now()
       });

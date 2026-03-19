@@ -49,6 +49,8 @@ export function registerAutomationX402Routes(app, deps) {
     GokiteAASDK,
     BACKEND_BUNDLER_URL,
     BACKEND_ENTRYPOINT_ADDRESS,
+    KITE_AA_FACTORY_ADDRESS,
+    KITE_AA_ACCOUNT_IMPLEMENTATION,
   } = deps;
   const sessionPayInflightByPayer = new Map();
   const SESSION_PAY_RECEIPT_WAIT_MS = Math.max(
@@ -629,6 +631,8 @@ export function registerAutomationX402Routes(app, deps) {
         rpcUrl: BACKEND_RPC_URL,
         bundlerUrl: BACKEND_BUNDLER_URL,
         entryPointAddress: BACKEND_ENTRYPOINT_ADDRESS,
+        accountFactoryAddress: KITE_AA_FACTORY_ADDRESS,
+        accountImplementationAddress: KITE_AA_ACCOUNT_IMPLEMENTATION,
         proxyAddress: runtime.aaWallet,
         bundlerRpcTimeoutMs: KITE_BUNDLER_RPC_TIMEOUT_MS,
         bundlerRpcRetries: KITE_BUNDLER_RPC_RETRIES,

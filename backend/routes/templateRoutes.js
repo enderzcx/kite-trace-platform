@@ -1,9 +1,15 @@
 export function registerTemplateRoutes(app, deps) {
   const {
     appendReputationSignal,
+    beginConsumerIntent,
+    buildAuthorityPublicSummary,
+    buildAuthoritySnapshot,
+    buildPolicySnapshotHash,
     createTraceId,
     ensureServiceCatalog,
     ensureTemplateCatalog,
+    finalizeConsumerIntent,
+    findConsumerIntent,
     getInternalAgentApiKey,
     normalizeAddress,
     PORT,
@@ -12,6 +18,7 @@ export function registerTemplateRoutes(app, deps) {
     requireRole,
     upsertWorkflow,
     upsertPurchaseRecord,
+    validateConsumerAuthority,
     writeTemplates
   } = deps;
 
@@ -387,6 +394,7 @@ export function registerTemplateRoutes(app, deps) {
     return {
       purchaseId: normalizeText(purchase?.purchaseId),
       traceId: normalizeText(purchase?.traceId),
+      intentId: normalizeText(purchase?.intentId),
       templateId: normalizeText(purchase?.templateId),
       serviceId: normalizeText(purchase?.serviceId),
       quoteId: normalizeText(purchase?.quoteId),
@@ -396,6 +404,10 @@ export function registerTemplateRoutes(app, deps) {
       providerAgentId: normalizeText(purchase?.providerAgentId),
       capabilityId: normalizeText(purchase?.capabilityId),
       payer: normalizeText(purchase?.payer),
+      authorityId: normalizeText(purchase?.authorityId),
+      policySnapshotHash: normalizeText(purchase?.policySnapshotHash),
+      authority:
+        purchase?.authorityPublic && typeof purchase.authorityPublic === 'object' ? purchase.authorityPublic : null,
       paymentTxHash: normalizeText(purchase?.paymentTxHash),
       receiptRef: normalizeText(purchase?.receiptRef),
       evidenceRef: normalizeText(purchase?.evidenceRef),
@@ -403,6 +415,31 @@ export function registerTemplateRoutes(app, deps) {
       error: normalizeText(purchase?.error),
       createdAt: normalizeText(purchase?.createdAt),
       updatedAt: normalizeText(purchase?.updatedAt)
+    };
+  }
+
+  function buildAuthorityErrorResponse(result = {}) {
+    return {
+      ok: false,
+      error: normalizeText(result?.code || 'authority_validation_failed'),
+      reason: normalizeText(result?.reason || 'authority validation failed'),
+      authority: result?.authorityPublic || null,
+      policySnapshotHash: normalizeText(result?.policySnapshotHash || ''),
+      detail: result?.detail && typeof result.detail === 'object' ? result.detail : undefined
+    };
+  }
+
+  function buildIntentConflictPayload(result = {}) {
+    const existing = result?.existing && typeof result.existing === 'object' ? result.existing : null;
+    const existingPurchase = existing?.resultRef
+      ? readPurchases().find((item) => normalizeText(item?.purchaseId) === normalizeText(existing.resultRef)) || null
+      : null;
+    return {
+      ok: false,
+      error: normalizeText(result?.code || 'intent_conflict'),
+      reason: normalizeText(result?.reason || 'intent conflict'),
+      intent: existing,
+      purchase: existingPurchase ? buildPurchaseView(existingPurchase) : null
     };
   }
 
@@ -599,17 +636,60 @@ export function registerTemplateRoutes(app, deps) {
     const body = req.body || {};
     const traceId = normalizeText(body.traceId || createTraceId('purchase'));
     const payer = normalizeAddress(body.payer || runtime?.aaWallet || runtime?.owner || '');
+    const intentId = normalizeText(body.intentId || body.idempotencyKey || '');
     const input =
       body?.input && typeof body.input === 'object' && !Array.isArray(body.input)
         ? body.input
         : template?.exampleInput && typeof template.exampleInput === 'object' && !Array.isArray(template.exampleInput)
           ? template.exampleInput
           : {};
+    const authorityResult = validateConsumerAuthority?.({
+      payer,
+      provider: normalizeText(template.providerAgentId || service.providerAgentId),
+      capability: resolveServiceCapabilityId(service),
+      recipient: normalizeText(service.recipient || ''),
+      amount: normalizeText(service.price || ''),
+      intentId,
+      actionKind: 'buy_direct',
+      referenceId: normalizeText(template.templateId || service.id),
+      traceId
+    });
+    if (authorityResult && authorityResult.ok === false) {
+      return res.status(Number(authorityResult.statusCode || 403)).json(buildAuthorityErrorResponse(authorityResult));
+    }
+    const intentState = beginConsumerIntent?.({
+      intentId,
+      payer,
+      provider: normalizeText(template.providerAgentId || service.providerAgentId),
+      capability: resolveServiceCapabilityId(service),
+      recipient: normalizeText(service.recipient || ''),
+      amount: normalizeText(service.price || ''),
+      actionKind: 'buy_direct',
+      referenceId: normalizeText(template.templateId || service.id),
+      traceId
+    });
+    if (intentState && intentState.ok === false) {
+      return res.status(Number(intentState.code === 'intent_replayed' ? 409 : 409)).json(buildIntentConflictPayload(intentState));
+    }
     const purchaseId = createTraceId('purchase');
     const now = new Date().toISOString();
+    const authoritySnapshot =
+      authorityResult?.authority && typeof authorityResult.authority === 'object'
+        ? buildAuthoritySnapshot(authorityResult.authority)
+        : null;
+    const authorityPublic =
+      authorityResult?.authorityPublic && typeof authorityResult.authorityPublic === 'object'
+        ? buildAuthorityPublicSummary(authorityResult.authorityPublic)
+        : authoritySnapshot
+          ? buildAuthorityPublicSummary(authoritySnapshot)
+          : null;
+    const policySnapshotHash = normalizeText(
+      authorityResult?.policySnapshotHash || (authoritySnapshot ? buildPolicySnapshotHash(authoritySnapshot) : '')
+    );
     const purchase = {
       purchaseId,
       traceId,
+      intentId,
       templateId: template.templateId,
       serviceId: service.id,
       quoteId: '',
@@ -619,6 +699,10 @@ export function registerTemplateRoutes(app, deps) {
       providerAgentId: normalizeText(template.providerAgentId || service.providerAgentId),
       capabilityId: resolveServiceCapabilityId(service),
       payer,
+      authorityId: normalizeText(authoritySnapshot?.authorityId || ''),
+      authority: authoritySnapshot,
+      authorityPublic,
+      policySnapshotHash,
       paymentTxHash: '',
       receiptRef: '',
       evidenceRef: traceId ? `/api/evidence/export?traceId=${encodeURIComponent(traceId)}` : '',
@@ -667,6 +751,12 @@ export function registerTemplateRoutes(app, deps) {
         updatedAt: new Date().toISOString()
       };
       upsertPurchaseRecord(next);
+      finalizeConsumerIntent?.(intentId, {
+        status: invokeResult.ok ? 'completed' : 'failed',
+        resultRef: normalizeText(next.purchaseId),
+        requestId: normalizeText(next.paymentId),
+        traceId: normalizeText(next.traceId)
+      });
       if (invokeResult.ok) {
         appendReputationSignal?.({
           signalId: createTraceId('rep'),
@@ -724,6 +814,12 @@ export function registerTemplateRoutes(app, deps) {
         updatedAt: new Date().toISOString()
       };
       upsertPurchaseRecord(failed);
+      finalizeConsumerIntent?.(intentId, {
+        status: 'failed',
+        resultRef: normalizeText(failed.purchaseId),
+        traceId: normalizeText(failed.traceId),
+        failureReason: normalizeText(failed.error)
+      });
       return res.status(500).json({
         ok: false,
         traceId: req.traceId || '',

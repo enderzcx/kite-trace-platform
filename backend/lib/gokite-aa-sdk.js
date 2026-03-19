@@ -5,18 +5,23 @@
  */
 
 import { ethers } from 'ethers';
+import {
+  DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION,
+  DEFAULT_KITE_AA_FACTORY_ADDRESS
+} from './aaConfig.js';
 
 const NETWORKS = {
   kite_testnet: {
     chainId: 2368,
     entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
-    accountFactory: '0xAba80c4c8748c114Ba8b61cda3b0112333C3b96E',
-    accountImplementation: '0xF7681F4f70a2F2d114D03e6B93189cb549B8A503'
+    accountFactory: DEFAULT_KITE_AA_FACTORY_ADDRESS,
+    accountImplementation: DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION
   }
 };
 
 const DEFAULT_FACTORY_ABI = [
-  'function createAccount(address owner, uint256 salt) returns (address)'
+  'function createAccount(address owner, uint256 salt) returns (address)',
+  'function getAddress(address owner, uint256 salt) view returns (address)'
 ];
 
 function sleep(ms) {
@@ -45,6 +50,8 @@ export class GokiteAASDK {
     this.config = {
       network: config.network || 'kite_testnet',
       accountFactoryAddress: config.accountFactoryAddress || networkConfig.accountFactory,
+      accountImplementationAddress:
+        config.accountImplementationAddress || networkConfig.accountImplementation,
       factoryAbi: config.factoryAbi || DEFAULT_FACTORY_ABI,
       ...config
     };
@@ -65,7 +72,17 @@ export class GokiteAASDK {
     );
     const rpcRequest = new ethers.FetchRequest(config.rpcUrl);
     rpcRequest.timeout = providerRpcTimeoutMs;
-    this.provider = new ethers.JsonRpcProvider(rpcRequest);
+    const staticNetwork = ethers.Network.from({
+      chainId: networkConfig.chainId,
+      name: this.config.network
+    });
+    this.provider = new ethers.JsonRpcProvider(
+      rpcRequest,
+      staticNetwork,
+      {
+        staticNetwork
+      }
+    );
     this.config.rpcTimeoutMs = providerRpcTimeoutMs;
     
     this.entryPointAbi = [
@@ -101,7 +118,7 @@ export class GokiteAASDK {
     return proxyAddress;
   }
 
-  getAccountAddress(owner, salt = 0n) {
+  computeAccountAddress(owner, salt = 0n) {
     const network = NETWORKS[this.config.network];
     if (!network) {
       throw new Error(`Unsupported network for AA address derivation: ${this.config.network}`);
@@ -111,7 +128,7 @@ export class GokiteAASDK {
     ]).encodeFunctionData('initialize', [owner]);
     const constructorArgs = ethers.AbiCoder.defaultAbiCoder().encode(
       ['address', 'bytes'],
-      [network.accountImplementation, initializeCallData]
+      [this.config.accountImplementationAddress || network.accountImplementation, initializeCallData]
     );
     const fullCreationCode = ERC1967_PROXY_CREATION_CODE + constructorArgs.slice(2);
     return ethers.getCreate2Address(
@@ -121,10 +138,28 @@ export class GokiteAASDK {
     );
   }
 
+  getAccountAddress(owner, salt = 0n) {
+    return this.computeAccountAddress(owner, salt);
+  }
+
+  async resolveAccountAddress(owner, salt = 0n) {
+    if (this.factory?.interface?.hasFunction?.('getAddress')) {
+      try {
+        const resolved = await this.factory['getAddress(address,uint256)'](owner, salt);
+        if (resolved && ethers.isAddress(resolved)) {
+          return ethers.getAddress(resolved);
+        }
+      } catch {
+        // Fall back to local computation if the factory does not expose getAddress.
+      }
+    }
+    return this.computeAccountAddress(owner, salt);
+  }
+
   ensureAccountAddress(owner, salt = 0n) {
     this.config.ownerAddress = owner;
     this.config.salt = salt;
-    const aaAddress = this.getAccountAddress(owner, salt);
+    const aaAddress = this.computeAccountAddress(owner, salt);
     this.setProxyAddress(aaAddress);
     return aaAddress;
   }
@@ -146,7 +181,7 @@ export class GokiteAASDK {
   }
 
   async getAccountLifecycle(owner, salt = 0n) {
-    const accountAddress = this.getAccountAddress(owner, salt);
+    const accountAddress = await this.resolveAccountAddress(owner, salt);
     const deployed = await this.isAccountDeployed(accountAddress);
     return {
       accountAddress,
@@ -209,98 +244,126 @@ export class GokiteAASDK {
     return this.sendRawCallDataUserOperationAndWait(executeCallData, signFunction);
   }
 
-  async sendRawCallDataUserOperationAndWait(callData, signFunction, gasOverrides = {}) {
+  async prepareRawCallDataUserOperation(callData, signFunction, gasOverrides = {}) {
+    if (!this.config.proxyAddress || !this.account) {
+      throw new Error('AA wallet address is not set. Call ensureAccountAddress(owner) first.');
+    }
+    const [nonce, isDeployed, feeSuggestion] = await Promise.all([
+      this.getNonce(),
+      this.isAccountDeployed(this.config.proxyAddress),
+      this.getSuggestedGasFees()
+    ]);
+    const ownerAddress = this.config.ownerAddress;
+    const salt = this.config.salt ?? 0n;
+    if (!isDeployed && !ownerAddress) {
+      throw new Error('AA account not deployed and ownerAddress is missing. Call ensureAccountAddress(owner) first.');
+    }
+
+    const callGasLimit = gasOverrides.callGasLimit ?? (isDeployed ? 180000n : 420000n);
+    const verificationGasLimit = gasOverrides.verificationGasLimit ?? (isDeployed ? 260000n : 1800000n);
+    const preVerificationGas = gasOverrides.preVerificationGas ?? (isDeployed ? 90000n : 350000n);
+    const maxFeePerGas = gasOverrides.maxFeePerGas ?? feeSuggestion.maxFeePerGas;
+    const maxPriorityFeePerGas =
+      gasOverrides.maxPriorityFeePerGas ?? feeSuggestion.maxPriorityFeePerGas;
+
+    const userOp = {
+      sender: this.config.proxyAddress,
+      nonce: nonce.toString(),
+      initCode: isDeployed ? '0x' : this.buildInitCode(ownerAddress, salt),
+      callData,
+      callGasLimit,
+      verificationGasLimit,
+      preVerificationGas,
+      maxFeePerGas,
+      maxPriorityFeePerGas,
+      paymasterAndData: '0x',
+      signature: '0x'
+    };
+
+    let userOpHash = await this.getUserOpHash(userOp);
+    let signature = await signFunction(userOpHash);
+    userOp.signature = signature;
+
+    let estimatedGas = null;
+    try {
+      estimatedGas = await this.estimateUserOperationGas(userOp);
+    } catch {
+      estimatedGas = null;
+    }
+    if (estimatedGas) {
+      const estCallGas = ethers.getBigInt(estimatedGas.callGasLimit || userOp.callGasLimit);
+      const estVerificationGas = ethers.getBigInt(
+        estimatedGas.verificationGasLimit || userOp.verificationGasLimit
+      );
+      const estPreVerificationGas = ethers.getBigInt(
+        estimatedGas.preVerificationGas || userOp.preVerificationGas
+      );
+      userOp.callGasLimit =
+        estCallGas > userOp.callGasLimit ? estCallGas + estCallGas / 5n : userOp.callGasLimit;
+      userOp.verificationGasLimit =
+        estVerificationGas > userOp.verificationGasLimit
+          ? estVerificationGas + estVerificationGas / 5n
+          : userOp.verificationGasLimit;
+      userOp.preVerificationGas =
+        estPreVerificationGas > userOp.preVerificationGas
+          ? estPreVerificationGas + estPreVerificationGas / 5n
+          : userOp.preVerificationGas;
+
+      userOpHash = await this.getUserOpHash(userOp);
+      signature = await signFunction(userOpHash);
+      userOp.signature = signature;
+    }
+
+    return {
+      userOp,
+      userOpHash
+    };
+  }
+
+  async sendRawCallDataUserOperation(callData, signFunction, gasOverrides = {}) {
     let userOpHashFromBundler = '';
     try {
-      if (!this.config.proxyAddress || !this.account) {
-        throw new Error('AA wallet address is not set. Call ensureAccountAddress(owner) first.');
-      }
-      const [nonce, isDeployed, feeSuggestion] = await Promise.all([
-        this.getNonce(),
-        this.isAccountDeployed(this.config.proxyAddress),
-        this.getSuggestedGasFees()
-      ]);
-      const ownerAddress = this.config.ownerAddress;
-      const salt = this.config.salt ?? 0n;
-      if (!isDeployed && !ownerAddress) {
-        throw new Error('AA account not deployed and ownerAddress is missing. Call ensureAccountAddress(owner) first.');
-      }
-
-      const callGasLimit = gasOverrides.callGasLimit ?? (isDeployed ? 180000n : 420000n);
-      const verificationGasLimit = gasOverrides.verificationGasLimit ?? (isDeployed ? 260000n : 1800000n);
-      const preVerificationGas = gasOverrides.preVerificationGas ?? (isDeployed ? 90000n : 350000n);
-      const maxFeePerGas = gasOverrides.maxFeePerGas ?? feeSuggestion.maxFeePerGas;
-      const maxPriorityFeePerGas =
-        gasOverrides.maxPriorityFeePerGas ?? feeSuggestion.maxPriorityFeePerGas;
-
-      const userOp = {
-        sender: this.config.proxyAddress,
-        nonce: nonce.toString(),
-        initCode: isDeployed ? '0x' : this.buildInitCode(ownerAddress, salt),
-        callData,
-        callGasLimit,
-        verificationGasLimit,
-        preVerificationGas,
-        maxFeePerGas,
-        maxPriorityFeePerGas,
-        paymasterAndData: '0x',
-        signature: '0x'
-      };
-
-      let userOpHash = await this.getUserOpHash(userOp);
-      let signature = await signFunction(userOpHash);
-      userOp.signature = signature;
-
-      let estimatedGas = null;
-      try {
-        estimatedGas = await this.estimateUserOperationGas(userOp);
-      } catch (estimateError) {
-        // Some bundlers intermittently revert on eth_estimateUserOperationGas for valid
-        // AA session transfers. Keep the explicit fallback gas values and try submit anyway.
-        estimatedGas = null;
-      }
-      if (estimatedGas) {
-        const estCallGas = ethers.getBigInt(estimatedGas.callGasLimit || userOp.callGasLimit);
-        const estVerificationGas = ethers.getBigInt(
-          estimatedGas.verificationGasLimit || userOp.verificationGasLimit
-        );
-        const estPreVerificationGas = ethers.getBigInt(
-          estimatedGas.preVerificationGas || userOp.preVerificationGas
-        );
-        userOp.callGasLimit =
-          estCallGas > userOp.callGasLimit ? estCallGas + estCallGas / 5n : userOp.callGasLimit;
-        userOp.verificationGasLimit =
-          estVerificationGas > userOp.verificationGasLimit
-            ? estVerificationGas + estVerificationGas / 5n
-            : userOp.verificationGasLimit;
-        userOp.preVerificationGas =
-          estPreVerificationGas > userOp.preVerificationGas
-            ? estPreVerificationGas + estPreVerificationGas / 5n
-            : userOp.preVerificationGas;
-
-        // gas fields changed -> userOpHash changed, must re-sign
-        userOpHash = await this.getUserOpHash(userOp);
-        signature = await signFunction(userOpHash);
-        userOp.signature = signature;
-      }
-
-      userOpHashFromBundler = await this.sendToBundler(userOp);
-      const receipt = await this.waitForUserOperation(userOpHashFromBundler);
-
+      const prepared = await this.prepareRawCallDataUserOperation(callData, signFunction, gasOverrides);
+      userOpHashFromBundler = await this.sendToBundler(prepared.userOp);
       return {
-        status: receipt.success ? 'success' : 'failed',
-        transactionHash: receipt.transactionHash,
-        userOpHash: userOpHashFromBundler,
-        receipt: receipt
+        status: 'submitted',
+        userOpHash: userOpHashFromBundler
       };
     } catch (error) {
       return {
         status: 'failed',
         reason: this.formatErrorReason(error),
         userOpHash: userOpHashFromBundler || '',
-        error: error
+        error
       };
     }
+  }
+
+  async waitForUserOperationResult(userOpHash, timeout = 180000, pollInterval) {
+    try {
+      const receipt = await this.waitForUserOperation(userOpHash, timeout, pollInterval);
+      return {
+        status: receipt.success ? 'success' : 'failed',
+        transactionHash: receipt.transactionHash,
+        userOpHash,
+        receipt
+      };
+    } catch (error) {
+      return {
+        status: 'failed',
+        reason: this.formatErrorReason(error),
+        userOpHash: userOpHash || '',
+        error
+      };
+    }
+  }
+
+  async sendRawCallDataUserOperationAndWait(callData, signFunction, gasOverrides = {}) {
+    const submitResult = await this.sendRawCallDataUserOperation(callData, signFunction, gasOverrides);
+    if (submitResult.status !== 'submitted' || !submitResult.userOpHash) {
+      return submitResult;
+    }
+    return this.waitForUserOperationResult(submitResult.userOpHash);
   }
 
   async sendBatchUserOperationAndWait(batchRequest, signFunction) {

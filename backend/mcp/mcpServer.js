@@ -63,11 +63,15 @@ function buildPublicBaseUrl(req) {
   return `${protocol}://${host}`.replace(/\/+$/, '');
 }
 
+function resolvePublicMcpEndpoint() {
+  return normalizeText(process.env.MCP_STREAM_PUBLIC_PATH || '/mcp/stream') || '/mcp/stream';
+}
+
 function buildWellKnownPayload(req, deps) {
   return {
     name: 'Kite Trace MCP Server',
     version: normalizeText(deps.PACKAGE_VERSION || '0.0.0') || '0.0.0',
-    endpoint: `${buildPublicBaseUrl(req)}/mcp`,
+    endpoint: `${buildPublicBaseUrl(req)}${resolvePublicMcpEndpoint()}`,
     transport: 'streamable-http',
     auth: deps.authConfigured?.()
       ? {
@@ -81,55 +85,102 @@ function buildWellKnownPayload(req, deps) {
   };
 }
 
+function applyConnectorGrantAuth(req, grant = {}) {
+  const ownerEoa = normalizeText(grant.ownerEoa || '');
+  const aaWallet = normalizeText(grant.aaWallet || '');
+  const grantId = normalizeText(grant.grantId || '');
+  req.authRole = 'agent';
+  req.authSource = 'connector-grant';
+  req.authOwnerEoa = ownerEoa;
+  req.auth = {
+    token: '',
+    clientId: grantId || 'connector-grant',
+    scopes: ['agent'],
+    ownerEoa,
+    extra: {
+      role: 'agent',
+      authSource: 'connector-grant',
+      ownerEoa,
+      aaWallet,
+      grantId
+    }
+  };
+  req.accountCtx = ownerEoa
+    ? {
+        ownerEoa,
+        aaWallet
+      }
+    : null;
+}
+
 function buildRequestAuth(req, deps) {
-  if (!deps.authConfigured?.()) {
-    req.authRole = 'dev-open';
-    req.auth = {
-      token: '',
-      clientId: 'dev-open',
-      scopes: ['viewer', 'agent', 'admin'],
-      extra: { role: 'dev-open' }
-    };
+  const connectorToken = normalizeText(req.params?.token || '');
+  if (connectorToken) {
+    let grant = deps.resolveClaudeConnectorToken?.(connectorToken) || null;
+    if (grant?.type === 'install_code') {
+      const claimed = deps.claimClaudeConnectorInstallCode?.(connectorToken) || null;
+      if (claimed?.ok && claimed.grant) {
+        grant = {
+          type: 'grant',
+          grant: claimed.grant
+        };
+      } else {
+        grant = null;
+      }
+    }
+    if (!grant?.grant) {
+      return {
+        ok: false,
+        status: 401,
+        message: 'Missing or invalid connector token.',
+        code: -32001
+      };
+    }
+    const touchedGrant = deps.touchClaudeConnectorGrantUsage?.(grant.grant) || grant.grant;
+    const effectiveGrant = touchedGrant || grant.grant;
+    applyConnectorGrantAuth(req, effectiveGrant);
     return {
       ok: true,
-      role: 'dev-open',
-      apiKey: ''
-    };
-  }
-
-  const providedKey = normalizeText(deps.extractApiKey?.(req) || '');
-  const role = normalizeLower(deps.resolveRoleByApiKey?.(providedKey) || '');
-  if (!role) {
-    return {
-      ok: false,
-      status: 401,
-      message: 'Missing or invalid API key.',
-      code: -32001
+      role: 'agent',
+      authSource: 'connector-grant',
+      apiKey: '',
+      ownerEoa: normalizeText(effectiveGrant.ownerEoa || ''),
+      aaWallet: normalizeText(effectiveGrant.aaWallet || ''),
+      grantId: normalizeText(effectiveGrant.grantId || '')
     };
   }
 
   const requiredRole = resolveRequiredRole(req.body);
-  if (buildRoleRank(role) < buildRoleRank(requiredRole)) {
+  let resolved = deps.resolveAuthRequest?.(req, {
+    requiredRole,
+    allowEnvApiKey: false,
+    allowAccountApiKey: true,
+    allowOnboardingCookie: false
+  });
+  if (!resolved?.ok && Number(resolved?.status || 0) !== 403) {
+    resolved = deps.resolveAuthRequest?.(req, {
+      requiredRole,
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: false
+    });
+  }
+  if (!resolved?.ok) {
     return {
       ok: false,
-      status: 403,
-      message: `Role "${role}" cannot access "${requiredRole}" MCP method.`,
-      code: -32003
+      status: Number(resolved?.status || 401) || 401,
+      message: normalizeText(resolved?.message || 'Missing or invalid API key.') || 'Missing or invalid API key.',
+      code: Number(resolved?.status || 0) === 403 ? -32003 : -32001
     };
   }
 
-  req.authRole = role;
-  req.auth = {
-    token: providedKey,
-    clientId: role,
-    scopes: [role],
-    extra: { role }
-  };
-
   return {
     ok: true,
-    role,
-    apiKey: providedKey
+    role: normalizeLower(req.authRole || resolved.role || '') || 'viewer',
+    authSource: normalizeLower(req.authSource || resolved.authSource || '') || 'env-api-key',
+    apiKey: normalizeText(req.auth?.token || deps.extractApiKey?.(req) || ''),
+    ownerEoa: normalizeText(req.authOwnerEoa || req.accountCtx?.ownerEoa || ''),
+    aaWallet: normalizeText(req.accountCtx?.aaWallet || '')
   };
 }
 
@@ -201,8 +252,72 @@ function registerTools(server, tools, invokeAdapter, requestContext) {
           args,
           extra,
           apiKey: requestContext.apiKey,
-          paymentMode: requestContext.paymentMode
+          paymentMode: requestContext.paymentMode,
+          ownerEoa: requestContext.ownerEoa,
+          aaWallet: requestContext.aaWallet,
+          authSource: requestContext.authSource,
+          grantId: requestContext.grantId
         })
+    );
+  }
+}
+
+async function handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter) {
+  const auth = buildRequestAuth(req, deps);
+  if (!auth.ok) {
+    return sendJsonRpcError(res, req, auth.status, auth.message, auth.code, {
+      traceId: normalizeText(req.traceId || '')
+    });
+  }
+
+  try {
+    const tools = await toolsAdapter.listTools({
+      traceId: normalizeText(req.traceId || ''),
+      apiKey: auth.apiKey
+    });
+
+    const server = new McpServer(
+      {
+        name: 'kite-trace-mcp-server',
+        version: normalizeText(deps.PACKAGE_VERSION || '0.0.0') || '0.0.0'
+      },
+      {
+        capabilities: {
+          tools: {}
+        }
+      }
+    );
+
+    registerTools(server, tools, invokeAdapter, {
+      apiKey: auth.apiKey,
+      paymentMode: resolvePaymentMode(req),
+      ownerEoa: auth.ownerEoa,
+      aaWallet: auth.aaWallet,
+      authSource: auth.authSource,
+      grantId: auth.grantId
+    });
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined
+    });
+
+    await server.connect(transport);
+    res.once('close', () => {
+      void transport.close();
+      void server.close();
+    });
+    await transport.handleRequest(req, res, req.body);
+    return undefined;
+  } catch (error) {
+    return sendJsonRpcError(
+      res,
+      req,
+      500,
+      normalizeText(error?.message || 'Internal server error') || 'Internal server error',
+      -32603,
+      {
+        traceId: normalizeText(req.traceId || '')
+      }
     );
   }
 }
@@ -219,69 +334,10 @@ export function registerMcpRoutes(app, deps) {
     res.json(buildWellKnownPayload(req, deps));
   });
 
-  app.get('/mcp', (req, res) => {
-    res.set('Allow', 'POST');
-    return res.status(405).json(buildJsonRpcErrorBody(req, 'Method not allowed.', -32000));
-  });
-
-  app.delete('/mcp', (req, res) => {
-    res.set('Allow', 'POST');
-    return res.status(405).json(buildJsonRpcErrorBody(req, 'Method not allowed.', -32000));
-  });
-
-  app.post('/mcp', async (req, res) => {
-    const auth = buildRequestAuth(req, deps);
-    if (!auth.ok) {
-      return sendJsonRpcError(res, req, auth.status, auth.message, auth.code, {
-        traceId: normalizeText(req.traceId || '')
-      });
-    }
-
-    try {
-      const tools = await toolsAdapter.listTools({
-        traceId: normalizeText(req.traceId || ''),
-        apiKey: auth.apiKey
-      });
-
-      const server = new McpServer(
-        {
-          name: 'kite-trace-mcp-server',
-          version: normalizeText(deps.PACKAGE_VERSION || '0.0.0') || '0.0.0'
-        },
-        {
-          capabilities: {
-            tools: {}
-          }
-        }
-      );
-
-      registerTools(server, tools, invokeAdapter, {
-        apiKey: auth.apiKey,
-        paymentMode: resolvePaymentMode(req)
-      });
-
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined
-      });
-
-      await server.connect(transport);
-      res.once('close', () => {
-        void transport.close();
-        void server.close();
-      });
-      await transport.handleRequest(req, res, req.body);
-      return undefined;
-    } catch (error) {
-      return sendJsonRpcError(
-        res,
-        req,
-        500,
-        normalizeText(error?.message || 'Internal server error') || 'Internal server error',
-        -32603,
-        {
-          traceId: normalizeText(req.traceId || '')
-        }
-      );
-    }
-  });
+  app.get('/mcp', async (req, res) => handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter));
+  app.post('/mcp', async (req, res) => handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter));
+  app.get('/mcp/stream', async (req, res) => handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter));
+  app.post('/mcp/stream', async (req, res) => handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter));
+  app.get('/mcp/connect/:token', async (req, res) => handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter));
+  app.post('/mcp/connect/:token', async (req, res) => handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter));
 }

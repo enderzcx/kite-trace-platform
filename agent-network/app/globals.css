@@ -150,7 +150,17 @@
 /* ── Font utility ────────────────────────────────────────── */
 .font-display { font-family: var(--font-display); }
 
-/* ── Terminal selection color ────────────────────────────── */
+/* ── Terminal / code block selection color ───────────────── */
+/* Covers all <pre> blocks (dark or light) with a warm amber highlight.
+   The .terminal-block class retains the same rule for explicit wrappers. */
+pre ::selection,
+pre::selection,
+code ::selection,
+code::selection {
+  background: rgba(168, 136, 28, 0.32);
+  color: #f0ead8;
+}
+
 .terminal-block ::selection {
   background: rgba(168, 136, 28, 0.35);
   color: #f0ead8;

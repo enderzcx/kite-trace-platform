@@ -82,6 +82,15 @@ export type JobAudit = {
     authorizationExpiresAt?: number;
     authorizationAudience?: string;
     allowedCapabilities?: string[];
+    authorityId?: string;
+    intentId?: string;
+    policySnapshotHash?: string;
+    validationDecision?: string;
+    authoritySummary?: {
+      authorityId?: string;
+      status?: string;
+      allowedCapabilities?: string[];
+    };
   };
   humanApproval?: {
     approvalId?: string;
@@ -633,9 +642,23 @@ export default function JobAuditView({
             <Section title="Authorization" subtitle="Who authorized the agent and under what scope.">
               <div className="grid gap-3">
                 <MonoCard label="Authorization ID" value={authorization.authorizationId} />
+                <MonoCard label="Authority ID" value={authorization.authorityId} />
                 <MonoCard label="Authorized by" value={authorization.authorizedBy} />
                 <MonoCard label="Mode" value={authorization.authorizationMode} />
                 <MonoCard label="Payload hash" value={authorization.authorizationPayloadHash} />
+                <MonoCard label="Policy snapshot hash" value={authorization.policySnapshotHash} />
+                <MonoCard label="Intent ID" value={authorization.intentId} />
+                {authorization.validationDecision ? (
+                  <div className="rounded-2xl border border-[rgba(90,80,50,0.1)] bg-[#faf7f1] px-4 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#9e8e76]">Validation decision</p>
+                    <p
+                      className="mt-1.5 text-[12px] font-semibold"
+                      style={{ color: authorization.validationDecision === "allowed" ? "#3a4220" : "#9a4332" }}
+                    >
+                      {authorization.validationDecision}
+                    </p>
+                  </div>
+                ) : null}
                 <div className="rounded-2xl border border-[rgba(90,80,50,0.1)] bg-[#faf7f1] px-4 py-3">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#9e8e76]">Authorized at</p>
                   <p className="mt-1.5 text-[12px] text-[#2f351a]">{formatDate(authorization.authorizedAt)}</p>
@@ -658,6 +681,14 @@ export default function JobAuditView({
                         </span>
                       ))}
                     </div>
+                  </div>
+                ) : null}
+                {authorization.authoritySummary ? (
+                  <div className="rounded-2xl border border-[rgba(90,80,50,0.1)] bg-[#faf7f1] px-4 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#9e8e76]">Authority summary</p>
+                    <p className="mt-1.5 text-[11px] text-[#7a6e56]" style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}>
+                      {JSON.stringify(authorization.authoritySummary)}
+                    </p>
                   </div>
                 ) : null}
               </div>

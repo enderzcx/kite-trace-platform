@@ -220,3 +220,97 @@ export function parseSessionApproveArgs(argv = []) {
 
   return options;
 }
+
+const AUTH_POLICY_SET_VALUE_FLAGS = new Set([
+  '--allowed-capabilities',
+  '--allowed-providers',
+  '--allowed-recipients',
+  '--single-limit',
+  '--daily-limit',
+  '--total-limit',
+  '--expires-at',
+  '--label'
+]);
+const AUTH_POLICY_REVOKE_VALUE_FLAGS = new Set(['--reason']);
+const AUTH_VALIDATE_VALUE_FLAGS = new Set([
+  '--provider',
+  '--capability',
+  '--recipient',
+  '--amount',
+  '--action-kind',
+  '--reference-id',
+  '--intent-id'
+]);
+
+export function parseAuthPolicyArgs(_argv = []) {
+  return {};
+}
+
+export function parseAuthPolicySetArgs(argv = []) {
+  const options = {
+    allowedCapabilities: '',
+    allowedProviders: '',
+    allowedRecipients: '',
+    singleLimit: '',
+    dailyLimit: '',
+    totalLimit: '',
+    expiresAt: '',
+    consumerAgentLabel: ''
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    const normalizedFlag = token.includes('=') ? token.split('=', 1)[0] : token;
+    if (!AUTH_POLICY_SET_VALUE_FLAGS.has(normalizedFlag)) continue;
+    const { flag, value, consumed } = consumeFlagValue(argv, index);
+    if (flag === '--allowed-capabilities') options.allowedCapabilities = String(value || '').trim();
+    if (flag === '--allowed-providers') options.allowedProviders = String(value || '').trim();
+    if (flag === '--allowed-recipients') options.allowedRecipients = String(value || '').trim();
+    if (flag === '--single-limit') options.singleLimit = String(value || '').trim();
+    if (flag === '--daily-limit') options.dailyLimit = String(value || '').trim();
+    if (flag === '--total-limit') options.totalLimit = String(value || '').trim();
+    if (flag === '--expires-at') options.expiresAt = String(value || '').trim();
+    if (flag === '--label') options.consumerAgentLabel = String(value || '').trim();
+    index += consumed - 1;
+  }
+  return options;
+}
+
+export function parseAuthPolicyRevokeArgs(argv = []) {
+  const options = { revocationReason: '' };
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    const normalizedFlag = token.includes('=') ? token.split('=', 1)[0] : token;
+    if (!AUTH_POLICY_REVOKE_VALUE_FLAGS.has(normalizedFlag)) continue;
+    const { flag, value, consumed } = consumeFlagValue(argv, index);
+    if (flag === '--reason') options.revocationReason = String(value || '').trim();
+    index += consumed - 1;
+  }
+  return options;
+}
+
+export function parseAuthValidateArgs(argv = []) {
+  const options = {
+    provider: '',
+    capability: '',
+    recipient: '',
+    amount: '',
+    actionKind: '',
+    referenceId: '',
+    intentId: ''
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    const normalizedFlag = token.includes('=') ? token.split('=', 1)[0] : token;
+    if (!AUTH_VALIDATE_VALUE_FLAGS.has(normalizedFlag)) continue;
+    const { flag, value, consumed } = consumeFlagValue(argv, index);
+    if (flag === '--provider') options.provider = String(value || '').trim();
+    if (flag === '--capability') options.capability = String(value || '').trim();
+    if (flag === '--recipient') options.recipient = String(value || '').trim();
+    if (flag === '--amount') options.amount = String(value || '').trim();
+    if (flag === '--action-kind') options.actionKind = String(value || '').trim();
+    if (flag === '--reference-id') options.referenceId = String(value || '').trim();
+    if (flag === '--intent-id') options.intentId = String(value || '').trim();
+    index += consumed - 1;
+  }
+  return options;
+}

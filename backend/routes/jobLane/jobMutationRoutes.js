@@ -1,10 +1,18 @@
 import { sendErrorResponse } from '../../lib/errorResponse.js';
 import { createRequestLogger } from '../../lib/logger.js';
+import {
+  normalizeBtcTradingPlanEvidence,
+  validateBtcTradingPlanV1
+} from '../../lib/deliverySchemas/btcTradingPlanV1.js';
 
 const logger = createRequestLogger('job-mutation-route');
 
 function detailObject(value = null) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function normalizeTextList(values = []) {
+  return Array.isArray(values) ? values.map((item) => String(item ?? '').trim()).filter(Boolean) : [];
 }
 
 function sendJobRouteError(req, res, status, code, message, detail = {}) {
@@ -23,6 +31,25 @@ function sendJobRouteError(req, res, status, code, message, detail = {}) {
   });
 }
 
+function normalizeAddressLike(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^0x[0-9a-f]{40}$/.test(normalized) ? normalized : '';
+}
+
+function addressesEqual(left = '', right = '') {
+  const normalizedLeft = normalizeAddressLike(left);
+  const normalizedRight = normalizeAddressLike(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+function firstExplicitAddress(...values) {
+  for (const value of values) {
+    const normalized = normalizeAddressLike(value);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
 export function registerJobMutationRoutes(ctx = {}) {
   const { app, deps = {}, helpers = {} } = ctx;
   const {
@@ -37,17 +64,24 @@ export function registerJobMutationRoutes(ctx = {}) {
     KTRACE_JOB_APPROVAL_THRESHOLD,
     KTRACE_JOB_APPROVAL_TTL_MS,
     PORT,
+    beginConsumerIntent,
+    buildAuthorityPublicSummary,
+    buildAuthoritySnapshot,
+    buildPolicySnapshotHash,
     createTraceId,
     digestStableObject,
     ensureServiceCatalog,
+    finalizeConsumerIntent,
     getInternalAgentApiKey,
     lockEscrowFunds,
+    findConsumerIntent,
     readSessionRuntime,
     requireRole,
     resolveSessionOwnerByAaWallet,
     resolveWorkflowTraceId,
     submitEscrowResult,
     upsertJobRecord,
+    validateConsumerAuthority,
     validateEscrowJob,
     acceptEscrowJob
   } = deps;
@@ -80,32 +114,114 @@ export function registerJobMutationRoutes(ctx = {}) {
     updateApprovalRequest
   } = helpers;
 
+  function buildAuthorityErrorPayload(result = {}) {
+    return {
+      ok: false,
+      error: normalizeText(result?.code || 'authority_validation_failed'),
+      reason: normalizeText(result?.reason || 'authority validation failed'),
+      authority: result?.authorityPublic || null,
+      policySnapshotHash: normalizeText(result?.policySnapshotHash || ''),
+      detail: detailObject(result?.detail)
+    };
+  }
+
+  function buildIntentConflictDetail(result = {}) {
+    const existing = result?.existing && typeof result.existing === 'object' ? result.existing : null;
+    const existingJob = existing?.resultRef ? findJob(normalizeText(existing.resultRef)) : null;
+    return {
+      intent: existing,
+      job: existingJob ? buildJobView(existingJob) : null
+    };
+  }
+
   app.post('/api/jobs', requireRole('agent'), async (req, res) => {
     const body = req.body || {};
     const provider = normalizeText(body.provider);
     const capability = normalizeCapability(body.capability);
     const budget = normalizeText(body.budget);
     const runtime = readSessionRuntime();
+    const explicitPayer = firstExplicitAddress(body.requesterAddress, body.requester, body.payer);
+    const explicitExecutor = firstExplicitAddress(body.executorAddress, body.executor);
+    const explicitValidator = firstExplicitAddress(body.validatorAddress, body.validator);
+    if (explicitPayer && addressesEqual(explicitPayer, runtime?.owner) && normalizeAddressLike(runtime?.aaWallet || '')) {
+      return sendJobRouteError(
+        req,
+        res,
+        400,
+        'owner_eoa_submitted_for_aa_role',
+        'payer must use the consumer AA wallet, not the owner EOA',
+        {
+          field: 'payer',
+          expectedAa: normalizeText(runtime?.aaWallet || '')
+        }
+      );
+    }
+    if (
+      explicitPayer &&
+      addressesEqual(explicitPayer, ERC8183_REQUESTER_OWNER_ADDRESS) &&
+      normalizeAddressLike(ERC8183_REQUESTER_AA_ADDRESS)
+    ) {
+      return sendJobRouteError(
+        req,
+        res,
+        400,
+        'owner_eoa_submitted_for_aa_role',
+        'payer must use the requester AA wallet, not the owner EOA',
+        {
+          field: 'payer',
+          expectedAa: normalizeText(ERC8183_REQUESTER_AA_ADDRESS)
+        }
+      );
+    }
+    if (
+      explicitExecutor &&
+      addressesEqual(explicitExecutor, ERC8183_EXECUTOR_OWNER_ADDRESS) &&
+      normalizeAddressLike(ERC8183_EXECUTOR_AA_ADDRESS)
+    ) {
+      return sendJobRouteError(
+        req,
+        res,
+        400,
+        'owner_eoa_submitted_for_aa_role',
+        'executor must use the executor AA wallet, not the owner EOA',
+        {
+          field: 'executor',
+          expectedAa: normalizeText(ERC8183_EXECUTOR_AA_ADDRESS)
+        }
+      );
+    }
+    if (
+      explicitValidator &&
+      addressesEqual(explicitValidator, ERC8183_VALIDATOR_OWNER_ADDRESS) &&
+      normalizeAddressLike(ERC8183_VALIDATOR_AA_ADDRESS)
+    ) {
+      return sendJobRouteError(
+        req,
+        res,
+        400,
+        'owner_eoa_submitted_for_aa_role',
+        'validator must use the validator AA wallet, not the owner EOA',
+        {
+          field: 'validator',
+          expectedAa: normalizeText(ERC8183_VALIDATOR_AA_ADDRESS)
+        }
+      );
+    }
     const payer = pickAddress(
       body.requesterAddress,
       body.requester,
       body.payer,
-      runtime?.owner,
-      resolveSessionOwnerByAaWallet?.(runtime?.aaWallet || ''),
       runtime?.aaWallet,
-      ERC8183_REQUESTER_OWNER_ADDRESS,
       ERC8183_REQUESTER_AA_ADDRESS
     );
     const executor = pickAddress(
       body.executorAddress,
       body.executor,
-      ERC8183_EXECUTOR_OWNER_ADDRESS,
       ERC8183_EXECUTOR_AA_ADDRESS
     );
     const validator = pickAddress(
       body.validatorAddress,
       body.validator,
-      ERC8183_VALIDATOR_OWNER_ADDRESS,
       ERC8183_VALIDATOR_AA_ADDRESS
     );
     const escrowAmount = normalizeText(body.escrowAmount || budget);
@@ -186,6 +302,10 @@ export function registerJobMutationRoutes(ctx = {}) {
       paymentRequestId: '',
       paymentTxHash: '',
       signerMode: '',
+      executionMode: 'aa-native',
+      requesterRuntimeAddress: normalizeText(payer),
+      executorRuntimeAddress: normalizeText(executor),
+      validatorRuntimeAddress: normalizeText(validator),
       approvalId: '',
       approvalState: '',
       approvalReasonCode: '',
@@ -226,9 +346,13 @@ export function registerJobMutationRoutes(ctx = {}) {
       submitAnchorConfirmedAt: '',
       outcomeAnchorId: '',
       outcomeAnchorTxHash: '',
+      escrowFundUserOpHash: '',
       escrowFundTxHash: '',
+      escrowAcceptUserOpHash: '',
       escrowAcceptTxHash: '',
+      escrowSubmitUserOpHash: '',
       escrowSubmitTxHash: '',
+      escrowValidateUserOpHash: '',
       escrowValidateTxHash: '',
       resultRef: '',
       resultHash: '',
@@ -256,15 +380,10 @@ export function registerJobMutationRoutes(ctx = {}) {
         createAnchorTxHash: normalizeText(anchor?.anchorTxHash || job.createAnchorTxHash)
       };
     } catch (error) {
-      if (process.env.ERC8183_JOB_ANCHOR_REGISTRY) {
-        return sendJobRouteError(
-          req,
-          res,
-          500,
-          'job_create_anchor_failed',
-          normalizeText(error?.message || 'job create anchor failed')
-        );
-      }
+      logger.warn('job_create_anchor_skipped', {
+        jobId: normalizeText(job?.jobId),
+        error: normalizeText(error?.message || 'job create anchor failed')
+      });
     }
     upsertJobRecord(next);
 
@@ -282,7 +401,7 @@ export function registerJobMutationRoutes(ctx = {}) {
         jobId: normalizeText(req.params.jobId)
       });
     }
-    if (!['created', 'funding_pending', 'pending_approval'].includes(normalizeJobState(job.state))) {
+    if (!['created', 'funding_pending', 'funding_failed', 'pending_approval'].includes(normalizeJobState(job.state))) {
       return sendJobRouteError(
         req,
         res,
@@ -308,6 +427,41 @@ export function registerJobMutationRoutes(ctx = {}) {
     const approvalId = normalizeText(body.approvalId || body.approvalRequestId);
     const approvalToken = normalizeText(body.token || body.approvalToken);
     const nowMs = Date.now();
+    const fundIntentId = normalizeText(body.intentId || body.idempotencyKey || '');
+    const authorityResult = validateConsumerAuthority?.({
+      payer: normalizeText(job?.payer || ''),
+      provider: normalizeText(job?.provider || ''),
+      capability: normalizeText(job?.capability || ''),
+      recipient: normalizeText(job?.escrowAddress || ''),
+      amount: normalizeText(job?.escrowAmount || job?.budget || ''),
+      intentId: fundIntentId,
+      actionKind: 'job_fund',
+      referenceId: normalizeText(job?.jobId),
+      traceId: normalizeText(job?.traceId)
+    });
+    if (authorityResult && authorityResult.ok === false) {
+      return sendJobRouteError(
+        req,
+        res,
+        Number(authorityResult.statusCode || 403),
+        normalizeText(authorityResult.code || 'authority_validation_failed'),
+        normalizeText(authorityResult.reason || 'authority validation failed'),
+        buildAuthorityErrorPayload(authorityResult)
+      );
+    }
+    const fundAuthority =
+      authorityResult?.authority && typeof authorityResult.authority === 'object'
+        ? buildAuthoritySnapshot(authorityResult.authority)
+        : null;
+    const fundAuthorityPublic =
+      authorityResult?.authorityPublic && typeof authorityResult.authorityPublic === 'object'
+        ? buildAuthorityPublicSummary(authorityResult.authorityPublic)
+        : fundAuthority
+          ? buildAuthorityPublicSummary(fundAuthority)
+          : null;
+    const fundPolicySnapshotHash = normalizeText(
+      authorityResult?.policySnapshotHash || (fundAuthority ? buildPolicySnapshotHash(fundAuthority) : '')
+    );
 
     if (normalizeJobState(job.state) === 'pending_approval') {
       const approvalRecord = findApprovalRequest(approvalId || job.approvalId);
@@ -432,25 +586,53 @@ export function registerJobMutationRoutes(ctx = {}) {
     }
 
     const now = new Date().toISOString();
+    const fundingRef = createTraceId('job_fund');
+    const paymentRequestId = normalizeText(job?.paymentRequestId || createTraceId('job_payment'));
     let next = {
       ...job,
       state: 'funded',
-      fundingRef: createTraceId('job_fund'),
-      paymentRequestId: normalizeText(job?.paymentRequestId || createTraceId('job_payment')),
+      fundIntentId,
+      fundAuthority,
+      fundAuthorityPublic,
+      fundPolicySnapshotHash,
+      fundingRef,
+      paymentRequestId,
       paymentTxHash: '',
-      signerMode: 'backend-signer-escrow',
+      signerMode: 'aa-runtime-escrow',
+      executionMode: 'aa-native',
       approvalState: job.approvalId ? 'completed' : job.approvalState,
       summary: 'Job funds locked in escrow.',
       error: '',
       fundedAt: now,
       updatedAt: now
     };
-    try {
+
+    const asyncMode = body.async === true || normalizeText(req.query?.async) === 'true';
+
+    async function executeFundChainWork() {
+      const intentState = beginConsumerIntent?.({
+        intentId: fundIntentId,
+        payer: normalizeText(job?.payer || ''),
+        provider: normalizeText(job?.provider || ''),
+        capability: normalizeText(job?.capability || ''),
+        recipient: normalizeText(job?.escrowAddress || ''),
+        amount: normalizeText(job?.escrowAmount || job?.budget || ''),
+        actionKind: 'job_fund',
+        referenceId: normalizeText(job?.jobId),
+        traceId: normalizeText(job?.traceId)
+      });
+      if (intentState && intentState.ok === false) {
+        throw Object.assign(new Error(normalizeText(intentState.reason || 'intent conflict')), {
+          code: normalizeText(intentState.code || 'intent_conflict'),
+          intentConflict: true,
+          intentState
+        });
+      }
       const escrow = await lockEscrowFunds?.({
         jobId: next.jobId,
-        requester: pickAddress(next.payer, ERC8183_REQUESTER_OWNER_ADDRESS, ERC8183_REQUESTER_AA_ADDRESS),
-        executor: pickAddress(next.executor, ERC8183_EXECUTOR_OWNER_ADDRESS, ERC8183_EXECUTOR_AA_ADDRESS),
-        validator: pickAddress(next.validator, ERC8183_VALIDATOR_OWNER_ADDRESS, ERC8183_VALIDATOR_AA_ADDRESS),
+        requester: next.payer,
+        executor: next.executor,
+        validator: next.validator,
         amount: next.escrowAmount,
         deadlineAt: isoToUnixSeconds(next.expiresAt),
         executorStakeAmount: next.executorStakeAmount
@@ -458,24 +640,36 @@ export function registerJobMutationRoutes(ctx = {}) {
       next = applyEscrowOutcome(
         {
           ...next,
-          signerMode: escrow?.configured ? 'backend-signer-escrow' : 'degraded-local',
+          signerMode: escrow?.configured ? 'aa-runtime-escrow' : 'degraded-local',
+          executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+          requesterRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.requesterRuntimeAddress || next.payer),
+          executorRuntimeAddress: normalizeText(next.executorRuntimeAddress || next.executor),
+          validatorRuntimeAddress: normalizeText(next.validatorRuntimeAddress || next.validator),
           summary: escrow?.configured ? 'Job funds locked in escrow.' : 'Job funded locally. Escrow not configured.',
+          escrowFundUserOpHash: normalizeText(escrow?.userOpHash),
           escrowFundTxHash: normalizeText(escrow?.txHash),
           paymentTxHash: normalizeText(escrow?.txHash || next.paymentTxHash)
         },
         escrow,
         escrow?.configured ? 'funded' : 'not_configured'
       );
-      const anchor = await anchorJobLifecycle(next, 'funded', {
-        referenceId: normalizeText(next?.escrowFundTxHash || next?.fundingRef || next?.paymentRequestId),
-        paymentTxHash: normalizeText(next?.escrowFundTxHash || next?.paymentTxHash)
-      });
-      next = {
-        ...next,
-        anchorRegistry: normalizeText(anchor?.registryAddress || next.anchorRegistry),
-        fundingAnchorId: normalizeText(anchor?.anchorId || next.fundingAnchorId),
-        fundingAnchorTxHash: normalizeText(anchor?.anchorTxHash || next.fundingAnchorTxHash)
-      };
+      try {
+        const anchor = await anchorJobLifecycle(next, 'funded', {
+          referenceId: normalizeText(next?.escrowFundTxHash || next?.fundingRef || next?.paymentRequestId),
+          paymentTxHash: normalizeText(next?.escrowFundTxHash || next?.paymentTxHash)
+        });
+        next = {
+          ...next,
+          anchorRegistry: normalizeText(anchor?.registryAddress || next.anchorRegistry),
+          fundingAnchorId: normalizeText(anchor?.anchorId || next.fundingAnchorId),
+          fundingAnchorTxHash: normalizeText(anchor?.anchorTxHash || next.fundingAnchorTxHash)
+        };
+      } catch (anchorError) {
+        logger.warn('fund_anchor_skipped', {
+          jobId: normalizeText(next?.jobId),
+          error: normalizeText(anchorError?.message || 'fund anchor failed')
+        });
+      }
       if (normalizeText(job?.approvalId)) {
         updateApprovalRequest(normalizeText(job.approvalId), {
           status: 'completed',
@@ -487,7 +681,73 @@ export function registerJobMutationRoutes(ctx = {}) {
         });
         next = { ...next, approvalState: 'completed' };
       }
+      finalizeConsumerIntent?.(fundIntentId, {
+        status: 'completed',
+        resultRef: normalizeText(next.jobId),
+        requestId: normalizeText(next.paymentRequestId),
+        traceId: normalizeText(next.traceId)
+      });
+      next = { ...next, state: 'funded' };
+      upsertJobRecord(next);
+      return next;
+    }
+
+    if (asyncMode) {
+      const pendingJob = {
+        ...next,
+        state: 'funding_pending',
+        summary: 'Job funding submitted. Chain confirmation in progress.',
+        fundedAt: '',
+        updatedAt: now
+      };
+      upsertJobRecord(pendingJob);
+
+      executeFundChainWork().catch((error) => {
+        logger.error('async_fund_failed', {
+          jobId: normalizeText(job?.jobId),
+          error: normalizeText(error?.message || 'async fund failed')
+        });
+        finalizeConsumerIntent?.(fundIntentId, {
+          status: 'failed',
+          resultRef: normalizeText(job?.jobId),
+          traceId: normalizeText(job?.traceId),
+          failureReason: normalizeText(error?.message || 'async fund failed')
+        });
+        if (normalizeText(job?.approvalId)) {
+          updateApprovalRequest(normalizeText(job.approvalId), {
+            status: normalizeText(job?.approvalState || 'approved') || 'approved',
+            updatedAt: Date.now(),
+            resumeStatus: 'failed',
+            resumeError: normalizeText(error?.message || 'async fund failed')
+          });
+        }
+        const failedJob = {
+          ...pendingJob,
+          state: 'funding_failed',
+          summary: normalizeText(error?.message || 'Job funding failed.'),
+          error: normalizeText(error?.message || 'job fund failed'),
+          updatedAt: new Date().toISOString()
+        };
+        upsertJobRecord(failedJob);
+      });
+
+      return res.status(202).json({
+        ok: true,
+        traceId: req.traceId || '',
+        state: 'funding_pending',
+        job: buildJobView(pendingJob)
+      });
+    }
+
+    try {
+      await executeFundChainWork();
     } catch (error) {
+      finalizeConsumerIntent?.(fundIntentId, {
+        status: 'failed',
+        resultRef: normalizeText(job?.jobId),
+        traceId: normalizeText(job?.traceId),
+        failureReason: normalizeText(error?.message || 'job fund failed')
+      });
       if (normalizeText(job?.approvalId)) {
         updateApprovalRequest(normalizeText(job.approvalId), {
           status: normalizeText(job?.approvalState || 'approved') || 'approved',
@@ -518,10 +778,17 @@ export function registerJobMutationContinuation(ctx = {}) {
     ERC8183_VALIDATOR_AA_ADDRESS,
     ERC8183_VALIDATOR_OWNER_ADDRESS,
     digestStableObject,
+    beginConsumerIntent,
+    buildAuthorityPublicSummary,
+    buildAuthoritySnapshot,
+    buildPolicySnapshotHash,
+    finalizeConsumerIntent,
     getInternalAgentApiKey,
+    findConsumerIntent,
     requireRole,
     submitEscrowResult,
     upsertJobRecord,
+    validateConsumerAuthority,
     validateEscrowJob,
     acceptEscrowJob
   } = deps;
@@ -541,6 +808,26 @@ export function registerJobMutationContinuation(ctx = {}) {
     pickAddress,
     selectService
   } = helpers;
+
+  function buildAuthorityErrorPayload(result = {}) {
+    return {
+      ok: false,
+      error: normalizeText(result?.code || 'authority_validation_failed'),
+      reason: normalizeText(result?.reason || 'authority validation failed'),
+      authority: result?.authorityPublic || null,
+      policySnapshotHash: normalizeText(result?.policySnapshotHash || ''),
+      detail: detailObject(result?.detail)
+    };
+  }
+
+  function buildIntentConflictDetail(result = {}) {
+    const existing = result?.existing && typeof result.existing === 'object' ? result.existing : null;
+    const existingJob = existing?.resultRef ? findJob(normalizeText(existing.resultRef)) : null;
+    return {
+      intent: existing,
+      job: existingJob ? buildJobView(existingJob) : null
+    };
+  }
 
   app.post('/api/jobs/:jobId/accept', requireRole('agent'), async (req, res) => {
     const job = materializeJob(findJob(req.params.jobId));
@@ -567,8 +854,19 @@ export function registerJobMutationContinuation(ctx = {}) {
     let next = { ...job, state: 'accepted', summary: 'Job accepted by executor.', error: '', acceptedAt: now, updatedAt: now };
 
     try {
-      const escrow = await acceptEscrowJob?.({ jobId: next.jobId });
-      next = applyEscrowOutcome({ ...next, escrowAcceptTxHash: normalizeText(escrow?.txHash) }, escrow, escrow?.configured ? 'accepted' : 'not_configured');
+      const escrow = await acceptEscrowJob?.({ jobId: next.jobId, executor: next.executor });
+      next = applyEscrowOutcome(
+        {
+          ...next,
+          signerMode: escrow?.configured ? 'aa-runtime-escrow' : normalizeText(next.signerMode || 'aa-runtime-escrow'),
+            executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+            executorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.executorRuntimeAddress || next.executor),
+            escrowAcceptUserOpHash: normalizeText(escrow?.userOpHash),
+            escrowAcceptTxHash: normalizeText(escrow?.txHash)
+          },
+        escrow,
+        escrow?.configured ? 'accepted' : 'not_configured'
+      );
       const anchor = await anchorJobLifecycle(next, 'accepted', {
         referenceId: normalizeText(next?.escrowAcceptTxHash || next?.jobId),
         paymentTxHash: normalizeText(next?.escrowAcceptTxHash || next?.paymentTxHash)
@@ -616,8 +914,19 @@ export function registerJobMutationContinuation(ctx = {}) {
     }
 
     const input = req.body?.input && typeof req.body.input === 'object' && !Array.isArray(req.body.input) ? req.body.input : job.input || {};
-    const service = selectService(job.provider, job.capability);
-    if (!service) {
+    const submittedDelivery = detailObject(req.body?.delivery);
+    const hasDirectDelivery = Object.keys(submittedDelivery).length > 0;
+    const submitIntentId = normalizeText(req.body?.intentId || req.body?.idempotencyKey || '');
+    const directDeliveryValidation = hasDirectDelivery ? validateBtcTradingPlanV1(submittedDelivery) : null;
+    if (hasDirectDelivery && !directDeliveryValidation?.ok) {
+      return sendJobRouteError(req, res, 400, 'invalid_delivery_payload', 'delivery payload did not match ktrace-btc-trading-plan-v1', {
+        jobId: normalizeText(job.jobId),
+        schema: normalizeText(submittedDelivery?.schema || ''),
+        errors: Array.isArray(directDeliveryValidation?.errors) ? directDeliveryValidation.errors : []
+      });
+    }
+    const service = hasDirectDelivery ? null : selectService(job.provider, job.capability);
+    if (!hasDirectDelivery && !service) {
       return sendJobRouteError(
         req,
         res,
@@ -636,10 +945,220 @@ export function registerJobMutationContinuation(ctx = {}) {
     const headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
     if (internalApiKey) headers['x-api-key'] = internalApiKey;
 
+    const authorityResult = hasDirectDelivery
+      ? null
+      : validateConsumerAuthority?.({
+          payer: normalizeText(job?.payer || ''),
+          provider: normalizeText(service?.providerAgentId || job?.provider || ''),
+          capability: normalizeText(service?.id || service?.action || job?.capability || ''),
+          recipient: normalizeText(service?.recipient || ''),
+          amount: normalizeText(service?.price || ''),
+          intentId: submitIntentId,
+          actionKind: 'job_submit',
+          referenceId: normalizeText(job?.jobId),
+          traceId: normalizeText(job?.traceId)
+        });
+    if (authorityResult && authorityResult.ok === false) {
+      return sendJobRouteError(
+        req,
+        res,
+        Number(authorityResult.statusCode || 403),
+        normalizeText(authorityResult.code || 'authority_validation_failed'),
+        normalizeText(authorityResult.reason || 'authority validation failed'),
+        buildAuthorityErrorPayload(authorityResult)
+      );
+    }
+    const submitAuthority =
+      authorityResult?.authority && typeof authorityResult.authority === 'object'
+        ? buildAuthoritySnapshot(authorityResult.authority)
+        : null;
+    const submitAuthorityPublic =
+      authorityResult?.authorityPublic && typeof authorityResult.authorityPublic === 'object'
+        ? buildAuthorityPublicSummary(authorityResult.authorityPublic)
+        : submitAuthority
+          ? buildAuthorityPublicSummary(submitAuthority)
+          : null;
+    const submitPolicySnapshotHash = normalizeText(
+      authorityResult?.policySnapshotHash || (submitAuthority ? buildPolicySnapshotHash(submitAuthority) : '')
+    );
+    const submitExecutionPatch = {
+      submitIntentId,
+      submitAuthority,
+      submitAuthorityPublic,
+      submitPolicySnapshotHash
+    };
     const invokeBody = { ...input, traceId: job.traceId, payer: job.payer };
     const anchorRequired = Boolean(process.env.ERC8183_JOB_ANCHOR_REGISTRY);
 
+    if (hasDirectDelivery) {
+      const directEvidence = normalizeBtcTradingPlanEvidence(submittedDelivery, {
+        primaryTraceId: normalizeText(req.body?.primaryTraceId || job.traceId),
+        primaryEvidenceRef: normalizeText(req.body?.evidenceRef || job.evidenceRef),
+        paymentRequestId: normalizeText(req.body?.paymentRequestId || job.paymentRequestId),
+        paymentTxHash: normalizeText(req.body?.paymentTxHash || job.paymentTxHash),
+        dataSourceTraceIds: normalizeTextList(req.body?.dataSourceTraceIds),
+        receiptRefs: normalizeTextList(req.body?.receiptRefs),
+        deliveredAt: normalizeText(req.body?.deliveredAt)
+      });
+      const now = new Date().toISOString();
+      let next = {
+        ...job,
+        ...submitExecutionPatch,
+        state: 'accepted',
+        traceId: directEvidence.primaryTraceId || job.traceId,
+        submissionRef: `/api/jobs/${encodeURIComponent(job.jobId)}`,
+        summary: normalizeText(req.body?.summary || submittedDelivery?.analysis?.summary || 'Job submitted for validation.'),
+        error: '',
+        updatedAt: now,
+        paymentRequestId: directEvidence.paymentRequestId || job.paymentRequestId,
+        paymentTxHash: directEvidence.paymentTxHash || job.paymentTxHash,
+        receiptRef:
+          directEvidence.receiptRefs[0] ||
+          normalizeText(job.receiptRef) ||
+          (directEvidence.paymentRequestId ? `/api/receipt/${encodeURIComponent(directEvidence.paymentRequestId)}` : ''),
+        evidenceRef: directEvidence.primaryEvidenceRef || normalizeText(job.evidenceRef),
+        resultRef: normalizeText(req.body?.resultRef || '') || `/api/jobs/${encodeURIComponent(job.jobId)}/audit`,
+        resultHash:
+          normalizeText(req.body?.resultHash || '') ||
+          (digestStableObject?.({
+            scope: 'ktrace-job-direct-delivery-v1',
+            jobId: job.jobId,
+            traceId: directEvidence.primaryTraceId || job.traceId,
+            delivery: submittedDelivery
+          })?.value || ''),
+        submissionHash:
+          digestStableObject?.({
+            scope: 'ktrace-job-submission-v4',
+            jobId: job.jobId,
+            traceId: directEvidence.primaryTraceId || job.traceId,
+            delivery: submittedDelivery,
+            evidence: directEvidence
+          })?.value || '',
+        delivery: submittedDelivery,
+        deliverySchema: normalizeText(submittedDelivery?.schema || ''),
+        deliverySchemaConformant: Boolean(directDeliveryValidation?.conformant),
+        deliverySchemaErrors: Array.isArray(directDeliveryValidation?.errors) ? directDeliveryValidation.errors : [],
+        deliveryEvidence: directEvidence,
+        input
+      };
+
+      if (anchorRequired && !normalizeText(next?.submitAnchorTxHash)) {
+        try {
+          const anchor = await anchorJobLifecycle(next, 'submitted', {
+            referenceId: normalizeText(next?.resultRef || next?.submissionRef || next?.jobId),
+            paymentTxHash: normalizeText(next?.paymentTxHash)
+          });
+          if (!anchor?.configured || anchor?.published !== true) {
+            throw new Error('trace anchor required before submit');
+          }
+          next = {
+            ...next,
+            anchorRegistry: normalizeText(anchor?.registryAddress || next.anchorRegistry),
+            submitAnchorId: normalizeText(anchor?.anchorId || next.submitAnchorId),
+            submitAnchorTxHash: normalizeText(anchor?.anchorTxHash || next.submitAnchorTxHash),
+            submitAnchorConfirmedAt: now,
+            updatedAt: new Date().toISOString()
+          };
+          upsertJobRecord(next);
+        } catch (error) {
+          const failed = {
+            ...next,
+            state: 'accepted',
+            error: normalizeText(error?.message || 'trace anchor publish failed'),
+            summary: normalizeText(error?.message || 'trace anchor required before submit'),
+            updatedAt: new Date().toISOString()
+          };
+          upsertJobRecord(failed);
+          return sendJobRouteError(
+            req,
+            res,
+            500,
+            anchorRequired ? 'trace_anchor_publish_failed' : 'job_submit_failed',
+            failed.error,
+            {
+              job: buildJobView(failed)
+            }
+          );
+        }
+      }
+
+      try {
+        const escrow = await submitEscrowResult?.({
+          jobId: next.jobId,
+          resultHash: next.resultHash,
+          executor: next.executor
+        });
+        next = applyEscrowOutcome(
+          {
+            ...next,
+            signerMode: escrow?.configured ? 'aa-runtime-escrow' : normalizeText(next.signerMode || 'aa-runtime-escrow'),
+            executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+            executorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.executorRuntimeAddress || next.executor),
+              state: 'submitted',
+              summary: escrow?.configured ? next.summary : `${next.summary} Escrow not configured.`,
+              escrowSubmitUserOpHash: normalizeText(escrow?.userOpHash),
+              escrowSubmitTxHash: normalizeText(escrow?.txHash),
+              submittedAt: now,
+              updatedAt: new Date().toISOString()
+          },
+          escrow,
+          escrow?.configured ? 'submitted' : 'not_configured'
+        );
+      } catch (error) {
+        const errorCode =
+          normalizeText(error?.code) === 'trace_anchor_required'
+            ? 'trace_anchor_required_before_submit'
+            : 'job_submit_failed';
+        const reason =
+          normalizeText(error?.message || '') === 'trace_anchor_required'
+            ? 'trace anchor required before submit'
+            : normalizeText(error?.message || 'job submit failed');
+        const failed = {
+          ...next,
+          state: 'accepted',
+          error: reason,
+          summary:
+            errorCode === 'trace_anchor_required_before_submit'
+              ? 'trace anchor required before submit'
+              : reason || 'trace anchor published but escrow submit failed',
+          updatedAt: new Date().toISOString()
+        };
+        upsertJobRecord(failed);
+        return sendJobRouteError(req, res, 500, errorCode, failed.error, {
+          job: buildJobView(failed)
+        });
+      }
+
+      upsertJobRecord(next);
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        job: buildJobView(next)
+      });
+    }
+
     try {
+      const intentState = beginConsumerIntent?.({
+        intentId: submitIntentId,
+        payer: normalizeText(job?.payer || ''),
+        provider: normalizeText(service?.providerAgentId || job?.provider || ''),
+        capability: normalizeText(service?.id || service?.action || job?.capability || ''),
+        recipient: normalizeText(service?.recipient || ''),
+        amount: normalizeText(service?.price || ''),
+        actionKind: 'job_submit',
+        referenceId: normalizeText(job?.jobId),
+        traceId: normalizeText(job?.traceId)
+      });
+      if (intentState && intentState.ok === false) {
+        return sendJobRouteError(
+          req,
+          res,
+          409,
+          normalizeText(intentState.code || 'intent_conflict'),
+          normalizeText(intentState.reason || 'intent conflict'),
+          buildIntentConflictDetail(intentState)
+        );
+      }
       const invokeResult = await invokeServiceWithRetry(normalizeText(service.id), headers, invokeBody);
       const response = { ok: invokeResult.ok, status: invokeResult.status };
       const payload = invokeResult.payload || {};
@@ -662,7 +1181,15 @@ export function registerJobMutationContinuation(ctx = {}) {
           '');
 
       if (!response.ok) {
-        const failed = { ...job, state: 'accepted', error: normalizeText(payload?.reason || payload?.error || 'job submit failed'), summary: normalizeText(payload?.reason || payload?.error || 'job submit failed'), updatedAt: new Date().toISOString(), input };
+        const failed = {
+          ...job,
+          ...submitExecutionPatch,
+          state: 'accepted',
+          error: normalizeText(payload?.reason || payload?.error || 'job submit failed'),
+          summary: normalizeText(payload?.reason || payload?.error || 'job submit failed'),
+          updatedAt: new Date().toISOString(),
+          input
+        };
         upsertJobRecord(failed);
         return sendJobRouteError(req, res, response.status, 'job_submit_failed', failed.error, {
           job: buildJobView(failed),
@@ -674,11 +1201,16 @@ export function registerJobMutationContinuation(ctx = {}) {
       const now = new Date().toISOString();
       let next = {
         ...job,
+        ...submitExecutionPatch,
         traceId: traceId || job.traceId,
         state: 'accepted',
         provider: normalizeText(service.providerAgentId || job.provider),
         capability: normalizeText(service.action || job.capability),
         serviceId: normalizeText(service.id),
+        submitIntentId,
+        submitAuthority,
+        submitAuthorityPublic,
+        submitPolicySnapshotHash,
         submissionRef: `/api/jobs/${encodeURIComponent(job.jobId)}`,
         submissionHash:
           digestStableObject?.({
@@ -746,15 +1278,23 @@ export function registerJobMutationContinuation(ctx = {}) {
       }
 
       try {
-        const escrow = await submitEscrowResult?.({ jobId: next.jobId, resultHash: next.resultHash });
+        const escrow = await submitEscrowResult?.({
+          jobId: next.jobId,
+          resultHash: next.resultHash,
+          executor: next.executor
+        });
         next = applyEscrowOutcome(
           {
             ...next,
-            state: 'submitted',
-            summary: escrow?.configured ? summary : `${summary} Escrow not configured.`,
-            escrowSubmitTxHash: normalizeText(escrow?.txHash),
-            submittedAt: now,
-            updatedAt: new Date().toISOString()
+            signerMode: escrow?.configured ? 'aa-runtime-escrow' : normalizeText(next.signerMode || 'aa-runtime-escrow'),
+            executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+            executorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.executorRuntimeAddress || next.executor),
+              state: 'submitted',
+              summary: escrow?.configured ? summary : `${summary} Escrow not configured.`,
+              escrowSubmitUserOpHash: normalizeText(escrow?.userOpHash),
+              escrowSubmitTxHash: normalizeText(escrow?.txHash),
+              submittedAt: now,
+              updatedAt: new Date().toISOString()
           },
           escrow,
           escrow?.configured ? 'submitted' : 'not_configured'
@@ -787,10 +1327,29 @@ export function registerJobMutationContinuation(ctx = {}) {
       }
 
       upsertJobRecord(next);
+      finalizeConsumerIntent?.(submitIntentId, {
+        status: 'completed',
+        resultRef: normalizeText(next.jobId),
+        requestId: normalizeText(next.paymentRequestId),
+        traceId: normalizeText(next.traceId)
+      });
 
       return res.status(response.status).json({ ok: true, traceId: req.traceId || '', job: buildJobView(next), workflow: workflow && typeof workflow === 'object' ? workflow : null, receipt: payload?.receipt || null });
     } catch (error) {
-      const next = { ...job, state: 'accepted', error: normalizeText(error?.message || 'job submit failed'), summary: normalizeText(error?.message || 'job submit failed'), updatedAt: new Date().toISOString() };
+      finalizeConsumerIntent?.(submitIntentId, {
+        status: 'failed',
+        resultRef: normalizeText(job?.jobId),
+        traceId: normalizeText(job?.traceId),
+        failureReason: normalizeText(error?.message || 'job submit failed')
+      });
+      const next = {
+        ...job,
+        ...submitExecutionPatch,
+        state: 'accepted',
+        error: normalizeText(error?.message || 'job submit failed'),
+        summary: normalizeText(error?.message || 'job submit failed'),
+        updatedAt: new Date().toISOString()
+      };
       upsertJobRecord(next);
       return sendJobRouteError(req, res, 500, 'job_submit_failed', next.error, {
         job: buildJobView(next)
@@ -825,8 +1384,20 @@ export function registerJobMutationContinuation(ctx = {}) {
       return sendJobRouteError(req, res, 400, 'validation_decision_required', 'approved must be true or false');
     }
 
-    const validatorAddress = pickAddress(body.validatorAddress, body.validator, ERC8183_VALIDATOR_OWNER_ADDRESS, ERC8183_VALIDATOR_AA_ADDRESS);
-    if (!validatorAddress || validatorAddress !== pickAddress(job.validator, ERC8183_VALIDATOR_OWNER_ADDRESS, ERC8183_VALIDATOR_AA_ADDRESS)) {
+    const explicitValidatorAddress = firstExplicitAddress(body.validatorAddress, body.validator);
+    if (
+      explicitValidatorAddress &&
+      addressesEqual(explicitValidatorAddress, ERC8183_VALIDATOR_OWNER_ADDRESS) &&
+      normalizeAddressLike(ERC8183_VALIDATOR_AA_ADDRESS)
+    ) {
+      return sendJobRouteError(req, res, 400, 'owner_eoa_submitted_for_aa_role', 'validatorAddress must use the validator AA wallet, not the owner EOA', {
+        jobId: normalizeText(job.jobId),
+        expectedAa: normalizeText(ERC8183_VALIDATOR_AA_ADDRESS)
+      });
+    }
+
+    const validatorAddress = pickAddress(body.validatorAddress, body.validator, ERC8183_VALIDATOR_AA_ADDRESS);
+    if (!validatorAddress || !addressesEqual(validatorAddress, job.validator)) {
       return sendJobRouteError(req, res, 403, 'validator_mismatch', 'validatorAddress must match the job validator', {
         jobId: normalizeText(job.jobId)
       });
@@ -848,8 +1419,19 @@ export function registerJobMutationContinuation(ctx = {}) {
     };
 
     try {
-      const escrow = await validateEscrowJob?.({ jobId: next.jobId, approved });
-      next = applyEscrowOutcome({ ...next, escrowValidateTxHash: normalizeText(escrow?.txHash) }, escrow, approved ? 'completed' : 'rejected');
+      const escrow = await validateEscrowJob?.({ jobId: next.jobId, approved, validator: next.validator });
+      next = applyEscrowOutcome(
+        {
+          ...next,
+          signerMode: escrow?.configured ? 'aa-runtime-escrow' : normalizeText(next.signerMode || 'aa-runtime-escrow'),
+            executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+            validatorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.validatorRuntimeAddress || next.validator),
+            escrowValidateUserOpHash: normalizeText(escrow?.userOpHash),
+            escrowValidateTxHash: normalizeText(escrow?.txHash)
+          },
+        escrow,
+        approved ? 'completed' : 'rejected'
+      );
       const trust = appendJobTrustSignals(next, { outcome: next.state, evaluator: next.evaluator, evaluatorRef: next.evaluatorRef });
       next = { ...next, validationId: trust.validationId || next.validationId };
       const anchor = await anchorJobLifecycle(next, approved ? 'completed' : 'rejected', {

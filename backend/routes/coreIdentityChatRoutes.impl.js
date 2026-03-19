@@ -5,7 +5,10 @@ import { registerCoreIdentitySessionRoutes } from './coreIdentitySessionRoutes.j
 
 export function registerCoreIdentityChatRoutes(app, deps) {
   const {
+    BACKEND_ENTRYPOINT_ADDRESS,
     BACKEND_RPC_URL,
+    KITE_AA_ACCOUNT_IMPLEMENTATION,
+    KITE_AA_FACTORY_ADDRESS,
     MERCHANT_ADDRESS,
     POLICY_DAILY_LIMIT_DEFAULT,
     POLICY_MAX_PER_TX_DEFAULT,
@@ -181,14 +184,56 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     ].join('\n');
   }
 
+  function verifySessionAuthorizationSignature({ payload = {}, userEoa = '', signature = '' } = {}) {
+    const normalizedUserEoa = normalizeSessionGrantAddress(userEoa || '');
+    const normalizedSignature = normalizeSessionGrantText(signature);
+    if (!normalizedUserEoa || !normalizedSignature) {
+      return {
+        ok: false,
+        recoveredAddress: ''
+      };
+    }
+    const messages = [
+      createSessionAuthorizationMessage({ payload, userEoa: normalizedUserEoa }),
+      buildSessionGrantMessage(payload)
+    ];
+    for (const message of messages) {
+      let recoveredAddress = '';
+      try {
+        recoveredAddress = normalizeAddress(ethers.verifyMessage(message, normalizedSignature));
+      } catch {
+        recoveredAddress = '';
+      }
+      if (recoveredAddress && recoveredAddress === normalizedUserEoa) {
+        return {
+          ok: true,
+          recoveredAddress,
+          message
+        };
+      }
+    }
+    return {
+      ok: false,
+      recoveredAddress: ''
+    };
+  }
+
   function hashSessionGrantPayload(payloadInput = {}) {
     const payload = normalizeSessionGrantPayload(payloadInput);
     return ethers.keccak256(ethers.toUtf8Bytes(buildSessionGrantMessage(payload)));
   }
 
   function buildSessionRuntimePayload(runtime = {}) {
+    const runtimeFactoryAddress = normalizeAddress(runtime.accountFactoryAddress || '');
+    const activeFactoryAddress = normalizeAddress(KITE_AA_FACTORY_ADDRESS || '');
+    const activeImplementationAddress = normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || '');
     return {
       ...runtime,
+      activeAccountFactoryAddress: activeFactoryAddress,
+      activeAccountImplementationAddress: activeImplementationAddress,
+      isDefaultFactoryRuntime: Boolean(
+        runtimeFactoryAddress && activeFactoryAddress && runtimeFactoryAddress === activeFactoryAddress
+      ),
       sessionPrivateKey: undefined,
       sessionPrivateKeyMasked: maskSecret(runtime.sessionPrivateKey),
       hasSessionPrivateKey: Boolean(runtime.sessionPrivateKey),
@@ -961,18 +1006,17 @@ export function registerCoreIdentityChatRoutes(app, deps) {
         error.code = 'session_authorize_signature_required';
         throw error;
       }
-      let recoveredAddress = '';
-      try {
-        recoveredAddress = normalizeAddress(ethers.verifyMessage(buildSessionGrantMessage(payload), userSignature));
-      } catch {
-        recoveredAddress = '';
-      }
-      if (!recoveredAddress || recoveredAddress !== userEoa) {
+      const signatureCheck = verifySessionAuthorizationSignature({
+        payload,
+        userEoa,
+        signature: userSignature
+      });
+      if (!signatureCheck.ok) {
         const error = new Error('userSignature does not match the supplied userEoa.');
         error.statusCode = 400;
         error.code = 'session_authorize_signature_invalid';
         error.data = {
-          recoveredAddress,
+          recoveredAddress: signatureCheck.recoveredAddress,
           userEoa,
           payloadHash: authorizationPayloadHash
         };
@@ -1015,6 +1059,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
         ...fallbackRuntime,
         ...verifiedRuntime,
         tokenAddress: payload.tokenAddress,
+        expiresAt: Number(payload.expiresAt || 0),
         authorizedBy: userEoa,
         authorizedAt,
         authorizationMode: 'user_grant_self_custodial',
@@ -1032,6 +1077,24 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       ensured = { created: false, reused: true, runtime: nextRuntime };
       authorizationMode = 'user_grant_self_custodial';
     } else {
+      if (userSignature) {
+        const signatureCheck = verifySessionAuthorizationSignature({
+          payload,
+          userEoa,
+          signature: userSignature
+        });
+        if (!signatureCheck.ok) {
+          const error = new Error('userSignature does not match the supplied userEoa.');
+          error.statusCode = 400;
+          error.code = 'session_authorize_signature_invalid';
+          error.data = {
+            recoveredAddress: signatureCheck.recoveredAddress,
+            userEoa,
+            payloadHash: authorizationPayloadHash
+          };
+          throw error;
+        }
+      }
       ensured = await ensureBackendSessionRuntime({
         owner: normalizeSessionGrantAddress(body?.owner || fallbackRuntime?.owner || userEoa),
         singleLimit: payload.singleLimit,
@@ -1043,12 +1106,13 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       nextRuntime = writeSessionRuntime({
         ...ensured.runtime,
         tokenAddress: payload.tokenAddress,
+        expiresAt: Number(payload.expiresAt || 0),
         authorizedBy: userEoa,
         authorizedAt,
         authorizationMode: 'backend_managed_session',
         authorizationPayload: payload,
         authorizationPayloadHash,
-        authorizationSignature: '',
+        authorizationSignature: userSignature,
         authorizationNonce: payload.nonce,
         authorizationExpiresAt: payload.expiresAt,
         authorizedAgentId: payload.agentId,
@@ -1296,13 +1360,13 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       throw new Error(`AA owner mismatch. onchain=${onchainOwner}, supplied=${resolvedOwner}`);
     }
 
+    let aaVersion = '';
+    try {
+      aaVersion = String(await withRpcReadRetry(() => account.version())).trim();
+    } catch {
+      aaVersion = '';
+    }
     if (KITE_REQUIRE_AA_V2) {
-      let aaVersion = '';
-      try {
-        aaVersion = String(await withRpcReadRetry(() => account.version())).trim();
-      } catch {
-        aaVersion = '';
-      }
       if (aaVersion !== AA_V2_VERSION_TAG) {
         throw new Error(
           `AA must be upgraded to V2 for session-userop payments. required=${AA_V2_VERSION_TAG}, current=${aaVersion || 'unknown_or_legacy'}`
@@ -1320,6 +1384,14 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       runtime.dailyLimit || POLICY_DAILY_LIMIT_DEFAULT,
       'dailyLimit'
     );
+    const normalizedTokenAddress = normalizeAddress(
+      payload?.tokenAddress || runtime.tokenAddress || SETTLEMENT_TOKEN || ''
+    );
+    if (!normalizedTokenAddress || !ethers.isAddress(normalizedTokenAddress)) {
+      throw new Error(
+        `A valid tokenAddress is required for self-custodial session import. got=${payload?.tokenAddress || runtime.tokenAddress || SETTLEMENT_TOKEN || ''}`
+      );
+    }
     const gatewayRecipient = normalizeAddress(
       runtime.gatewayRecipient || payload?.gatewayRecipient || MERCHANT_ADDRESS || ''
     );
@@ -1330,6 +1402,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     return {
       aaWallet,
       owner: resolvedOwner,
+      tokenAddress: normalizedTokenAddress,
       sessionAddress,
       sessionPrivateKey: hasSessionPrivateKey ? sessionPrivateKey : '',
       sessionId,
@@ -1338,8 +1411,224 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       maxPerTx: maxPerTx.numeric,
       dailyLimit: dailyLimit.numeric,
       gatewayRecipient,
+      accountFactoryAddress: normalizeAddress(runtime.accountFactoryAddress || KITE_AA_FACTORY_ADDRESS || ''),
+      accountImplementationAddress: normalizeAddress(
+        runtime.accountImplementationAddress || KITE_AA_ACCOUNT_IMPLEMENTATION || ''
+      ),
+      accountVersion: aaVersion || 'unknown_or_legacy',
       source: String(runtime.source || (hasSessionPrivateKey ? 'api-v1-session-authorize-external' : 'api-v1-session-authorize-agent-first')).trim(),
       updatedAt: Date.now()
+    };
+  }
+
+  async function prepareSelfServeSessionRuntime({
+    owner = '',
+    singleLimit = '',
+    dailyLimit = '',
+    tokenAddress = '',
+    gatewayRecipient = ''
+  } = {}) {
+    const provider = backendSigner?.provider || new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+    const requestedOwner = normalizeAddress(owner || '');
+    if (!ethers.isAddress(requestedOwner)) {
+      throw new Error('A valid owner address is required for self-serve session setup.');
+    }
+
+    const saltRaw = String(process.env.KITECLAW_AA_SALT ?? '0').trim();
+    let salt = 0n;
+    try {
+      salt = BigInt(saltRaw || '0');
+    } catch {
+      throw new Error(`Invalid salt: ${saltRaw}`);
+    }
+
+    const sdk = new deps.GokiteAASDK({
+      network: 'kite_testnet',
+      rpcUrl: BACKEND_RPC_URL,
+      bundlerUrl: deps.BACKEND_BUNDLER_URL,
+      entryPointAddress: BACKEND_ENTRYPOINT_ADDRESS,
+      accountFactoryAddress: KITE_AA_FACTORY_ADDRESS,
+      accountImplementationAddress: KITE_AA_ACCOUNT_IMPLEMENTATION
+    });
+    const saltScanLimitRaw = String(process.env.KITECLAW_AA_SALT_SCAN_LIMIT || '8').trim();
+    let saltScanLimit = 8;
+    try {
+      saltScanLimit = Math.max(1, Number.parseInt(saltScanLimitRaw, 10) || 8);
+    } catch {
+      saltScanLimit = 8;
+    }
+    let selectedSalt = salt;
+    let aaWallet = '';
+    let deployed = false;
+    let accountVersion = '';
+    let foundCandidate = false;
+    for (let offset = 0; offset < saltScanLimit; offset += 1) {
+      const candidateSalt = salt + BigInt(offset);
+      const candidateWallet = normalizeAddress(await sdk.resolveAccountAddress(requestedOwner, candidateSalt));
+      const candidateCode = await provider.getCode(candidateWallet);
+      const candidateDeployed = Boolean(candidateCode && candidateCode !== '0x');
+      let candidateVersion = '';
+      if (candidateDeployed) {
+        try {
+          const account = new ethers.Contract(candidateWallet, AA_SESSION_ABI, provider);
+          candidateVersion = String(await withRpcReadRetry(() => account.version())).trim();
+        } catch {
+          candidateVersion = '';
+        }
+      }
+      if (!candidateDeployed || candidateVersion === AA_V2_VERSION_TAG) {
+        selectedSalt = candidateSalt;
+        aaWallet = candidateWallet;
+        deployed = candidateDeployed;
+        accountVersion = candidateVersion;
+        foundCandidate = true;
+        break;
+      }
+    }
+    if (!foundCandidate) {
+      throw new Error(
+        `No V2-compatible AA slot available for owner ${requestedOwner}. Legacy accounts occupy salts ${salt.toString()}..${(salt + BigInt(Math.max(0, saltScanLimit - 1))).toString()}`
+      );
+    }
+    const currentRuntime = resolveSessionRuntime({ owner: requestedOwner });
+    const normalizedTokenAddress = normalizeAddress(
+      tokenAddress || currentRuntime.tokenAddress || SETTLEMENT_TOKEN || ''
+    );
+    if (!ethers.isAddress(normalizedTokenAddress)) {
+      throw new Error(`Invalid token address: ${tokenAddress || currentRuntime.tokenAddress || SETTLEMENT_TOKEN || ''}`);
+    }
+    const normalizedGatewayRecipient = normalizeAddress(
+      gatewayRecipient || currentRuntime.gatewayRecipient || MERCHANT_ADDRESS || ''
+    );
+    if (!ethers.isAddress(normalizedGatewayRecipient)) {
+      throw new Error(
+        `Invalid gateway recipient: ${gatewayRecipient || currentRuntime.gatewayRecipient || MERCHANT_ADDRESS || ''}`
+      );
+    }
+    const maxPerTx = normalizePositiveAmount(
+      singleLimit,
+      currentRuntime.maxPerTx || POLICY_MAX_PER_TX_DEFAULT,
+      'singleLimit'
+    );
+    const dailyBudget = normalizePositiveAmount(
+      dailyLimit,
+      currentRuntime.dailyLimit || POLICY_DAILY_LIMIT_DEFAULT,
+      'dailyLimit'
+    );
+    const latestBlock = await provider.getBlock('latest');
+    const nowTs = Number(latestBlock?.timestamp || Math.floor(Date.now() / 1000));
+    const rules = [
+      {
+        timeWindow: '0',
+        budget: String(ethers.parseUnits(maxPerTx.text, 18)),
+        initialWindowStartTime: 0,
+        targetProviders: []
+      },
+      {
+        timeWindow: '86400',
+        budget: String(ethers.parseUnits(dailyBudget.text, 18)),
+        initialWindowStartTime: Math.max(0, nowTs - 1),
+        targetProviders: []
+      }
+    ];
+
+    return {
+      owner: requestedOwner,
+      aaWallet,
+      deployed,
+      lifecycleStage: deployed ? 'deployed' : 'predicted_not_deployed',
+      salt: selectedSalt.toString(),
+      accountFactoryAddress: sdk.config.accountFactoryAddress,
+      accountImplementationAddress: normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || ''),
+      entryPointAddress: BACKEND_ENTRYPOINT_ADDRESS,
+      tokenAddress: normalizedTokenAddress,
+      gatewayRecipient: normalizedGatewayRecipient,
+      singleLimit: maxPerTx.text,
+      dailyLimit: dailyBudget.text,
+      chainId: 'kite-testnet',
+      accountVersion: accountVersion || (deployed ? 'unknown_or_legacy' : ''),
+      currentBlockTimestamp: nowTs,
+      sessionRules: rules,
+      runtime: buildSessionRuntimePayload({
+        ...currentRuntime,
+        owner: requestedOwner,
+        aaWallet: aaWallet || currentRuntime.aaWallet || '',
+        tokenAddress: normalizedTokenAddress,
+        gatewayRecipient: normalizedGatewayRecipient,
+        accountFactoryAddress: normalizeAddress(KITE_AA_FACTORY_ADDRESS || ''),
+        accountImplementationAddress: normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || ''),
+        accountVersion: accountVersion || (deployed ? 'unknown_or_legacy' : currentRuntime.accountVersion || ''),
+        maxPerTx: maxPerTx.numeric,
+        dailyLimit: dailyBudget.numeric,
+        runtimePurpose: currentRuntime.runtimePurpose || 'consumer',
+        source: currentRuntime.source || 'self_serve_wallet_prepare'
+      })
+    };
+  }
+
+  async function finalizeSelfServeSessionRuntime({
+    owner = '',
+    runtime = {},
+    singleLimit = '',
+    dailyLimit = '',
+    tokenAddress = '',
+    gatewayRecipient = '',
+    userEoa = ''
+  } = {}) {
+    const prepared = await prepareSelfServeSessionRuntime({
+      owner,
+      singleLimit,
+      dailyLimit,
+      tokenAddress,
+      gatewayRecipient
+    });
+    const suppliedAaWallet = normalizeAddress(runtime.aaWallet || '');
+    if (!suppliedAaWallet || suppliedAaWallet !== normalizeAddress(prepared.aaWallet || '')) {
+      throw new Error(
+        `AA wallet mismatch. expected=${prepared.aaWallet || '-'} supplied=${suppliedAaWallet || '-'}`
+      );
+    }
+
+    const fallbackRuntime = resolveSessionRuntime({ owner: prepared.owner });
+    const verifiedRuntime = await verifyExternalSessionRuntime({
+      runtime: {
+        ...fallbackRuntime,
+        ...runtime,
+        owner: prepared.owner,
+        aaWallet: prepared.aaWallet,
+        gatewayRecipient: prepared.gatewayRecipient,
+        maxPerTx: prepared.singleLimit,
+        dailyLimit: prepared.dailyLimit,
+        runtimePurpose: normalizeSessionGrantText(runtime.runtimePurpose, fallbackRuntime.runtimePurpose || 'consumer'),
+        source: normalizeSessionGrantText(runtime.source, 'self_serve_wallet')
+      },
+      payload: {
+        payerAaWallet: prepared.aaWallet,
+        singleLimit: prepared.singleLimit,
+        dailyLimit: prepared.dailyLimit,
+        gatewayRecipient: prepared.gatewayRecipient,
+        tokenAddress: prepared.tokenAddress
+      },
+      userEoa: normalizeSessionGrantAddress(userEoa || owner || prepared.owner)
+    });
+
+    const nextRuntime = writeSessionRuntime({
+      ...fallbackRuntime,
+      ...verifiedRuntime,
+      tokenAddress: prepared.tokenAddress,
+      gatewayRecipient: prepared.gatewayRecipient,
+      accountFactoryAddress: normalizeAddress(KITE_AA_FACTORY_ADDRESS || ''),
+      accountImplementationAddress: normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || ''),
+      maxPerTx: Number(prepared.singleLimit || verifiedRuntime.maxPerTx || 0),
+      dailyLimit: Number(prepared.dailyLimit || verifiedRuntime.dailyLimit || 0),
+      runtimePurpose: normalizeSessionGrantText(runtime.runtimePurpose, verifiedRuntime.runtimePurpose || 'consumer') || 'consumer',
+      source: 'self_serve_wallet',
+      updatedAt: Date.now()
+    });
+
+    return {
+      prepared,
+      runtime: nextRuntime
     };
   }
 
@@ -1359,11 +1648,11 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       throw new Error('A valid owner address is required for session creation.');
     }
 
-    const managedOwnerKey =
-      String(resolveSessionOwnerPrivateKey?.(requestedOwner) || '').trim() ||
-      String(ROUTER_WALLET_KEY_NORMALIZED || '').trim();
+    const managedOwnerKey = String(resolveSessionOwnerPrivateKey?.(requestedOwner) || '').trim();
     if (!managedOwnerKey) {
-      throw new Error(`Owner key unavailable for requested owner: ${requestedOwner}`);
+      throw new Error(
+        `Self-serve session creation is not enabled for owner ${requestedOwner}. This server can only create sessions for backend-managed demo owners.`
+      );
     }
     const ownerWallet = new ethers.Wallet(managedOwnerKey, provider);
     const signerOwner = normalizeAddress(ownerWallet.address || '');
@@ -1469,6 +1758,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       ...currentRuntime,
       aaWallet: ensured.accountAddress,
       owner: requestedOwner,
+      tokenAddress: normalizedTokenAddress,
       sessionAddress: sessionWallet.address,
       sessionPrivateKey: sessionWallet.privateKey,
       sessionId,
@@ -1477,6 +1767,9 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       maxPerTx: maxPerTx.numeric,
       dailyLimit: dailyBudget.numeric,
       gatewayRecipient: normalizedGatewayRecipient,
+      accountFactoryAddress: normalizeAddress(KITE_AA_FACTORY_ADDRESS || ''),
+      accountImplementationAddress: normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || ''),
+      accountVersion: AA_V2_VERSION_TAG,
       source: 'api-session-runtime-ensure',
       updatedAt: Date.now()
     });
@@ -1799,6 +2092,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       buildUnifiedApprovalPayload,
       createIdentityChallengeMessage,
       ensureBackendSessionRuntime,
+      finalizeSelfServeSessionRuntime,
       filterUnifiedApprovalRows,
       finalizeSessionApprovalRecord,
       finalizeSessionAuthorization,
@@ -1811,6 +2105,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       normalizeSessionGrantAddress,
       normalizeSessionGrantPayload,
       normalizeSessionGrantText,
+      prepareSelfServeSessionRuntime,
       readIdentityProfile,
       rejectSessionApprovalRecord
     }

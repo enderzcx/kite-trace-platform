@@ -13,7 +13,8 @@ const JOB_CREATE_VALUE_FLAGS = new Set([
   '--validator',
   '--escrow-amount'
 ]);
-const JOB_SUBMIT_VALUE_FLAGS = new Set(['--input']);
+const JOB_FUND_VALUE_FLAGS = new Set(['--intent-id']);
+const JOB_SUBMIT_VALUE_FLAGS = new Set(['--input', '--intent-id']);
 const JOB_COMPLETE_VALUE_FLAGS = new Set(['--input']);
 const JOB_REJECT_VALUE_FLAGS = new Set(['--input']);
 const JOB_VALIDATE_VALUE_FLAGS = new Set(['--reason', '--summary', '--validator']);
@@ -54,14 +55,28 @@ export function parseJobCreateArgs(argv = []) {
   return options;
 }
 
+export function parseJobFundArgs(argv = []) {
+  const options = { intentId: '' };
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    const normalizedFlag = token.includes('=') ? token.split('=', 1)[0] : token;
+    if (!JOB_FUND_VALUE_FLAGS.has(normalizedFlag)) continue;
+    const { flag, value, consumed } = consumeFlagValue(argv, index);
+    if (flag === '--intent-id') options.intentId = String(value || '').trim();
+    index += consumed - 1;
+  }
+  return options;
+}
+
 export function parseJobSubmitArgs(argv = []) {
-  const options = { input: '' };
+  const options = { input: '', intentId: '' };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     const normalizedFlag = token.includes('=') ? token.split('=', 1)[0] : token;
     if (!JOB_SUBMIT_VALUE_FLAGS.has(normalizedFlag)) continue;
     const { flag, value, consumed } = consumeFlagValue(argv, index);
     if (flag === '--input') options.input = String(value || '').trim();
+    if (flag === '--intent-id') options.intentId = String(value || '').trim();
     index += consumed - 1;
   }
   return options;

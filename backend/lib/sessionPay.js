@@ -98,7 +98,20 @@ export function createSessionPayHelpers({
     if (
       code.includes('backend_signer') ||
       text.includes('eoa_relay_disabled') ||
-      text.includes('backend userop signing is disabled')
+      text.includes('backend userop signing is disabled') ||
+      [
+        'authority_not_found',
+        'authority_expired',
+        'authority_revoked',
+        'authority_migration_required',
+        'capability_not_allowed',
+        'provider_not_allowed',
+        'recipient_not_allowed',
+        'amount_exceeds_single_limit',
+        'amount_exceeds_daily_limit',
+        'intent_replayed',
+        'intent_conflict'
+      ].includes(code)
     ) {
       return 'policy';
     }

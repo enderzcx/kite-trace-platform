@@ -136,7 +136,8 @@ async function fetchJsonWithTimeout(url, headers = {}, timeoutMs = 30_000, label
   };
 }
 
-process.env.PORT = normalizeText(process.env.PORT || '') || '34991';
+const defaultPort = 34991 + Math.floor(Math.random() * 200);
+process.env.PORT = normalizeText(process.env.PORT || '') || String(defaultPort);
 process.env.BACKEND_PUBLIC_URL =
   normalizeText(process.env.BACKEND_PUBLIC_URL || '') || `http://127.0.0.1:${process.env.PORT}`;
 
@@ -301,11 +302,17 @@ try {
           operationTimeoutMs,
           'receipt_fetch'
         );
+        const receipt = receiptPayload?.receipt || null;
         assert(receiptStatus >= 200 && receiptStatus < 300, 'receipt endpoint failed after paid call');
         assert(receiptPayload?.ok === true, 'receipt endpoint returned non-ok payload');
         assert(
-          normalizeText(receiptPayload?.receipt?.requestId || receiptPayload?.requestId || '') === requestId,
+          normalizeText(receipt?.requestId || receiptPayload?.requestId || '') === requestId,
           'receipt requestId mismatch after paid call'
+        );
+        assert(normalizeText(receipt?.authorityId || ''), 'receipt authorityId missing after paid call');
+        assert(
+          normalizeText(receipt?.policySnapshotHash || '').startsWith('sha256:'),
+          'receipt policySnapshotHash missing after paid call'
         );
 
         const evidencePath = evidenceRef || `/api/evidence/export?traceId=${encodeURIComponent(candidateTraceId)}`;
@@ -322,6 +329,18 @@ try {
           'evidence export traceId mismatch after paid call'
         );
         assert(evidencePayload?.evidence && typeof evidencePayload.evidence === 'object', 'evidence payload missing');
+        assert(
+          normalizeText(evidencePayload?.evidence?.authorization?.authorityId || ''),
+          'evidence authorization.authorityId missing after paid call'
+        );
+        assert(
+          normalizeText(evidencePayload?.evidence?.authorization?.policySnapshotHash || '').startsWith('sha256:'),
+          'evidence authorization.policySnapshotHash missing after paid call'
+        );
+        assert(
+          normalizeText(evidencePayload?.evidence?.authorization?.validationDecision || '') === 'allowed',
+          'evidence authorization.validationDecision mismatch after paid call'
+        );
 
         successSummary = {
           toolName,
@@ -330,6 +349,8 @@ try {
           requestId,
           serviceId,
           state,
+          authorityId: receipt?.authorityId || '',
+          policySnapshotHash: receipt?.policySnapshotHash || '',
           receiptVerified: true,
           evidenceVerified: true
         };

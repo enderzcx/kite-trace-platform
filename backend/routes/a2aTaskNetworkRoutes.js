@@ -2008,9 +2008,10 @@
       ok: true,
       traceId: req.traceId,
       role: req.authRole || '',
+      authSource: req.authSource || '',
       authDisabled: AUTH_DISABLED,
       authConfigured: authConfigured(),
-      acceptedHeaders: ['x-api-key', 'Authorization: Bearer <key>'],
+      acceptedHeaders: ['x-api-key', 'Authorization: Bearer <key>', 'Cookie: ktrace_onboard=<token>'],
       roles: ['viewer', 'agent', 'admin'],
       persistence: persistenceStore.info()
     });

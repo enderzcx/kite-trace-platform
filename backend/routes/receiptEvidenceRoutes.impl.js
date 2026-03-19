@@ -1,4 +1,8 @@
 import { mergeJobWithEscrowRead } from '../lib/escrowReadModel.js';
+import {
+  buildBtcTradingPlanDeliveryStandard,
+  normalizeBtcTradingPlanEvidence
+} from '../lib/deliverySchemas/btcTradingPlanV1.js';
 import { registerReceiptEvidenceDemoRoutes } from './receiptEvidenceDemoRoutes.js';
 import { registerReceiptEvidenceEvidenceRoutes } from './receiptEvidenceEvidenceRoutes.js';
 import { registerReceiptEvidenceReceiptRoutes } from './receiptEvidenceReceiptRoutes.js';
@@ -167,6 +171,7 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     readJobs,
     readPurchases,
     readRecords,
+    readServiceInvocations,
     readSessionRuntime,
     readWorkflows,
     readX402Requests,
@@ -362,6 +367,87 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     allowedCapabilities: Array.isArray(runtime.allowedCapabilities) ? runtime.allowedCapabilities : []
   });
 
+  const buildAuthoritySummary = (authority = {}) => ({
+    authorityId: String(authority?.authorityId || '').trim(),
+    sessionId: String(authority?.sessionId || '').trim(),
+    authorizedBy: String(authority?.authorizedBy || '').trim(),
+    payer: String(authority?.payer || '').trim(),
+    consumerAgentLabel: String(authority?.consumerAgentLabel || '').trim(),
+    allowedCapabilities: Array.isArray(authority?.allowedCapabilities) ? authority.allowedCapabilities : [],
+    allowedProviders: Array.isArray(authority?.allowedProviders) ? authority.allowedProviders : [],
+    singleLimit: Number(authority?.singleLimit || 0),
+    dailyLimit: Number(authority?.dailyLimit || 0),
+    totalLimit: Number(authority?.totalLimit || 0),
+    expiresAt: Number(authority?.expiresAt || 0),
+    status: String(authority?.status || '').trim(),
+    revokedAt: Number(authority?.revokedAt || 0)
+  });
+
+  const buildAuthorityEnvelope = ({ job = null, workflow = null, reqItem = null, purchase = null, invocation = null } = {}) => {
+    const snapshotCandidate =
+      (job?.submitAuthority && typeof job.submitAuthority === 'object' && !Array.isArray(job.submitAuthority)
+        ? job.submitAuthority
+        : null) ||
+      (job?.fundAuthority && typeof job.fundAuthority === 'object' && !Array.isArray(job.fundAuthority)
+        ? job.fundAuthority
+        : null) ||
+      (workflow?.authority && typeof workflow.authority === 'object' && !Array.isArray(workflow.authority)
+        ? workflow.authority
+        : null) ||
+      (reqItem?.authority && typeof reqItem.authority === 'object' && !Array.isArray(reqItem.authority)
+        ? reqItem.authority
+        : null) ||
+      (invocation?.authority && typeof invocation.authority === 'object' && !Array.isArray(invocation.authority)
+        ? invocation.authority
+        : null) ||
+      (purchase?.authority && typeof purchase.authority === 'object' && !Array.isArray(purchase.authority)
+        ? purchase.authority
+        : null);
+    const summaryCandidate =
+      (job?.submitAuthorityPublic && typeof job.submitAuthorityPublic === 'object' ? job.submitAuthorityPublic : null) ||
+      (job?.fundAuthorityPublic && typeof job.fundAuthorityPublic === 'object' ? job.fundAuthorityPublic : null) ||
+      (workflow?.authorityPublic && typeof workflow.authorityPublic === 'object' ? workflow.authorityPublic : null) ||
+      (reqItem?.authorityPublic && typeof reqItem.authorityPublic === 'object' ? reqItem.authorityPublic : null) ||
+      (invocation?.authorityPublic && typeof invocation.authorityPublic === 'object' ? invocation.authorityPublic : null) ||
+      (purchase?.authorityPublic && typeof purchase.authorityPublic === 'object' ? purchase.authorityPublic : null) ||
+      (snapshotCandidate ? buildAuthoritySummary(snapshotCandidate) : null);
+    const policySnapshotHash = String(
+      job?.submitPolicySnapshotHash ||
+        job?.fundPolicySnapshotHash ||
+        workflow?.policySnapshotHash ||
+        reqItem?.policySnapshotHash ||
+        invocation?.policySnapshotHash ||
+        purchase?.policySnapshotHash ||
+        ''
+    ).trim();
+    const intentId = String(
+      job?.submitIntentId ||
+        job?.fundIntentId ||
+        workflow?.intentId ||
+        reqItem?.intentId ||
+        invocation?.intentId ||
+        purchase?.intentId ||
+        ''
+    ).trim();
+    if (!snapshotCandidate && !summaryCandidate && !policySnapshotHash && !intentId) {
+      return null;
+    }
+    return {
+      authorityId: String(summaryCandidate?.authorityId || snapshotCandidate?.authorityId || '').trim(),
+      intentId,
+      policySnapshotHash,
+      snapshot:
+        snapshotCandidate && typeof snapshotCandidate === 'object' && !Array.isArray(snapshotCandidate)
+          ? snapshotCandidate
+          : null,
+      summary:
+        summaryCandidate && typeof summaryCandidate === 'object' && !Array.isArray(summaryCandidate)
+          ? buildAuthoritySummary(summaryCandidate)
+          : null,
+      validationDecision: 'allowed'
+    };
+  };
+
   const buildJobAuditSnapshot = (job = null) => {
     if (!job || typeof job !== 'object') return null;
     const state = String(job?.state || '').trim().toLowerCase();
@@ -394,6 +480,15 @@ export function registerReceiptEvidenceRoutes(app, deps) {
           : null;
     const resultHash = String(job?.resultHash || job?.submissionHash || '').trim();
     const outcomeAnchorTxHash = String(job?.outcomeAnchorTxHash || '').trim();
+    const delivery =
+      job?.delivery && typeof job.delivery === 'object' && !Array.isArray(job.delivery) ? job.delivery : null;
+    const deliveryEvidence = normalizeBtcTradingPlanEvidence(delivery, {
+      primaryTraceId: String(job?.traceId || '').trim(),
+      primaryEvidenceRef: String(job?.evidenceRef || '').trim(),
+      paymentRequestId: String(job?.paymentRequestId || '').trim(),
+      paymentTxHash: String(job?.paymentTxHash || '').trim(),
+      receiptRefs: [String(job?.receiptRef || '').trim()]
+    });
     const contractPrimitives = {
       escrow: {
         present: hasEscrowBacking,
@@ -415,10 +510,29 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       },
       roleEnforcement: {
         onchainEnforced: hasEscrowBacking,
-        executionMode: hasEscrowBacking ? 'requester_executor_validator_signers' : 'backend_owner_only',
+        executionMode:
+          String(job?.executionMode || '').trim() === 'aa-native' ||
+          String(job?.requesterRuntimeAddress || '').trim() ||
+          String(job?.executorRuntimeAddress || '').trim() ||
+          String(job?.validatorRuntimeAddress || '').trim()
+            ? 'aa_account_role_enforced'
+            : hasEscrowBacking
+              ? 'requester_executor_validator_signers'
+              : 'backend_owner_only',
         requesterAddress: String(job?.payer || '').trim(),
         executorAddress: String(job?.executor || '').trim(),
-        validatorAddress: String(job?.validator || '').trim()
+        validatorAddress: String(job?.validator || '').trim(),
+        roleRuntimeSummary:
+          String(job?.executionMode || '').trim() === 'aa-native' ||
+          String(job?.requesterRuntimeAddress || '').trim() ||
+          String(job?.executorRuntimeAddress || '').trim() ||
+          String(job?.validatorRuntimeAddress || '').trim()
+            ? {
+                requesterRuntimeAddress: String(job?.requesterRuntimeAddress || job?.payer || '').trim(),
+                executorRuntimeAddress: String(job?.executorRuntimeAddress || job?.executor || '').trim(),
+                validatorRuntimeAddress: String(job?.validatorRuntimeAddress || job?.validator || '').trim()
+              }
+            : null
       },
       staking: {
         present: hasStake,
@@ -463,6 +577,22 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       authorizationExpiresAt: Number(job?.authorizationExpiresAt || 0),
       authorizationAudience: String(job?.authorizationAudience || '').trim(),
       allowedCapabilities: Array.isArray(job?.allowedCapabilities) ? job.allowedCapabilities : [],
+      fundIntentId: String(job?.fundIntentId || '').trim(),
+      fundPolicySnapshotHash: String(job?.fundPolicySnapshotHash || '').trim(),
+      fundAuthority:
+        job?.fundAuthority && typeof job.fundAuthority === 'object' && !Array.isArray(job.fundAuthority)
+          ? job.fundAuthority
+          : null,
+      fundAuthorityPublic:
+        job?.fundAuthorityPublic && typeof job.fundAuthorityPublic === 'object' ? job.fundAuthorityPublic : null,
+      submitIntentId: String(job?.submitIntentId || '').trim(),
+      submitPolicySnapshotHash: String(job?.submitPolicySnapshotHash || '').trim(),
+      submitAuthority:
+        job?.submitAuthority && typeof job.submitAuthority === 'object' && !Array.isArray(job.submitAuthority)
+          ? job.submitAuthority
+          : null,
+      submitAuthorityPublic:
+        job?.submitAuthorityPublic && typeof job.submitAuthorityPublic === 'object' ? job.submitAuthorityPublic : null,
       createAnchorTxHash: String(job?.createAnchorTxHash || '').trim(),
       fundingAnchorTxHash: String(job?.fundingAnchorTxHash || '').trim(),
       acceptAnchorTxHash: String(job?.acceptAnchorTxHash || '').trim(),
@@ -474,6 +604,8 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       escrowValidateTxHash: String(job?.escrowValidateTxHash || '').trim(),
       receiptRef: String(job?.receiptRef || '').trim(),
       evidenceRef: String(job?.evidenceRef || '').trim(),
+      delivery,
+      deliveryEvidence,
       deadline: {
         expiresAt: String(job?.expiresAt || '').trim(),
         expiredAt: String(job?.expiredAt || '').trim(),
@@ -482,14 +614,12 @@ export function registerReceiptEvidenceRoutes(app, deps) {
         enforcementMode: hasEscrowBacking ? 'onchain_job_escrow_v1' : 'backend_materialized'
       },
       contractPrimitives,
-      deliveryStandard: {
-        version: 'ktrace-delivery-v1',
-        definition: 'validator_approve + result_hash_submitted + outcome_anchor_onchain',
-        validatorApproved: approved === true,
-        resultHashSubmitted: Boolean(resultHash),
+      deliveryStandard: buildBtcTradingPlanDeliveryStandard({
+        delivery,
+        resultHash,
         outcomeAnchored: Boolean(outcomeAnchorTxHash),
-        satisfied: approved === true && Boolean(resultHash) && Boolean(outcomeAnchorTxHash)
-      }
+        validatorApproved: approved === true
+      })
     };
   };
 
@@ -542,7 +672,11 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       createdAt: String(purchase?.createdAt || new Date().toISOString()).trim(),
       updatedAt: String(purchase?.updatedAt || purchase?.createdAt || new Date().toISOString()).trim(),
       result: String(purchase?.summary || '').trim() ? { summary: String(purchase.summary).trim() } : null,
-      error: String(purchase?.error || '').trim()
+      error: String(purchase?.error || '').trim(),
+      authority: purchase?.authority && typeof purchase.authority === 'object' ? purchase.authority : null,
+      authorityPublic: purchase?.authorityPublic && typeof purchase.authorityPublic === 'object' ? purchase.authorityPublic : null,
+      policySnapshotHash: String(purchase?.policySnapshotHash || '').trim(),
+      intentId: String(purchase?.intentId || '').trim()
     };
   };
 
@@ -583,6 +717,20 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     const jobCandidate = jobs.find((item) => String(item?.traceId || '').trim() === normalizedTraceId) || null;
     const job = await hydrateJobForRead(jobCandidate);
     const jobAudit = buildJobAuditSnapshot(job);
+    const purchases = typeof readPurchases === 'function' ? readPurchases() : [];
+    const purchase = purchases.find((item) => String(item?.traceId || '').trim() === normalizedTraceId) || null;
+    const serviceInvocations = typeof readServiceInvocations === 'function' ? readServiceInvocations() : [];
+    const invocation =
+      serviceInvocations.find((item) => String(item?.requestId || '').trim() === String(workflow?.requestId || '').trim()) ||
+      serviceInvocations.find((item) => String(item?.traceId || '').trim() === normalizedTraceId) ||
+      null;
+    const authorityEnvelope = buildAuthorityEnvelope({
+      job,
+      workflow,
+      reqItem,
+      purchase,
+      invocation
+    });
 
     const evidenceSchemaVersion = 'kiteclaw-evidence-v1.1.0';
     const digestInput = {
@@ -618,6 +766,14 @@ export function registerReceiptEvidenceRoutes(app, deps) {
             txHash: String(paymentRecord.txHash || '').trim(),
             status: String(paymentRecord.status || '').trim().toLowerCase(),
             requestId: String(paymentRecord.requestId || '').trim()
+          }
+        : null,
+      authority: authorityEnvelope
+        ? {
+            authorityId: String(authorityEnvelope.authorityId || '').trim(),
+            intentId: String(authorityEnvelope.intentId || '').trim(),
+            policySnapshotHash: String(authorityEnvelope.policySnapshotHash || '').trim(),
+            summary: authorityEnvelope.summary
           }
         : null,
       runtimeSnapshot,
@@ -663,18 +819,29 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       paymentRecord: paymentRecord || null,
       runtimeSnapshot,
       job: jobAudit,
-      authorization: jobAudit
+      purchase,
+      invocation,
+      authorization: authorityEnvelope
         ? {
-            authorizationId: jobAudit.authorizationId,
-            authorizedBy: jobAudit.authorizedBy,
-            authorizedAt: jobAudit.authorizedAt,
-            authorizationMode: jobAudit.authorizationMode,
-            authorizationPayloadHash: jobAudit.authorizationPayloadHash,
-            authorizationExpiresAt: jobAudit.authorizationExpiresAt,
-            authorizationAudience: jobAudit.authorizationAudience,
-            allowedCapabilities: jobAudit.allowedCapabilities
+            authorityId: authorityEnvelope.authorityId,
+            intentId: authorityEnvelope.intentId,
+            policySnapshotHash: authorityEnvelope.policySnapshotHash,
+            policySnapshot: authorityEnvelope.snapshot,
+            authoritySummary: authorityEnvelope.summary,
+            validationDecision: authorityEnvelope.validationDecision
           }
-        : null,
+        : jobAudit
+          ? {
+              authorizationId: jobAudit.authorizationId,
+              authorizedBy: jobAudit.authorizedBy,
+              authorizedAt: jobAudit.authorizedAt,
+              authorizationMode: jobAudit.authorizationMode,
+              authorizationPayloadHash: jobAudit.authorizationPayloadHash,
+              authorizationExpiresAt: jobAudit.authorizationExpiresAt,
+              authorizationAudience: jobAudit.authorizationAudience,
+              allowedCapabilities: jobAudit.allowedCapabilities
+            }
+          : null,
       humanApproval: jobAudit
         ? {
             approvalState: jobAudit.approvalState,
@@ -711,6 +878,7 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     const runtimeSnapshot = exportPayload?.runtimeSnapshot || {};
     const x402 = exportPayload?.x402 || null;
     const jobAudit = exportPayload?.job || null;
+    const authorityEnvelope = exportPayload?.authorization || null;
     const jobAnchorTxHash =
       String(
         jobAudit?.outcomeAnchorTxHash ||
@@ -750,6 +918,13 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       deadline: jobAudit?.deadline || null,
       contractPrimitives: jobAudit?.contractPrimitives || null,
       deliveryStandard: jobAudit?.deliveryStandard || null,
+      authorityId: String(authorityEnvelope?.authorityId || '').trim(),
+      authoritySummary:
+        authorityEnvelope?.authoritySummary && typeof authorityEnvelope.authoritySummary === 'object'
+          ? authorityEnvelope.authoritySummary
+          : null,
+      policySnapshotHash: String(authorityEnvelope?.policySnapshotHash || '').trim(),
+      intentId: String(authorityEnvelope?.intentId || '').trim(),
       jobAnchorTxHash,
       anchorContract,
       anchorNetwork: 'kite-testnet',

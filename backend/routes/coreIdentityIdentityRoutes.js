@@ -27,7 +27,14 @@ export function registerCoreIdentityIdentityRoutes(ctx = {}) {
     readIdentityProfile
   } = helpers;
 
-  app.get('/api/identity', requireRole('viewer'), async (req, res) => {
+  app.get(
+    '/api/identity',
+    requireRole('viewer', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    async (req, res) => {
     try {
       const profile = await readIdentityProfile({
         registry: req.query.identityRegistry,
@@ -43,7 +50,14 @@ export function registerCoreIdentityIdentityRoutes(ctx = {}) {
     }
   });
 
-  app.get('/api/identity/current', requireRole('viewer'), async (req, res) => {
+  app.get(
+    '/api/identity/current',
+    requireRole('viewer', {
+      allowEnvApiKey: true,
+      allowAccountApiKey: false,
+      allowOnboardingCookie: true
+    }),
+    async (req, res) => {
     try {
       const profile = await readIdentityProfile({});
       return res.json({ ok: true, profile });

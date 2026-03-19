@@ -255,9 +255,9 @@ export function createJobApprovalHelpers(deps = {}, shared = {}) {
         escrowAmount: normalizeText(job?.escrowAmount || job?.budget),
         tokenAddress: normalizeText(job?.escrowTokenAddress || process.env.KITE_SETTLEMENT_TOKEN || ''),
         payerAaWallet: pickAddress(payerAaWallet, job?.payer),
-        requester: pickAddress(job?.payer, deps.ERC8183_REQUESTER_OWNER_ADDRESS, deps.ERC8183_REQUESTER_AA_ADDRESS),
-        executor: pickAddress(job?.executor, deps.ERC8183_EXECUTOR_OWNER_ADDRESS, deps.ERC8183_EXECUTOR_AA_ADDRESS),
-        validator: pickAddress(job?.validator, deps.ERC8183_VALIDATOR_OWNER_ADDRESS, deps.ERC8183_VALIDATOR_AA_ADDRESS)
+        requester: pickAddress(job?.payer, deps.ERC8183_REQUESTER_AA_ADDRESS),
+        executor: pickAddress(job?.executor, deps.ERC8183_EXECUTOR_AA_ADDRESS),
+        validator: pickAddress(job?.validator, deps.ERC8183_VALIDATOR_AA_ADDRESS)
       },
       sessionAuthorizationRef: normalizeText(sessionAuthorizationRef || job?.authorizationId)
     };

@@ -174,9 +174,11 @@ export function createBuyCommandHandlers({
       });
     }
 
+    const intentId = String(options.intentId || '').trim();
     const invokePayload = {
       ...input,
       traceId,
+      ...(intentId ? { intentId } : {}),
       ...(wallet ? { payer: wallet } : {})
     };
     let invokeResult;
@@ -293,12 +295,14 @@ export function createBuyCommandHandlers({
     }
 
     const wallet = normalizeWalletAddress(runtime.wallet);
+    const intentId = String(options.intentId || '').trim();
     const preflight = await ensureUsableSession(runtime, {
       wallet,
       strategy: runtime.sessionStrategy
     });
     const body = {
       traceId,
+      ...(intentId ? { intentId } : {}),
       ...(wallet ? { payer: wallet } : {})
     };
     if (options.input) {

@@ -1,8 +1,6 @@
 "use client";
 
 import AgentNetworkSection from "@/components/showcase/AgentNetworkSection";
-import AuditExplorer from "@/components/showcase/AuditExplorer";
-import DataApiSection from "@/components/showcase/DataApiSection";
 import HeroSection from "@/components/showcase/HeroSection";
 import KtraceCliSection from "@/components/showcase/KtraceCliSection";
 import {
@@ -13,7 +11,7 @@ import {
   type ShowcaseHealthStats,
   type ShowcaseProvider,
 } from "@/components/showcase/showcase-data";
-import { Github } from "lucide-react";
+import { Github, Zap } from "lucide-react";
 
 interface ShowcasePageClientProps {
   healthStats?: ShowcaseHealthStats;
@@ -65,10 +63,22 @@ export default function ShowcasePageClient({
               ktrace
             </a>
             <a
-              href="#audit-explorer"
+              href="/mcp"
+              className="rounded-md px-3 py-1.5 text-[13px] text-[#7a6e56] transition hover:text-[#18180e] hover:bg-[rgba(58,66,32,0.06)]"
+            >
+              MCP
+            </a>
+            <a
+              href="/audit"
               className="rounded-md px-3 py-1.5 text-[13px] text-[#7a6e56] transition hover:text-[#18180e] hover:bg-[rgba(58,66,32,0.06)]"
             >
               Audit
+            </a>
+            <a
+              href="/demo"
+              className="rounded-md px-3 py-1.5 text-[13px] text-[#7a6e56] transition hover:text-[#18180e] hover:bg-[rgba(58,66,32,0.06)]"
+            >
+              Live Demo
             </a>
             <div className="mx-2 h-4 w-px bg-[rgba(90,80,50,0.18)]" />
             <a
@@ -79,6 +89,13 @@ export default function ShowcasePageClient({
             >
               <Github className="h-3.5 w-3.5" />
               GitHub
+            </a>
+            <a
+              href="/setup"
+              className="ml-1 inline-flex items-center gap-1.5 rounded-full bg-[#3a4220] px-3.5 py-1.5 text-[13px] font-semibold text-[#faf7f1] transition hover:bg-[#4d5a2a] hover:shadow-[0_2px_12px_rgba(58,66,32,0.3)]"
+            >
+              <Zap className="h-3 w-3" />
+              Setup
             </a>
           </nav>
         </div>
@@ -98,19 +115,7 @@ export default function ShowcasePageClient({
           <div className="h-px bg-[rgba(90,80,50,0.1)]" />
         </div>
 
-        <DataApiSection />
-
-        <div className="mx-auto max-w-6xl px-6">
-          <div className="h-px bg-[rgba(90,80,50,0.1)]" />
-        </div>
-
         <KtraceCliSection />
-
-        <div className="mx-auto max-w-6xl px-6">
-          <div className="h-px bg-[rgba(90,80,50,0.1)]" />
-        </div>
-
-        <AuditExplorer />
       </main>
 
       {/* ── Footer ─────────────────────────────────────────── */}
@@ -126,6 +131,18 @@ export default function ShowcasePageClient({
             </div>
           </div>
           <div className="flex items-center gap-5 text-[12px] text-[#9e8e76]">
+            <a href="/setup" className="transition hover:text-[#3a4220]">
+              Setup
+            </a>
+            <a href="/mcp" className="transition hover:text-[#3a4220]">
+              MCP
+            </a>
+            <a href="/demo" className="transition hover:text-[#3a4220]">
+              Live Demo
+            </a>
+            <a href="/authority" className="transition hover:text-[#3a4220]">
+              Authority
+            </a>
             <a
               href="https://github.com/enderzcx/kite-trace-platform"
               target="_blank"

@@ -137,7 +137,7 @@ export async function startMcpTestHarness({
     viewer: authEnabled ? 'mcp-viewer-key' : ''
   };
 
-  const { authConfigured, extractApiKey, resolveRoleByApiKey, requireRole } = createAuthHelpers({
+  const { authConfigured, extractApiKey, resolveAuthRequest, resolveRoleByApiKey, requireRole } = createAuthHelpers({
     AUTH_DISABLED: !authEnabled,
     API_KEY_ADMIN: keys.admin,
     API_KEY_AGENT: keys.agent,
@@ -250,6 +250,7 @@ export async function startMcpTestHarness({
     PORT: String(port),
     authConfigured,
     extractApiKey,
+    resolveAuthRequest,
     resolveRoleByApiKey,
     getInternalAgentApiKey: () => normalizeText(keys.agent || keys.admin || '')
   });

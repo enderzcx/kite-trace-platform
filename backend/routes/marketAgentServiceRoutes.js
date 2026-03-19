@@ -17,13 +17,19 @@ export function registerMarketAgentServiceRoutes(app, deps) {
   const {
     ANALYSIS_PROVIDER,
     appendWorkflowStep,
+    beginConsumerIntent,
     buildServiceStatus,
+    buildAuthorityPublicSummary,
+    buildAuthoritySnapshot,
+    buildPolicySnapshotHash,
     broadcastEvent,
     computeServiceReputation,
     createX402Request,
     createTraceId,
     ensureServiceCatalog,
     evaluateServiceInvokeGuard,
+    finalizeConsumerIntent,
+    findConsumerIntent,
     getInternalAgentApiKey,
     hasStrictX402Evidence,
     handleRouterRuntimeTextMessage,
@@ -40,6 +46,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     readRecords,
     readServiceInvocations,
     readSessionRuntime,
+    resolveSessionRuntime,
     readWorkflows,
     readX402Requests,
     requireRole,
@@ -53,6 +60,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     upsertWorkflow,
     upsertAgent001ResultRecord,
     upsertServiceInvocation,
+    validateConsumerAuthority,
     validatePaymentProof,
     verifyProofOnChain,
     writeX402Requests,
@@ -89,6 +97,34 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
     if (['0', 'false', 'no', 'off'].includes(raw)) return false;
     return fallback;
+  }
+
+  function resolveInvokeRuntime(body = {}) {
+    const requestedOwner = normalizeAddress(body.ownerEoa || body.owner || '');
+    const requestedAaWallet = normalizeAddress(body.aaWallet || '');
+    const requestedSessionId = normalizeText(body.sessionId || '');
+    if (!requestedOwner && !requestedAaWallet && !requestedSessionId) {
+      return {
+        requestedOwner: '',
+        runtime: readSessionRuntime()
+      };
+    }
+    const scopedRuntime = resolveSessionRuntime?.({
+      owner: requestedOwner,
+      aaWallet: requestedAaWallet,
+      sessionId: requestedSessionId
+    }) || {};
+    const normalizedRuntimeOwner = normalizeAddress(scopedRuntime?.owner || '');
+    if (requestedOwner && normalizedRuntimeOwner !== requestedOwner) {
+      return {
+        requestedOwner,
+        runtime: {}
+      };
+    }
+    return {
+      requestedOwner,
+      runtime: scopedRuntime
+    };
   }
 
   function buildExternalFeedSummary(service = {}, result = null) {
@@ -303,6 +339,42 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       createdAt: invocation?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       error: normalizeText(reason || 'service invoke failed')
+    };
+  }
+
+  function buildAuthorityErrorResponse(result = {}) {
+    return {
+      ok: false,
+      error: normalizeText(result?.code || 'authority_validation_failed'),
+      reason: normalizeText(result?.reason || 'authority validation failed'),
+      authority: result?.authorityPublic || null,
+      policySnapshotHash: normalizeText(result?.policySnapshotHash || ''),
+      detail: result?.detail && typeof result.detail === 'object' ? result.detail : undefined
+    };
+  }
+
+  function buildIntentConflictPayload(result = {}) {
+    const existing = result?.existing && typeof result.existing === 'object' ? result.existing : null;
+    const existingInvocation = existing?.resultRef
+      ? readServiceInvocations().find((item) => normalizeText(item?.invocationId) === normalizeText(existing.resultRef)) || null
+      : null;
+    return {
+      ok: false,
+      error: normalizeText(result?.code || 'intent_conflict'),
+      reason: normalizeText(result?.reason || 'intent conflict'),
+      intent: existing,
+      invocation:
+        existingInvocation && typeof existingInvocation === 'object'
+          ? {
+              invocationId: normalizeText(existingInvocation?.invocationId),
+              traceId: normalizeText(existingInvocation?.traceId),
+              requestId: normalizeText(existingInvocation?.requestId),
+              state: normalizeText(existingInvocation?.state),
+              serviceId: normalizeText(existingInvocation?.serviceId),
+              summary: normalizeText(existingInvocation?.summary),
+              error: normalizeText(existingInvocation?.error)
+            }
+          : null
     };
   }
 
@@ -1087,14 +1159,36 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       });
     }
   
-    const runtime = readSessionRuntime();
     const body = req.body || {};
+    const runtimeLookup = resolveInvokeRuntime(body);
+    const runtime = runtimeLookup.runtime || {};
     const input =
       body?.input && typeof body.input === 'object' && !Array.isArray(body.input)
         ? body.input
         : body;
     const traceId = resolveWorkflowTraceId(body.traceId || createTraceId('service'));
+    const authSource = normalizeText(body.authSource || '').toLowerCase();
+    const requestedOwner = runtimeLookup.requestedOwner || '';
+    if (
+      requestedOwner &&
+      (
+        !normalizeText(runtime?.owner || '') ||
+        normalizeAddress(runtime.owner || '') !== requestedOwner ||
+        !normalizeText(runtime?.aaWallet || '') ||
+        !normalizeText(runtime?.sessionAddress || '') ||
+        !normalizeText(runtime?.sessionId || '')
+      )
+    ) {
+      return res.status(409).json({
+        ok: false,
+        error: authSource === 'connector-grant' ? 'connector_runtime_not_ready' : 'session_runtime_not_ready',
+        reason: 'The owner-scoped session runtime is not ready for this MCP invocation.',
+        traceId,
+        ownerEoa: requestedOwner
+      });
+    }
     const payer = normalizeAddress(body.payer || runtime.aaWallet || '');
+    const intentId = normalizeText(body.intentId || body.idempotencyKey || '');
     const sourceAgentId = String(body.sourceAgentId || KITE_AGENT1_ID).trim();
     const targetAgentId = String(body.targetAgentId || service.providerAgentId || KITE_AGENT2_ID).trim();
     const invocationId = createTraceId('svc_call');
@@ -1113,12 +1207,62 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         checks: guard.checks || []
       });
     }
+    const authorityResult = validateConsumerAuthority?.({
+      owner: requestedOwner || normalizeAddress(runtime?.owner || ''),
+      aaWallet: normalizeAddress(body.aaWallet || runtime?.aaWallet || ''),
+      sessionId: normalizeText(body.sessionId || runtime?.sessionId || ''),
+      payer,
+      provider: normalizeText(service?.providerAgentId || ''),
+      capability: normalizeText(service?.id || service?.action || ''),
+      recipient: String(service.recipient || KITE_AGENT2_AA_ADDRESS || '').trim(),
+      amount: String(service.price || X402_BTC_PRICE || ''),
+      intentId,
+      actionKind: 'service_invoke',
+      referenceId: serviceId,
+      traceId
+    });
+    if (authorityResult && authorityResult.ok === false) {
+      return res.status(Number(authorityResult.statusCode || 403)).json(buildAuthorityErrorResponse(authorityResult));
+    }
+    const authoritySnapshot =
+      authorityResult?.authority && typeof authorityResult.authority === 'object'
+        ? buildAuthoritySnapshot(authorityResult.authority)
+        : null;
+    const authorityPublic =
+      authorityResult?.authorityPublic && typeof authorityResult.authorityPublic === 'object'
+        ? buildAuthorityPublicSummary(authorityResult.authorityPublic)
+        : authoritySnapshot
+          ? buildAuthorityPublicSummary(authoritySnapshot)
+          : null;
+    const policySnapshotHash = normalizeText(
+      authorityResult?.policySnapshotHash || (authoritySnapshot ? buildPolicySnapshotHash(authoritySnapshot) : '')
+    );
+    let intentStarted = false;
+    const startIntent = (referenceId = '') => {
+      if (!intentId || intentStarted) {
+        return { ok: true, active: intentStarted };
+      }
+      const result = beginConsumerIntent?.({
+        intentId,
+        payer,
+        provider: normalizeText(service?.providerAgentId || ''),
+        capability: normalizeText(service?.id || service?.action || ''),
+        recipient: String(service.recipient || KITE_AGENT2_AA_ADDRESS || '').trim(),
+        amount: String(service.price || X402_BTC_PRICE || ''),
+        actionKind: 'service_invoke',
+        referenceId: normalizeText(referenceId || serviceId),
+        traceId
+      });
+      if (result?.ok) intentStarted = Boolean(result.active);
+      return result;
+    };
   
     const invocation = {
       invocationId,
       serviceId,
       action: effectiveAction,
       traceId,
+      intentId,
       requestId: '',
       state: 'running',
       payer,
@@ -1127,6 +1271,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       amount: String(service.price || X402_BTC_PRICE || ''),
       tokenAddress: String(service.tokenAddress || SETTLEMENT_TOKEN || '').trim(),
       recipient: String(service.recipient || KITE_AGENT2_AA_ADDRESS || '').trim(),
+      authorityId: normalizeText(authoritySnapshot?.authorityId || ''),
+      authority: authoritySnapshot,
+      authorityPublic,
+      policySnapshotHash,
       summary: '',
       error: '',
       txHash: '',
@@ -1134,7 +1282,12 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       createdAt: now,
       updatedAt: now
     };
-    upsertServiceInvocation(invocation);
+    let invocationPersisted = false;
+    function persistInvocation(record = invocation) {
+      upsertServiceInvocation(record);
+      invocationPersisted = true;
+      return record;
+    }
     let evidenceWorkflow = null;
     let evidenceRequest = null;
     let externalResult = null;
@@ -1146,6 +1299,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       const isTechnicalServiceAction = effectiveAction === 'risk-score-feed' || effectiveAction === 'technical-analysis-feed';
       const isInfoServiceAction = effectiveAction === 'info-analysis-feed';
       if (isExternalFeedCapability) {
+        persistInvocation(invocation);
         const agentManagedPayment =
           normalizeText(body.x402Mode || body.paymentMode || '').toLowerCase() === 'agent' ||
           Boolean(body?.paymentProof && body?.requestId);
@@ -1167,6 +1321,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         evidenceRequest = upsertX402RequestRecord({
           ...evidenceRequest,
           status: normalizeText(evidenceRequest?.status || '') === 'paid' ? 'paid' : 'pending',
+          intentId,
+          authority: authoritySnapshot,
+          authorityPublic,
+          policySnapshotHash,
           actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
           a2a: {
             sourceAgentId,
@@ -1185,6 +1343,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             input,
             request: evidenceRequest
           });
+        evidenceWorkflow.authority = authoritySnapshot;
+        evidenceWorkflow.authorityPublic = authorityPublic;
+        evidenceWorkflow.policySnapshotHash = policySnapshotHash;
+        evidenceWorkflow.intentId = intentId;
         if (!Array.isArray(evidenceWorkflow?.steps) || evidenceWorkflow.steps.length === 0) {
           appendServiceWorkflowStep(evidenceWorkflow, 'challenge_issued', 'ok', {
             requestId: evidenceRequest?.requestId || '',
@@ -1297,6 +1459,9 @@ export function registerMarketAgentServiceRoutes(app, deps) {
                 external: externalResult,
                 summary: buildExternalFeedSummary(service, externalResult)
               },
+              authority: authoritySnapshot,
+              authorityPublic,
+              policySnapshotHash,
               actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {}
             });
             if (
@@ -1317,6 +1482,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
                 serviceId,
                 invocationId
               });
+            }
+            const intentState = startIntent(evidenceRequest?.requestId || invocationId);
+            if (intentState && intentState.ok === false) {
+              return res.status(409).json(buildIntentConflictPayload(intentState));
             }
             if (normalizeText(evidenceRequest?.requestId || '') !== suppliedRequestId) {
               return res.status(409).json({
@@ -1376,6 +1545,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
                 ...evidenceRequest,
                 status: 'paid',
                 paidAt: Date.now(),
+                intentId,
+                authority: authoritySnapshot,
+                authorityPublic,
+                policySnapshotHash,
                 paymentTxHash: txHash,
                 paymentProof: {
                   requestId: effectivePaymentProof?.requestId,
@@ -1417,6 +1590,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
               userOpHash = normalizeText(evidenceWorkflow?.userOpHash || '');
             }
           } else {
+            const intentState = startIntent(evidenceRequest?.requestId || invocationId);
+            if (intentState && intentState.ok === false) {
+              return res.status(409).json(buildIntentConflictPayload(intentState));
+            }
             const pay = await postSessionPayWithRetry(
               {
                 tokenAddress: evidenceRequest?.tokenAddress || invocation.tokenAddress || '',
@@ -1474,6 +1651,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
               ...evidenceRequest,
               status: 'paid',
               paidAt: Date.now(),
+              intentId,
+              authority: authoritySnapshot,
+              authorityPublic,
+              policySnapshotHash,
               paymentTxHash: txHash,
               paymentProof,
               proofVerification: {
@@ -1543,6 +1724,12 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             updatedAt: new Date().toISOString()
           };
           upsertServiceInvocation(next);
+          finalizeConsumerIntent?.(intentId, {
+            status: 'completed',
+            resultRef: normalizeText(next.invocationId),
+            requestId: normalizeText(next.requestId),
+            traceId: normalizeText(next.traceId)
+          });
 
           return res.json({
             ok: true,
@@ -1623,8 +1810,20 @@ export function registerMarketAgentServiceRoutes(app, deps) {
               ? '/api/workflow/hyperliquid-order/run'
               : '/api/workflow/btc-price/run';
   
+      const intentState = startIntent(invocationId);
+      if (intentState && intentState.ok === false) {
+        return res.status(409).json(buildIntentConflictPayload(intentState));
+      }
+      persistInvocation(invocation);
       const { resp, payload } = await postInternalWorkflowWithRetry(workflowPath, headers, invokePayload);
       const workflow = payload?.workflow || null;
+      if (workflow && typeof workflow === 'object') {
+        workflow.authority = authoritySnapshot;
+        workflow.authorityPublic = authorityPublic;
+        workflow.policySnapshotHash = policySnapshotHash;
+        workflow.intentId = intentId;
+        upsertWorkflow(workflow);
+      }
       const next = {
         ...invocation,
         traceId: String(payload?.traceId || traceId).trim(),
@@ -1637,6 +1836,13 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         updatedAt: new Date().toISOString()
       };
       upsertServiceInvocation(next);
+      finalizeConsumerIntent?.(intentId, {
+        status: resp.ok && payload?.ok !== false ? 'completed' : 'failed',
+        resultRef: normalizeText(next.invocationId),
+        requestId: normalizeText(next.requestId),
+        traceId: normalizeText(next.traceId),
+        failureReason: normalizeText(next.error)
+      });
   
       return res.status(resp.status).json({
         ...payload,
@@ -1697,7 +1903,16 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         userOpHash: normalizeText(evidenceWorkflow?.userOpHash || invocation?.userOpHash || ''),
         updatedAt: new Date().toISOString()
       };
-      upsertServiceInvocation(failed);
+      if (invocationPersisted) upsertServiceInvocation(failed);
+      if (intentStarted) {
+        finalizeConsumerIntent?.(intentId, {
+          status: 'failed',
+          resultRef: normalizeText(failed.invocationId),
+          requestId: normalizeText(failed.requestId),
+          traceId: normalizeText(failed.traceId),
+          failureReason
+        });
+      }
       return res.status(500).json({
         ok: false,
         error: 'invoke_failed',
@@ -1876,6 +2091,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
           providerAgentId: String(service?.providerAgentId || '').trim(),
           capability: String(service?.action || item?.action || '').trim().toLowerCase(),
           traceId: String(item?.traceId || '').trim(),
+          intentId: String(item?.intentId || '').trim(),
           requestId: String(item?.requestId || '').trim(),
           state: String(item?.state || '').trim().toLowerCase(),
           sourceAgentId: String(item?.sourceAgentId || '').trim(),
@@ -1884,6 +2100,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
           amount: String(item?.amount || '').trim(),
           tokenAddress: String(item?.tokenAddress || '').trim(),
           recipient: String(item?.recipient || '').trim(),
+          authorityId: String(item?.authorityId || '').trim(),
+          policySnapshotHash: String(item?.policySnapshotHash || '').trim(),
+          authority:
+            item?.authorityPublic && typeof item.authorityPublic === 'object' ? item.authorityPublic : null,
           summary: String(item?.summary || '').trim(),
           error: String(item?.error || '').trim(),
           txHash: String(item?.txHash || '').trim(),

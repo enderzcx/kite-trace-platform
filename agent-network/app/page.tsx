@@ -79,7 +79,14 @@ function mapProviders(
   const response = payload as { items?: Array<Record<string, unknown>> } | null;
   if (!response?.items?.length) return fallbackProviders;
 
-  return response.items.map((item) => {
+  const providerItems = response.items.filter(
+    (item) =>
+      String(item.role || "") !== "router" &&
+      String(item.onboardingSource || "") !== "system"
+  );
+  if (!providerItems.length) return fallbackProviders;
+
+  return providerItems.map((item) => {
     const runtime =
       item.runtime && typeof item.runtime === "object"
         ? (item.runtime as Record<string, unknown>)

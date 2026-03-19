@@ -1,4 +1,8 @@
 import { mergeJobWithEscrowRead } from '../../lib/escrowReadModel.js';
+import {
+  buildBtcTradingPlanDeliveryStandard,
+  normalizeBtcTradingPlanEvidence
+} from '../../lib/deliverySchemas/btcTradingPlanV1.js';
 
 export function normalizeText(value = '') {
   return String(value || '').trim();
@@ -18,6 +22,7 @@ export function normalizeJobState(value = '') {
     [
       'created',
       'funding_pending',
+      'funding_failed',
       'pending_approval',
       'funded',
       'accepted',
@@ -40,7 +45,7 @@ export function hasEscrowBacking(job = {}) {
 }
 
 export function isTerminalJobState(state = '') {
-  return ['completed', 'rejected', 'approval_rejected', 'approval_expired', 'expired', 'failed'].includes(
+  return ['completed', 'rejected', 'approval_rejected', 'approval_expired', 'expired', 'failed', 'funding_failed'].includes(
     normalizeJobState(state)
   );
 }
@@ -297,6 +302,26 @@ export function createSharedJobStateHelpers(deps = {}) {
   function buildJobView(job = {}, buildApprovalPolicySnapshot = () => ({})) {
     const materialized = materializeJob(job);
     const approvalPolicy = buildApprovalPolicySnapshot(materialized, materialized?.approvalPolicy);
+    const delivery =
+      materialized?.delivery && typeof materialized.delivery === 'object' && !Array.isArray(materialized.delivery)
+        ? materialized.delivery
+        : null;
+    const deliveryEvidence = normalizeBtcTradingPlanEvidence(delivery, {
+      primaryTraceId: normalizeText(materialized?.traceId),
+      primaryEvidenceRef:
+        normalizeText(materialized?.evidenceRef) ||
+        (normalizeText(materialized?.traceId)
+          ? `/api/evidence/export?traceId=${encodeURIComponent(normalizeText(materialized.traceId))}`
+          : ''),
+      paymentRequestId: normalizeText(materialized?.paymentRequestId),
+      paymentTxHash: normalizeText(materialized?.paymentTxHash),
+      receiptRefs: [
+        normalizeText(materialized?.receiptRef) ||
+          (normalizeText(materialized?.paymentRequestId)
+            ? `/api/receipt/${encodeURIComponent(normalizeText(materialized.paymentRequestId))}`
+            : '')
+      ]
+    });
     return {
       jobId: normalizeText(materialized?.jobId),
       traceId: normalizeText(materialized?.traceId),
@@ -315,9 +340,21 @@ export function createSharedJobStateHelpers(deps = {}) {
       templateId: normalizeText(materialized?.templateId),
       serviceId: normalizeText(materialized?.serviceId),
       fundingRef: normalizeText(materialized?.fundingRef),
+      fundIntentId: normalizeText(materialized?.fundIntentId),
+      fundPolicySnapshotHash: normalizeText(materialized?.fundPolicySnapshotHash),
+      fundAuthority:
+        materialized?.fundAuthorityPublic && typeof materialized.fundAuthorityPublic === 'object'
+          ? materialized.fundAuthorityPublic
+          : materialized?.fundAuthority && typeof materialized.fundAuthority === 'object'
+            ? materialized.fundAuthority
+            : null,
       paymentRequestId: normalizeText(materialized?.paymentRequestId),
       paymentTxHash: normalizeText(materialized?.paymentTxHash),
       signerMode: normalizeText(materialized?.signerMode),
+      executionMode: normalizeText(materialized?.executionMode),
+      requesterRuntimeAddress: normalizeText(materialized?.requesterRuntimeAddress),
+      executorRuntimeAddress: normalizeText(materialized?.executorRuntimeAddress),
+      validatorRuntimeAddress: normalizeText(materialized?.validatorRuntimeAddress),
       approvalId: normalizeText(materialized?.approvalId),
       approvalState: normalizeText(materialized?.approvalState),
       approvalReasonCode: normalizeText(materialized?.approvalReasonCode),
@@ -339,10 +376,32 @@ export function createSharedJobStateHelpers(deps = {}) {
       inputHash: normalizeText(materialized?.inputHash),
       submissionRef: normalizeText(materialized?.submissionRef),
       submissionHash: normalizeText(materialized?.submissionHash),
+      submitIntentId: normalizeText(materialized?.submitIntentId),
+      submitPolicySnapshotHash: normalizeText(materialized?.submitPolicySnapshotHash),
+      submitAuthority:
+        materialized?.submitAuthorityPublic && typeof materialized.submitAuthorityPublic === 'object'
+          ? materialized.submitAuthorityPublic
+          : materialized?.submitAuthority && typeof materialized.submitAuthority === 'object'
+            ? materialized.submitAuthority
+            : null,
       resultRef: normalizeText(materialized?.resultRef),
       resultHash: normalizeText(materialized?.resultHash),
-      receiptRef: normalizeText(materialized?.receiptRef),
-      evidenceRef: normalizeText(materialized?.evidenceRef),
+      delivery,
+      deliverySchema: normalizeText(materialized?.deliverySchema || delivery?.schema || ''),
+      deliverySchemaConformant:
+        typeof materialized?.deliverySchemaConformant === 'boolean' ? materialized.deliverySchemaConformant : null,
+      deliverySchemaErrors: Array.isArray(materialized?.deliverySchemaErrors) ? materialized.deliverySchemaErrors : [],
+      deliveryEvidence,
+      receiptRef:
+        normalizeText(materialized?.receiptRef) ||
+        (normalizeText(materialized?.paymentRequestId)
+          ? `/api/receipt/${encodeURIComponent(normalizeText(materialized.paymentRequestId))}`
+          : ''),
+      evidenceRef:
+        normalizeText(materialized?.evidenceRef) ||
+        (normalizeText(materialized?.traceId)
+          ? `/api/evidence/export?traceId=${encodeURIComponent(normalizeText(materialized.traceId))}`
+          : ''),
       summary: normalizeText(materialized?.summary),
       error: normalizeText(materialized?.error),
       evaluator: normalizeText(materialized?.evaluator),
@@ -361,9 +420,13 @@ export function createSharedJobStateHelpers(deps = {}) {
       submitAnchorConfirmedAt: normalizeText(materialized?.submitAnchorConfirmedAt),
       outcomeAnchorId: normalizeText(materialized?.outcomeAnchorId),
       outcomeAnchorTxHash: normalizeText(materialized?.outcomeAnchorTxHash),
+      escrowFundUserOpHash: normalizeText(materialized?.escrowFundUserOpHash),
       escrowFundTxHash: normalizeText(materialized?.escrowFundTxHash),
+      escrowAcceptUserOpHash: normalizeText(materialized?.escrowAcceptUserOpHash),
       escrowAcceptTxHash: normalizeText(materialized?.escrowAcceptTxHash),
+      escrowSubmitUserOpHash: normalizeText(materialized?.escrowSubmitUserOpHash),
       escrowSubmitTxHash: normalizeText(materialized?.escrowSubmitTxHash),
+      escrowValidateUserOpHash: normalizeText(materialized?.escrowValidateUserOpHash),
       escrowValidateTxHash: normalizeText(materialized?.escrowValidateTxHash),
       createdAt: normalizeText(materialized?.createdAt),
       updatedAt: normalizeText(materialized?.updatedAt),
@@ -399,14 +462,12 @@ export function createSharedJobStateHelpers(deps = {}) {
       onchainEnforced: hasEscrowBacking(view),
       enforcementMode: hasEscrowBacking(view) ? 'onchain_job_escrow_v1' : 'backend_materialized'
     };
-    const deliveryStandard = {
-      version: 'ktrace-delivery-v1',
-      definition: 'validator_approve + result_hash_submitted + outcome_anchor_onchain',
-      validatorApproved: view.state === 'completed',
-      resultHashSubmitted: Boolean(view.resultHash || view.submissionHash),
+    const deliveryStandard = buildBtcTradingPlanDeliveryStandard({
+      delivery: view.delivery,
+      resultHash: view.resultHash || view.submissionHash,
       outcomeAnchored: Boolean(view.outcomeAnchorTxHash),
-      satisfied: view.state === 'completed' && Boolean(view.resultHash || view.submissionHash) && Boolean(view.outcomeAnchorTxHash)
-    };
+      validatorApproved: view.state === 'completed'
+    });
     const contractPrimitives = {
       escrow: {
         present: Boolean(hasEscrow),
@@ -428,10 +489,23 @@ export function createSharedJobStateHelpers(deps = {}) {
       },
       roleEnforcement: {
         onchainEnforced: hasEscrowBacking(view),
-        executionMode: hasEscrowBacking(view) ? 'requester_executor_validator_signers' : 'backend_owner_only',
+        executionMode:
+          view.executionMode === 'aa-native' || view.requesterRuntimeAddress || view.executorRuntimeAddress || view.validatorRuntimeAddress
+            ? 'aa_account_role_enforced'
+            : hasEscrowBacking(view)
+              ? 'requester_executor_validator_signers'
+              : 'backend_owner_only',
         requesterAddress: view.payer,
         executorAddress: view.executor,
-        validatorAddress: view.validator
+        validatorAddress: view.validator,
+        roleRuntimeSummary:
+          view.executionMode === 'aa-native' || view.requesterRuntimeAddress || view.executorRuntimeAddress || view.validatorRuntimeAddress
+            ? {
+                requesterRuntimeAddress: view.requesterRuntimeAddress || view.payer,
+                executorRuntimeAddress: view.executorRuntimeAddress || view.executor,
+                validatorRuntimeAddress: view.validatorRuntimeAddress || view.validator
+              }
+            : null
       },
       staking: {
         present: hasStake,
@@ -549,12 +623,24 @@ export function createSharedJobStateHelpers(deps = {}) {
         approvalDecisionNote: view.approvalDecisionNote
       },
       evidence: {
+        primaryTraceId: view.deliveryEvidence?.primaryTraceId || view.traceId,
+        primaryEvidenceRef: view.deliveryEvidence?.primaryEvidenceRef || view.evidenceRef,
+        paymentRequestId: view.deliveryEvidence?.paymentRequestId || view.paymentRequestId,
+        paymentTxHash: view.deliveryEvidence?.paymentTxHash || view.paymentTxHash,
+        dataSourceTraceIds: Array.isArray(view.deliveryEvidence?.dataSourceTraceIds)
+          ? view.deliveryEvidence.dataSourceTraceIds
+          : [],
+        receiptRefs: Array.isArray(view.deliveryEvidence?.receiptRefs)
+          ? view.deliveryEvidence.receiptRefs
+          : [view.receiptRef].filter(Boolean),
+        deliveredAt: view.deliveryEvidence?.deliveredAt || view.submittedAt || '',
         receiptRef: view.receiptRef,
         evidenceRef: view.evidenceRef,
         resultRef: view.resultRef,
         resultHash: view.resultHash,
         inputHash: view.inputHash
-      }
+      },
+      delivery: view.delivery
     };
   }
 

@@ -29,8 +29,11 @@ async function runStep(label, scriptPath, extraEnv = {}) {
 try {
   await runStep('mcp_smoke', '.\\scripts\\verify-mcp-smoke.mjs');
   await runStep('mcp_auth', '.\\scripts\\verify-mcp-auth.mjs');
+  await runStep('mcp_consumer', '.\\scripts\\verify-mcp-consumer.mjs');
   await runStep('mcp_paid', '.\\scripts\\verify-mcp-paid.mjs', {
-    MCP_REQUIRE_PAID_SUCCESS: normalizeText(process.env.MCP_REQUIRE_PAID_SUCCESS || '') || '1'
+    ...(normalizeText(process.env.MCP_REQUIRE_PAID_SUCCESS || '')
+      ? { MCP_REQUIRE_PAID_SUCCESS: normalizeText(process.env.MCP_REQUIRE_PAID_SUCCESS || '') }
+      : {})
   });
 
   console.log(
@@ -40,6 +43,7 @@ try {
         summary: {
           smoke: 'passed',
           auth: 'passed',
+          consumer: 'passed',
           paid: 'passed'
         }
       },

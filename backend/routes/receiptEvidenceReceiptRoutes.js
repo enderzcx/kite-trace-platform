@@ -2,6 +2,7 @@ export function registerReceiptEvidenceReceiptRoutes(ctx = {}) {
   const { app, deps = {}, helpers = {} } = ctx;
   const {
     fetchXReaderDigest,
+    buildEvidenceExportPayloadForTrace,
     normalizeXReaderParams,
     parseExcerptMaxChars,
     signResponseHash,
@@ -31,6 +32,10 @@ export function registerReceiptEvidenceReceiptRoutes(ctx = {}) {
       jobs.find((item) => String(item?.traceId || '').trim() === String(workflow?.traceId || '').trim()) || null;
     const job = await hydrateJobForRead(jobCandidate);
     const jobAudit = buildJobAuditSnapshot(job);
+    const flowTraceId = String(workflow?.traceId || reqItem?.a2a?.traceId || '').trim();
+    const exportResult = flowTraceId ? await buildEvidenceExportPayloadForTrace(flowTraceId) : null;
+    const exportPayload = exportResult?.ok ? exportResult.exportPayload : null;
+    const authorityEnvelope = exportPayload?.authorization || null;
     const action = String(reqItem?.action || workflow?.type || '').trim().toLowerCase();
     const resultPayload = (workflow?.result && typeof workflow.result === 'object' ? workflow.result : null) ||
       (reqItem?.result && typeof reqItem.result === 'object' ? reqItem.result : {}) ||
@@ -77,7 +82,10 @@ export function registerReceiptEvidenceReceiptRoutes(ctx = {}) {
       approvalReasonCode: String(jobAudit?.approvalReasonCode || '').trim(),
       approvalPolicy:
         jobAudit?.approvalPolicy && typeof jobAudit.approvalPolicy === 'object' ? jobAudit.approvalPolicy : {},
-      authorizationId: String(jobAudit?.authorizationId || '').trim(),
+      authorizationId: String(authorityEnvelope?.authorityId || jobAudit?.authorizationId || '').trim(),
+      authorityId: String(authorityEnvelope?.authorityId || '').trim(),
+      intentId: String(authorityEnvelope?.intentId || '').trim(),
+      policySnapshotHash: String(authorityEnvelope?.policySnapshotHash || '').trim(),
       authorizedBy: String(jobAudit?.authorizedBy || '').trim(),
       authorizationMode: String(jobAudit?.authorizationMode || '').trim(),
       authorizationPayloadHash: String(jobAudit?.authorizationPayloadHash || '').trim(),
@@ -126,18 +134,27 @@ export function registerReceiptEvidenceReceiptRoutes(ctx = {}) {
             : ''
       },
       job: jobAudit,
-      authorization: jobAudit
+      authorization: authorityEnvelope
         ? {
-            authorizationId: jobAudit.authorizationId,
-            authorizedBy: jobAudit.authorizedBy,
-            authorizedAt: jobAudit.authorizedAt,
-            authorizationMode: jobAudit.authorizationMode,
-            authorizationPayloadHash: jobAudit.authorizationPayloadHash,
-            authorizationExpiresAt: jobAudit.authorizationExpiresAt,
-            authorizationAudience: jobAudit.authorizationAudience,
-            allowedCapabilities: jobAudit.allowedCapabilities
+            authorityId: authorityEnvelope.authorityId,
+            intentId: authorityEnvelope.intentId,
+            policySnapshotHash: authorityEnvelope.policySnapshotHash,
+            policySnapshot: authorityEnvelope.policySnapshot,
+            authoritySummary: authorityEnvelope.authoritySummary,
+            validationDecision: authorityEnvelope.validationDecision
           }
-        : null,
+        : jobAudit
+          ? {
+              authorizationId: jobAudit.authorizationId,
+              authorizedBy: jobAudit.authorizedBy,
+              authorizedAt: jobAudit.authorizedAt,
+              authorizationMode: jobAudit.authorizationMode,
+              authorizationPayloadHash: jobAudit.authorizationPayloadHash,
+              authorizationExpiresAt: jobAudit.authorizationExpiresAt,
+              authorizationAudience: jobAudit.authorizationAudience,
+              allowedCapabilities: jobAudit.allowedCapabilities
+            }
+          : null,
       humanApproval: jobAudit
         ? {
             approvalState: jobAudit.approvalState,

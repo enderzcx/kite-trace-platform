@@ -1,14 +1,15 @@
 import { consumeFlagValue } from './shared.js';
 
-const BUY_REQUEST_VALUE_FLAGS = new Set(['--provider', '--capability', '--input', '--trace-id']);
-const BUY_DIRECT_VALUE_FLAGS = new Set(['--template', '--provider', '--capability', '--input', '--trace-id']);
+const BUY_REQUEST_VALUE_FLAGS = new Set(['--provider', '--capability', '--input', '--trace-id', '--intent-id']);
+const BUY_DIRECT_VALUE_FLAGS = new Set(['--template', '--provider', '--capability', '--input', '--trace-id', '--intent-id']);
 
 export function parseBuyRequestArgs(argv = []) {
   const options = {
     provider: '',
     capability: '',
     input: '',
-    traceId: ''
+    traceId: '',
+    intentId: ''
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -20,6 +21,7 @@ export function parseBuyRequestArgs(argv = []) {
     if (flag === '--capability') options.capability = String(value || '').trim();
     if (flag === '--input') options.input = String(value || '').trim();
     if (flag === '--trace-id') options.traceId = String(value || '').trim();
+    if (flag === '--intent-id') options.intentId = String(value || '').trim();
     index += consumed - 1;
   }
 
@@ -32,7 +34,8 @@ export function parseBuyDirectArgs(argv = []) {
     provider: '',
     capability: '',
     input: '',
-    traceId: ''
+    traceId: '',
+    intentId: ''
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -45,6 +48,7 @@ export function parseBuyDirectArgs(argv = []) {
     if (flag === '--capability') options.capability = String(value || '').trim();
     if (flag === '--input') options.input = String(value || '').trim();
     if (flag === '--trace-id') options.traceId = String(value || '').trim();
+    if (flag === '--intent-id') options.intentId = String(value || '').trim();
     index += consumed - 1;
   }
 

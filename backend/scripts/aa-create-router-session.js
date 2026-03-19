@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GokiteAASDK } from '../lib/gokite-aa-sdk.js';
+import { resolveAaAccountImplementation, resolveAaFactoryAddress } from '../lib/aaConfig.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +16,8 @@ const BUNDLER_URL =
   process.env.KITEAI_BUNDLER_URL || 'https://bundler-service.staging.gokite.ai/rpc/';
 const ENTRYPOINT =
   process.env.KITE_ENTRYPOINT_ADDRESS || '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108';
+const ACCOUNT_FACTORY_ADDRESS = resolveAaFactoryAddress();
+const ACCOUNT_IMPLEMENTATION_ADDRESS = resolveAaAccountImplementation();
 const SESSION_RUNTIME_PATH = path.resolve(backendDir, 'data', 'session_runtime.json');
 
 const SETTLEMENT_TOKEN = String(
@@ -76,7 +79,9 @@ async function main() {
     network: 'kite_testnet',
     rpcUrl: RPC_URL,
     bundlerUrl: BUNDLER_URL,
-    entryPointAddress: ENTRYPOINT
+    entryPointAddress: ENTRYPOINT,
+    accountFactoryAddress: ACCOUNT_FACTORY_ADDRESS,
+    accountImplementationAddress: ACCOUNT_IMPLEMENTATION_ADDRESS
   });
 
   const salt = BigInt(String(process.env.KITECLAW_AA_SALT || '0').trim() || '0');
@@ -175,10 +180,14 @@ async function main() {
     sessionPrivateKey: sessionWallet.privateKey,
     sessionId,
     sessionTxHash: tx.hash,
+    tokenAddress,
     expiresAt: 0,
     maxPerTx: Number(singleLimit),
     dailyLimit: Number(dailyLimit),
     gatewayRecipient,
+    accountFactoryAddress: ACCOUNT_FACTORY_ADDRESS,
+    accountImplementationAddress: ACCOUNT_IMPLEMENTATION_ADDRESS,
+    accountVersion: REQUIRED_AA_VERSION,
     source: 'cli-router-session',
     updatedAt: Date.now()
   };

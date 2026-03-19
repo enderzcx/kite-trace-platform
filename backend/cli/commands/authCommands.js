@@ -4,6 +4,10 @@ export function createAuthCommandHandlers({
   parseSessionAuthorizeArgs,
   parseSessionRequestArgs,
   parseSessionWaitArgs,
+  parseAuthPolicyArgs,
+  parseAuthPolicySetArgs,
+  parseAuthPolicyRevokeArgs,
+  parseAuthValidateArgs,
   requestJson,
   writeLocalProfileConfig,
   normalizeWalletAddress,
@@ -1034,6 +1038,123 @@ export function createAuthCommandHandlers({
     });
   }
 
+  async function handleAuthPolicy(runtimeBundle) {
+    const runtime = runtimeBundle.config;
+    const payload = await requestJson(runtime, {
+      pathname: '/api/session/policy',
+      apiKey: resolveAgentTransportApiKey(runtime)
+    });
+    return createEnvelope({
+      ok: true,
+      exitCode: 0,
+      command: { family: 'auth', action: 'policy', display: 'ktrace auth policy' },
+      runtime,
+      data: {
+        authority: payload?.authority || null,
+        runtime: payload?.runtime || null
+      },
+      message: payload?.authority
+        ? `Authority ${String(payload.authority.authorityId || '').trim()} is ${String(payload.authority.status || '').trim()}.`
+        : 'No active authority found.'
+    });
+  }
+
+  async function handleAuthPolicySet(runtimeBundle, commandArgs = []) {
+    const runtime = runtimeBundle.config;
+    const options = parseAuthPolicySetArgs ? parseAuthPolicySetArgs(commandArgs) : {};
+    const body = {};
+    if (options.allowedCapabilities) body.allowedCapabilities = options.allowedCapabilities;
+    if (options.allowedProviders) body.allowedProviders = options.allowedProviders;
+    if (options.allowedRecipients) body.allowedRecipients = options.allowedRecipients;
+    if (options.singleLimit) body.singleLimit = options.singleLimit;
+    if (options.dailyLimit) body.dailyLimit = options.dailyLimit;
+    if (options.totalLimit) body.totalLimit = options.totalLimit;
+    if (options.expiresAt) body.expiresAt = options.expiresAt;
+    if (options.consumerAgentLabel) body.consumerAgentLabel = options.consumerAgentLabel;
+    const payload = await requestJson(runtime, {
+      method: 'POST',
+      pathname: '/api/session/policy',
+      apiKey: resolveAgentTransportApiKey(runtime),
+      body
+    });
+    return createEnvelope({
+      ok: true,
+      exitCode: 0,
+      command: { family: 'auth', action: 'policy-set', display: 'ktrace auth policy-set' },
+      runtime,
+      data: {
+        authority: payload?.authority || null,
+        runtime: payload?.runtime || null
+      },
+      message: payload?.authority
+        ? `Authority policy updated. authorityId=${String(payload.authority.authorityId || '').trim()}`
+        : 'Policy update applied.'
+    });
+  }
+
+  async function handleAuthPolicyRevoke(runtimeBundle, commandArgs = []) {
+    const runtime = runtimeBundle.config;
+    const options = parseAuthPolicyRevokeArgs ? parseAuthPolicyRevokeArgs(commandArgs) : {};
+    const body = {};
+    if (options.revocationReason) body.revocationReason = options.revocationReason;
+    const payload = await requestJson(runtime, {
+      method: 'POST',
+      pathname: '/api/session/policy/revoke',
+      apiKey: resolveAgentTransportApiKey(runtime),
+      body
+    });
+    return createEnvelope({
+      ok: true,
+      exitCode: 0,
+      command: { family: 'auth', action: 'policy-revoke', display: 'ktrace auth policy-revoke' },
+      runtime,
+      data: {
+        authority: payload?.authority || null,
+        runtime: payload?.runtime || null
+      },
+      message: payload?.authority
+        ? `Authority ${String(payload.authority.authorityId || '').trim()} revoked.`
+        : 'Authority revoke submitted.'
+    });
+  }
+
+  async function handleAuthValidate(runtimeBundle, commandArgs = []) {
+    const runtime = runtimeBundle.config;
+    const options = parseAuthValidateArgs ? parseAuthValidateArgs(commandArgs) : {};
+    const body = {};
+    if (options.provider) body.provider = options.provider;
+    if (options.capability) body.capability = options.capability;
+    if (options.recipient) body.recipient = options.recipient;
+    if (options.amount) body.amount = options.amount;
+    if (options.actionKind) body.actionKind = options.actionKind;
+    if (options.referenceId) body.referenceId = options.referenceId;
+    if (options.intentId) body.intentId = options.intentId;
+    const payload = await requestJson(runtime, {
+      method: 'POST',
+      pathname: '/api/session/validate',
+      apiKey: resolveAgentTransportApiKey(runtime),
+      body
+    });
+    const allowed = Boolean(payload?.allowed);
+    return createEnvelope({
+      ok: allowed,
+      exitCode: allowed ? 0 : 1,
+      command: { family: 'auth', action: 'validate', display: 'ktrace auth validate' },
+      runtime,
+      data: {
+        allowed,
+        authority: payload?.authority || null,
+        policySnapshotHash: String(payload?.policySnapshotHash || '').trim(),
+        detail: payload?.detail || null,
+        error: allowed ? null : String(payload?.error || '').trim(),
+        reason: allowed ? null : String(payload?.reason || '').trim()
+      },
+      message: allowed
+        ? `Action allowed. policySnapshotHash=${String(payload?.policySnapshotHash || '').trim()}`
+        : `Action denied: ${String(payload?.error || payload?.reason || 'authority_validation_failed').trim()}`
+    });
+  }
+
   return {
     handleAuthLogin,
     handleAuthWhoami,
@@ -1041,6 +1162,10 @@ export function createAuthCommandHandlers({
     handleSessionAuthorize,
     handleSessionRequest,
     handleSessionWait,
-    handleSessionApprove
+    handleSessionApprove,
+    handleAuthPolicy,
+    handleAuthPolicySet,
+    handleAuthPolicyRevoke,
+    handleAuthValidate
   };
 }

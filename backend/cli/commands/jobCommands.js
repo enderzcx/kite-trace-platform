@@ -1,5 +1,6 @@
 export function createJobCommandHandlers({
   parseJobCreateArgs,
+  parseJobFundArgs,
   parseJobSubmitArgs,
   parseJobCompleteArgs,
   parseJobRejectArgs,
@@ -18,19 +19,51 @@ export function createJobCommandHandlers({
   async function fetchTraceAnchorStatus(runtime, { jobId = '', publicRead = false } = {}) {
     const normalizedJobId = String(jobId || '').trim();
     if (!normalizedJobId) return null;
-    return requestJson(runtime, {
-      pathname: publicRead
-        ? `/api/public/jobs/${encodeURIComponent(normalizedJobId)}/trace-anchor`
-        : `/api/jobs/${encodeURIComponent(normalizedJobId)}/trace-anchor`,
-      apiKey: publicRead ? '' : resolveAgentTransportApiKey(runtime),
-      omitRuntimeApiKey: publicRead
-    });
+    try {
+      return await requestJson(runtime, {
+        pathname: publicRead
+          ? `/api/public/jobs/${encodeURIComponent(normalizedJobId)}/trace-anchor`
+          : `/api/jobs/${encodeURIComponent(normalizedJobId)}/trace-anchor`,
+        apiKey: publicRead ? '' : resolveAgentTransportApiKey(runtime),
+        omitRuntimeApiKey: publicRead
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: String(error?.code || 'trace_anchor_unavailable').trim(),
+          message: String(error?.message || 'trace anchor unavailable').trim(),
+          statusCode: Number(error?.statusCode || 0) || 0
+        }
+      };
+    }
   }
 
   function mergeTraceAnchorIntoJob(job = {}, traceAnchor = null) {
-    if (!traceAnchor || typeof traceAnchor !== 'object') return job;
-    return {
+    const paymentRequestId = String(job?.paymentRequestId || '').trim();
+    const traceId = String(job?.traceId || '').trim();
+    const baseJob = {
       ...job,
+      receiptRef:
+        String(job?.receiptRef || '').trim() ||
+        (paymentRequestId ? `/api/receipt/${encodeURIComponent(paymentRequestId)}` : ''),
+      evidenceRef:
+        String(job?.evidenceRef || '').trim() ||
+        (traceId ? `/api/evidence/export?traceId=${encodeURIComponent(traceId)}` : '')
+    };
+    if (!traceAnchor || typeof traceAnchor !== 'object') return baseJob;
+    if (traceAnchor?.ok === false) {
+      return {
+        ...baseJob,
+        traceAnchorError: {
+          code: String(traceAnchor?.error?.code || '').trim(),
+          message: String(traceAnchor?.error?.message || '').trim(),
+          statusCode: Number(traceAnchor?.error?.statusCode || 0) || 0
+        }
+      };
+    }
+    return {
+      ...baseJob,
       guardConfigured: Boolean(traceAnchor?.guardConfigured),
       guardAddress: String(traceAnchor?.guardAddress || '').trim(),
       verificationMode: String(traceAnchor?.verificationMode || '').trim(),
@@ -60,7 +93,6 @@ export function createJobCommandHandlers({
       });
     }
 
-    const wallet = normalizeWalletAddress(runtime.wallet);
     const input = await readStructuredInput(options.input);
     const payload = await requestJson(runtime, {
       method: 'POST',
@@ -77,8 +109,7 @@ export function createJobCommandHandlers({
         ...(options.validator ? { validator: String(options.validator || '').trim() } : {}),
         ...(options.escrowAmount ? { escrowAmount: String(options.escrowAmount || '').trim() } : {}),
         input,
-        ...(options.traceId ? { traceId: options.traceId } : {}),
-        ...(wallet ? { payer: wallet } : {})
+        ...(options.traceId ? { traceId: options.traceId } : {})
       }
     });
     const job = payload?.job || {};
@@ -96,7 +127,7 @@ export function createJobCommandHandlers({
           provider: String(job?.provider || provider).trim(),
           capability: String(job?.capability || capability).trim(),
           budget: String(job?.budget || options.budget || '').trim(),
-          payer: String(job?.payer || wallet || '').trim(),
+          payer: String(job?.payer || '').trim(),
           executor: String(job?.executor || options.executor || '').trim(),
           validator: String(job?.validator || options.validator || '').trim(),
           escrowAmount: String(job?.escrowAmount || options.escrowAmount || '').trim(),
@@ -115,6 +146,8 @@ export function createJobCommandHandlers({
   async function handleJobFund(runtimeBundle, commandArgs = []) {
     const runtime = runtimeBundle.config;
     const jobId = ensureReference(commandArgs, 'job-id');
+    const options = parseJobFundArgs ? parseJobFundArgs(commandArgs.slice(1)) : { intentId: '' };
+    const intentId = String(options.intentId || '').trim();
     const wallet = normalizeWalletAddress(runtime.wallet);
     const preflight = await ensureUsableSession(runtime, {
       wallet,
@@ -125,7 +158,7 @@ export function createJobCommandHandlers({
       pathname: `/api/jobs/${encodeURIComponent(jobId)}/fund`,
       apiKey: resolveAgentTransportApiKey(runtime),
       body: {
-        ...(wallet ? { payer: wallet } : {})
+        ...(intentId ? { intentId } : {})
       }
     });
     const job = payload?.job || {};
@@ -222,13 +255,14 @@ export function createJobCommandHandlers({
     const runtime = runtimeBundle.config;
     const jobId = ensureReference(commandArgs, 'job-id');
     const options = parseJobSubmitArgs(commandArgs.slice(1));
+    const intentId = String(options.intentId || '').trim();
     const wallet = normalizeWalletAddress(runtime.wallet);
     const preflight = await ensureUsableSession(runtime, {
       wallet,
       strategy: runtime.sessionStrategy
     });
     const body = {
-      ...(wallet ? { payer: wallet } : {})
+      ...(intentId ? { intentId } : {})
     };
     if (options.input) {
       body.input = await readStructuredInput(options.input);

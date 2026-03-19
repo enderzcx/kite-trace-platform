@@ -33,6 +33,8 @@ import {
 import { GokiteAASDK } from './lib/gokite-aa-sdk.js';
 import { createSessionPayHelpers } from './lib/sessionPay.js';
 import { createEnsureAAAccountDeployment } from './lib/aaAccount.js';
+import { createOnboardingSetupHelpers } from './lib/onboardingSetupHelpers.js';
+import { createClaudeConnectorAuthHelpers } from './lib/claudeConnectorAuth.js';
 import { createAutoXmtpNetworkLoop } from './lib/loops/xmtpLoop.js';
 import { createAutoTradePlanLoop } from './lib/loops/tradePlanLoop.js';
 import { createAutoJobExpiryLoop } from './lib/loops/jobExpiryLoop.js';
@@ -58,6 +60,7 @@ import { createWorkflowHelpers } from './lib/workflowHelpers.js';
 import { createA2AHelpers } from './lib/a2aHelpers.js';
 import { createDataStoreAccessors } from './lib/dataStoreAccessors.js';
 import { createX402WorkflowHelpers } from './lib/x402WorkflowHelpers.js';
+import { createConsumerAuthorityHelpers } from './lib/consumerAuthority.js';
 import { createLlmAdapter } from './services/llmAdapter.js';
 import { createHyperliquidAdapter } from './services/hyperliquidAdapter.js';
 import { createPersistenceStore } from './services/persistenceStore.js';
@@ -133,6 +136,10 @@ const {
   sessionRuntimeIndexPath,
   sessionAuthorizationsPath,
   sessionApprovalRequestsPath,
+  onboardingChallengesPath,
+  accountApiKeysPath,
+  connectorInstallCodesPath,
+  connectorGrantsPath,
   workflowPath,
   identityChallengePath,
   servicesPath,
@@ -140,6 +147,7 @@ const {
   serviceInvocationsPath,
   purchasesPath,
   jobsPath,
+  consumerIntentsPath,
   reputationSignalsPath,
   validationRecordsPath,
   trustPublicationsPath,
@@ -178,6 +186,8 @@ const {
   BACKEND_RPC_URL,
   BACKEND_BUNDLER_URL,
   BACKEND_ENTRYPOINT_ADDRESS,
+  KITE_AA_FACTORY_ADDRESS,
+  KITE_AA_ACCOUNT_IMPLEMENTATION,
   KITE_MIN_NATIVE_GAS,
   AA_V2_VERSION_TAG,
   KITE_REQUIRE_AA_V2,
@@ -190,6 +200,9 @@ const {
   KITE_BUNDLER_RPC_BACKOFF_FACTOR,
   KITE_BUNDLER_RPC_BACKOFF_JITTER_MS,
   KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS,
+  KTRACE_ESCROW_USEROP_SUBMIT_TIMEOUT_MS,
+  KTRACE_ESCROW_USEROP_WAIT_TIMEOUT_MS,
+  KTRACE_ESCROW_USEROP_POLL_INTERVAL_MS,
   KITE_SESSION_PAY_RETRIES,
   KITE_SESSION_PAY_TRANSPORT_BACKOFF_BASE_MS,
   KITE_SESSION_PAY_TRANSPORT_BACKOFF_MAX_MS,
@@ -264,6 +277,14 @@ const {
   API_KEY_AGENT,
   API_KEY_VIEWER,
   AUTH_DISABLED,
+  KTRACE_ONBOARDING_COOKIE_NAME,
+  KTRACE_ONBOARDING_COOKIE_SECRET,
+  KTRACE_ONBOARDING_COOKIE_TTL_MS,
+  KTRACE_ONBOARDING_CHALLENGE_TTL_MS,
+  KTRACE_ONBOARDING_CHALLENGE_MAX_ROWS,
+  KTRACE_CONNECTOR_INSTALL_CODE_TTL_MS,
+  KTRACE_CONNECTOR_INSTALL_CODE_MAX_ROWS,
+  KTRACE_CONNECTOR_GRANT_MAX_ROWS,
   RATE_LIMIT_WINDOW_MS,
   RATE_LIMIT_MAX,
   IDENTITY_CHALLENGE_TTL_MS,
@@ -354,12 +375,23 @@ const {
   XMTP_PRICE_DB_DIRECTORY,
   XMTP_EXECUTOR_DB_DIRECTORY
 } = runtimeConfig;
-const { authConfigured, extractApiKey, resolveRoleByApiKey, requireRole } = createAuthHelpers({
+let onboardingSetupHelpers = null;
+let claudeConnectorAuthHelpers = null;
+const { authConfigured, extractApiKey, resolveRoleByApiKey, resolveAuthRequest, requireRole } = createAuthHelpers({
   AUTH_DISABLED,
   API_KEY_ADMIN,
   API_KEY_AGENT,
   API_KEY_VIEWER,
-  ROLE_RANK
+  ROLE_RANK,
+  ONBOARDING_COOKIE_NAME: KTRACE_ONBOARDING_COOKIE_NAME,
+  hasDynamicAuthSource: () =>
+    Boolean(
+      KTRACE_ONBOARDING_COOKIE_SECRET ||
+        (typeof readAccountApiKeys === 'function' && readAccountApiKeys().length > 0)
+    ),
+  resolveAccountApiKey: (key) => onboardingSetupHelpers?.resolveAccountApiKey?.(key) || null,
+  resolveOnboardingCookie: (token) => onboardingSetupHelpers?.resolveOnboardingCookie?.(token) || null,
+  touchAccountApiKeyUsage: (record) => onboardingSetupHelpers?.touchAccountApiKeyUsage?.(record) || null
 });
 
 const LLM_AGENT_MODEL_MAP = {
@@ -425,6 +457,10 @@ const PERSIST_ARRAY_PATHS = [
   dataPath,
   x402Path,
   policyFailurePath,
+  onboardingChallengesPath,
+  accountApiKeysPath,
+  connectorInstallCodesPath,
+  connectorGrantsPath,
   workflowPath,
   identityChallengePath,
   servicesPath,
@@ -432,6 +468,7 @@ const PERSIST_ARRAY_PATHS = [
   serviceInvocationsPath,
   purchasesPath,
   jobsPath,
+  consumerIntentsPath,
   reputationSignalsPath,
   validationRecordsPath,
   trustPublicationsPath,
@@ -518,6 +555,14 @@ const {
   writeWorkflows,
   readIdentityChallenges,
   writeIdentityChallenges,
+  readOnboardingChallenges,
+  writeOnboardingChallenges,
+  readAccountApiKeys,
+  writeAccountApiKeys,
+  readConnectorInstallCodes,
+  writeConnectorInstallCodes,
+  readConnectorGrants,
+  writeConnectorGrants,
   readPublishedServices,
   writePublishedServices,
   readTemplates,
@@ -528,6 +573,8 @@ const {
   writePurchases,
   readJobs,
   writeJobs,
+  readConsumerIntents,
+  writeConsumerIntents,
   readReputationSignals,
   writeReputationSignals,
   readValidationRecords,
@@ -554,11 +601,16 @@ const {
     policyFailurePath,
     workflowPath,
     identityChallengePath,
+    onboardingChallengesPath,
+    accountApiKeysPath,
+    connectorInstallCodesPath,
+    connectorGrantsPath,
     servicesPath,
     templatesPath,
     serviceInvocationsPath,
     purchasesPath,
     jobsPath,
+    consumerIntentsPath,
     reputationSignalsPath,
     validationRecordsPath,
     trustPublicationsPath,
@@ -576,6 +628,31 @@ const {
   persistArrayCache,
   queuePersistWrite,
   writeJsonArrayToFile
+});
+onboardingSetupHelpers = createOnboardingSetupHelpers({
+  ONBOARDING_COOKIE_NAME: KTRACE_ONBOARDING_COOKIE_NAME,
+  ONBOARDING_COOKIE_SECRET: KTRACE_ONBOARDING_COOKIE_SECRET,
+  ONBOARDING_COOKIE_TTL_MS: KTRACE_ONBOARDING_COOKIE_TTL_MS,
+  ONBOARDING_CHALLENGE_TTL_MS: KTRACE_ONBOARDING_CHALLENGE_TTL_MS,
+  ONBOARDING_CHALLENGE_MAX_ROWS: KTRACE_ONBOARDING_CHALLENGE_MAX_ROWS,
+  NODE_ENV: process.env.NODE_ENV || '',
+  createTraceId,
+  normalizeAddress,
+  readOnboardingChallenges,
+  writeOnboardingChallenges,
+  readAccountApiKeys,
+  writeAccountApiKeys
+});
+claudeConnectorAuthHelpers = createClaudeConnectorAuthHelpers({
+  CONNECTOR_INSTALL_CODE_TTL_MS: KTRACE_CONNECTOR_INSTALL_CODE_TTL_MS,
+  CONNECTOR_INSTALL_CODE_MAX_ROWS: KTRACE_CONNECTOR_INSTALL_CODE_MAX_ROWS,
+  CONNECTOR_GRANT_MAX_ROWS: KTRACE_CONNECTOR_GRANT_MAX_ROWS,
+  createTraceId,
+  normalizeAddress,
+  readConnectorInstallCodes,
+  writeConnectorInstallCodes,
+  readConnectorGrants,
+  writeConnectorGrants
 });
 const {
   sanitizeSessionRuntime,
@@ -740,7 +817,6 @@ const {
   PORT,
   waitMs
 });
-
 const apiRateLimit = createApiRateLimit({
   extractApiKey,
   rateLimitMax: RATE_LIMIT_MAX,
@@ -761,6 +837,9 @@ const ensureAAAccountDeployment = createEnsureAAAccountDeployment({
   BACKEND_RPC_URL,
   BACKEND_BUNDLER_URL,
   BACKEND_ENTRYPOINT_ADDRESS,
+  KITE_AA_FACTORY_ADDRESS,
+  KITE_AA_ACCOUNT_IMPLEMENTATION,
+  AA_V2_VERSION_TAG,
   KITE_BUNDLER_RPC_TIMEOUT_MS,
   KITE_BUNDLER_RPC_RETRIES,
   BUNDLER_RPC_BACKOFF_POLICY,
@@ -1092,14 +1171,57 @@ const { checkAnchorExistsOnChain, publishTrustPublicationOnChain, publishJobLife
   jobLifecycleAnchorAbi: jobLifecycleAnchorV2Abi,
   trustPublicationAnchorAbi
 });
+const {
+  beginConsumerIntent,
+  buildAuthorityPublicSummary,
+  buildAuthoritySnapshot,
+  buildPolicySnapshotHash,
+  finalizeConsumerIntent,
+  findConsumerIntent,
+  materializeAuthority,
+  revokeConsumerAuthorityPolicy,
+  validateConsumerAuthority,
+  writeConsumerAuthorityPolicy
+} = createConsumerAuthorityHelpers({
+  crypto,
+  normalizeAddress,
+  readPolicyConfig,
+  buildPolicySnapshot,
+  evaluateTransferPolicy,
+  logPolicyFailure,
+  markSessionPayFailure,
+  readX402Requests,
+  readConsumerIntents,
+  writeConsumerIntents,
+  readSessionRuntime,
+  resolveSessionRuntime,
+  writeSessionRuntime
+});
 const escrowHelpers = createEscrowHelpers({
   backendSigner,
   ethers,
   escrowAddress: ERC8183_ESCROW_ADDRESS,
   settlementToken: SETTLEMENT_TOKEN,
-  requesterPrivateKey: ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED,
-  executorPrivateKey: ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED,
-  validatorPrivateKey: ERC8183_VALIDATOR_PRIVATE_KEY_NORMALIZED
+  resolveSessionRuntime,
+  resolveSessionOwnerByAaWallet,
+  rpcUrl: BACKEND_RPC_URL,
+  bundlerUrl: BACKEND_BUNDLER_URL,
+  entryPointAddress: BACKEND_ENTRYPOINT_ADDRESS,
+  accountFactoryAddress: KITE_AA_FACTORY_ADDRESS,
+  accountImplementationAddress: KITE_AA_ACCOUNT_IMPLEMENTATION,
+  bundlerRpcTimeoutMs: KITE_BUNDLER_RPC_TIMEOUT_MS,
+  bundlerRpcRetries: KITE_BUNDLER_RPC_RETRIES,
+  bundlerRpcBackoffBaseMs: BUNDLER_RPC_BACKOFF_POLICY.baseMs,
+  bundlerRpcBackoffMaxMs: BUNDLER_RPC_BACKOFF_POLICY.maxMs,
+  bundlerRpcBackoffFactor: BUNDLER_RPC_BACKOFF_POLICY.factor,
+  bundlerRpcBackoffJitterMs: BUNDLER_RPC_BACKOFF_POLICY.jitterMs,
+  bundlerReceiptPollIntervalMs: KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS,
+  escrowUserOpSubmitTimeoutMs: KTRACE_ESCROW_USEROP_SUBMIT_TIMEOUT_MS,
+  escrowUserOpWaitTimeoutMs: KTRACE_ESCROW_USEROP_WAIT_TIMEOUT_MS,
+  escrowUserOpPollIntervalMs: KTRACE_ESCROW_USEROP_POLL_INTERVAL_MS,
+  aaVersionTag: AA_V2_VERSION_TAG,
+  requireAaV2: KITE_REQUIRE_AA_V2,
+  kiteMinNativeGas: KITE_MIN_NATIVE_GAS
 });
 const { lockEscrowFunds, acceptEscrowJob, submitEscrowResult, validateEscrowJob, expireEscrowJob, getEscrowJob } = escrowHelpers;
 
@@ -1553,6 +1675,8 @@ const routeDeps = Object.freeze({
   BACKEND_RPC_URL,
   BACKEND_BUNDLER_URL,
   BACKEND_ENTRYPOINT_ADDRESS,
+  KITE_AA_FACTORY_ADDRESS,
+  KITE_AA_ACCOUNT_IMPLEMENTATION,
   SETTLEMENT_TOKEN,
   MERCHANT_ADDRESS,
   POLICY_MAX_PER_TX_DEFAULT,
@@ -1673,6 +1797,7 @@ const routeDeps = Object.freeze({
   authConfigured,
   extractApiKey,
   resolveRoleByApiKey,
+  resolveAuthRequest,
   requireRole,
   normalizeAddress,
   normalizeAddresses,
@@ -1712,6 +1837,7 @@ const routeDeps = Object.freeze({
   ensureWorkflowIdentityVerified,
   readAgent001Results,
   readIdentityChallenges,
+  readOnboardingChallenges,
   readIdentityProfile,
   readJobs,
   readNetworkAgents,
@@ -1721,7 +1847,9 @@ const routeDeps = Object.freeze({
   readPublishedServices,
   readPurchases,
   readRecords,
+  readAccountApiKeys,
   readReputationSignals,
+  readConsumerIntents,
   readServiceInvocations,
   readSessionApprovalRequests,
   readSessionAuthorizations,
@@ -1733,13 +1861,16 @@ const routeDeps = Object.freeze({
   readXmtpEvents,
   readXmtpGroups,
   writeIdentityChallenges,
+  writeOnboardingChallenges,
   writeJsonObject,
   writeNetworkAgents,
   writeNetworkCommands,
   writePolicyConfig,
   writePolicyFailures,
   writePublishedServices,
+  writeAccountApiKeys,
   writeRecords,
+  writeConsumerIntents,
   writeSessionApprovalRequests,
   writeSessionAuthorizations,
   writeSessionRuntime,
@@ -1763,10 +1894,13 @@ const routeDeps = Object.freeze({
   buildBestServiceQuote,
   buildInfoPaymentIntentForTask,
   buildLatestWorkflowByRequestId,
+  buildAuthorityPublicSummary,
+  buildAuthoritySnapshot,
   buildLocalTechnicalRecoveryDispatch,
   buildNetworkRunSummaries,
   buildPaymentRequiredResponse,
   buildPolicySnapshot,
+  buildPolicySnapshotHash,
   buildResponseHash,
   buildRiskScorePaymentIntentForTask,
   buildServiceStatus,
@@ -1797,6 +1931,7 @@ const routeDeps = Object.freeze({
   extractTradingSymbolFromText,
   extractUserOpHashFromReason,
   findNetworkAgentById,
+  findConsumerIntent,
   findNetworkCommandById,
   findXmtpGroupRecord,
   getActionConfig,
@@ -1833,6 +1968,7 @@ const routeDeps = Object.freeze({
   maybePolishAgent001Reply,
   maybeSendAgent001ProgressDm,
   maybeSendAgent001TradePlanDm,
+  materializeAuthority,
   postSessionPayWithRetry,
   publishJobLifecycleAnchorOnChain,
   publishTrustPublicationOnChain,
@@ -1872,9 +2008,32 @@ const routeDeps = Object.freeze({
   summarizeNetworkCommandExecution,
   toPriceNumber,
   validateEscrowJob,
+  validateConsumerAuthority,
   validatePaymentProof,
   verifyIdentityChallengeResponse,
   verifyProofOnChain,
+  beginConsumerIntent,
+  finalizeConsumerIntent,
+  revokeConsumerAuthorityPolicy,
+  writeConsumerAuthorityPolicy,
+  createOnboardingChallengeMessage: onboardingSetupHelpers.createOnboardingChallengeMessage,
+  issueOnboardingAuthChallenge: onboardingSetupHelpers.issueOnboardingAuthChallenge,
+  verifyOnboardingAuthChallenge: onboardingSetupHelpers.verifyOnboardingAuthChallenge,
+  writeOnboardingAuthCookie: onboardingSetupHelpers.writeOnboardingAuthCookie,
+  clearOnboardingAuthCookie: onboardingSetupHelpers.clearOnboardingAuthCookie,
+  findActiveAccountApiKey: onboardingSetupHelpers.findActiveAccountApiKey,
+  generateAccountApiKey: onboardingSetupHelpers.generateAccountApiKey,
+  revokeAccountApiKey: onboardingSetupHelpers.revokeAccountApiKey,
+  buildAccountApiKeyPublicRecord: onboardingSetupHelpers.buildAccountApiKeyPublicRecord,
+  findPendingClaudeConnectorInstallCode: claudeConnectorAuthHelpers.findPendingInstallCodeByOwner,
+  findActiveClaudeConnectorGrant: claudeConnectorAuthHelpers.findActiveGrantByOwner,
+  issueClaudeConnectorInstallCode: claudeConnectorAuthHelpers.issueInstallCode,
+  revokeClaudeConnectorGrant: claudeConnectorAuthHelpers.revokeGrant,
+  resolveClaudeConnectorToken: claudeConnectorAuthHelpers.resolveConnectorToken,
+  claimClaudeConnectorInstallCode: claudeConnectorAuthHelpers.claimInstallCode,
+  touchClaudeConnectorGrantUsage: claudeConnectorAuthHelpers.touchGrantUsage,
+  buildClaudeConnectorInstallCodePublicRecord: claudeConnectorAuthHelpers.buildInstallCodePublicRecord,
+  buildClaudeConnectorGrantPublicRecord: claudeConnectorAuthHelpers.buildGrantPublicRecord,
   waitMs,
   withSessionUserOpLock,
   ERC8183_TRACE_ANCHOR_GUARD
@@ -1944,7 +2103,7 @@ const routeRegistrations = [
   {
     name: 'mcpRoutes',
     register: registerMcpRoutes,
-    requiredKeys: ['PACKAGE_VERSION', 'PORT', 'authConfigured', 'extractApiKey', 'getInternalAgentApiKey', 'resolveRoleByApiKey']
+    requiredKeys: ['PACKAGE_VERSION', 'PORT', 'authConfigured', 'extractApiKey', 'getInternalAgentApiKey', 'resolveAuthRequest']
   }
 ];
 

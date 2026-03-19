@@ -10,7 +10,11 @@ import {
   parseSessionApproveArgs,
   parseSessionAuthorizeArgs,
   parseSessionRequestArgs,
-  parseSessionWaitArgs
+  parseSessionWaitArgs,
+  parseAuthPolicyArgs,
+  parseAuthPolicySetArgs,
+  parseAuthPolicyRevokeArgs,
+  parseAuthValidateArgs
 } from './parsers/authParsers.js';
 import {
   parseApprovalListArgs,
@@ -29,6 +33,7 @@ import {
 import { parseDiscoverySelectArgs, parseDiscoveryRecommendArgs } from './parsers/discoveryParsers.js';
 import {
   parseJobCreateArgs,
+  parseJobFundArgs,
   parseJobSubmitArgs,
   parseJobCompleteArgs,
   parseJobRejectArgs,
@@ -227,6 +232,7 @@ const {
   handleJobExpire
 } = createJobCommandHandlers({
   parseJobCreateArgs,
+  parseJobFundArgs,
   parseJobSubmitArgs,
   parseJobCompleteArgs,
   parseJobRejectArgs,
@@ -250,13 +256,21 @@ const {
   handleSessionAuthorize,
   handleSessionRequest,
   handleSessionWait,
-  handleSessionApprove
+  handleSessionApprove,
+  handleAuthPolicy,
+  handleAuthPolicySet,
+  handleAuthPolicyRevoke,
+  handleAuthValidate
 } = createAuthCommandHandlers({
   parseAuthSessionArgs,
   parseSessionApproveArgs,
   parseSessionAuthorizeArgs,
   parseSessionRequestArgs,
   parseSessionWaitArgs,
+  parseAuthPolicyArgs,
+  parseAuthPolicySetArgs,
+  parseAuthPolicyRevokeArgs,
+  parseAuthValidateArgs,
   requestJson,
   writeLocalProfileConfig,
   normalizeWalletAddress,
@@ -338,6 +352,10 @@ const executeCommand = createCommandExecutor({
     handleSessionRequest,
     handleSessionWait,
     handleSessionApprove,
+    handleAuthPolicy,
+    handleAuthPolicySet,
+    handleAuthPolicyRevoke,
+    handleAuthValidate,
     handleApprovalList,
     handleApprovalShow,
     handleApprovalApprove,

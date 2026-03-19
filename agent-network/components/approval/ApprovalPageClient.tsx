@@ -120,14 +120,10 @@ const DEFAULT_BACKEND_URL =
   "http://127.0.0.1:3399";
 const KITE_CHAIN_ID_DEC = 2368;
 const KITE_CHAIN_HEX = "0x940";
-const KITE_FACTORY_ADDRESS =
-  process.env.NEXT_PUBLIC_KITE_ACCOUNT_FACTORY || "0xAba80c4c8748c114Ba8b61cda3b0112333C3b96E";
 const KITE_RPC_URL = process.env.NEXT_PUBLIC_KITE_RPC_URL || "https://rpc-testnet.gokite.ai/";
 const KITE_BLOCK_EXPLORER = process.env.NEXT_PUBLIC_KITE_EXPLORER || "https://testnet.kitescan.ai";
-const KITE_SALT = BigInt(process.env.NEXT_PUBLIC_KITE_AA_SALT || "0");
 const WALLETCONNECT_PROJECT_ID = String(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "").trim();
 
-const FACTORY_ABI = ["function createAccount(address owner, uint256 salt) returns (address)"];
 const ACCOUNT_ABI = [
   "function addSupportedToken(address token) external",
   "function createSession(bytes32 sessionId, address agent, tuple(uint256 timeWindow,uint160 budget,uint96 initialWindowStartTime,bytes32[] targetProviders)[] rules) external",
@@ -820,14 +816,14 @@ export default function ApprovalPageClient({
 
       setSteps((current) =>
         current.map((step, index) =>
-          index === 2 ? { ...step, status: "working", detail: "Checking or deploying AA wallet..." } : step
+          index === 2 ? { ...step, status: "working", detail: "Checking V2 AA wallet..." } : step
         )
       );
       const accountCode = await provider.getCode(aaWallet);
       if (!accountCode || accountCode === "0x") {
-        const factory = new ethers.Contract(KITE_FACTORY_ADDRESS, FACTORY_ABI, signer);
-        const createTx = await factory.createAccount(connectedAddress, KITE_SALT);
-        await createTx.wait();
+        throw new Error(
+          `KTrace approval expects the current V2 AA wallet to already be deployed. Deploy the KTrace V2 wallet at ${aaWallet} first, then retry.`
+        );
       }
       const account = new ethers.Contract(aaWallet, ACCOUNT_ABI, signer);
       const onchainOwner = normalizeAddress(await account.owner().catch(() => ""));
@@ -974,7 +970,7 @@ export default function ApprovalPageClient({
             Approve an <em className="not-italic text-[#3a4220]">agent session</em>
           </h1>
           <p className="max-w-xl text-[14px] leading-relaxed text-[#7a6e56]">
-            Connect your wallet to verify the request, deploy your AA wallet if needed,
+            Connect your wallet to verify the request, confirm the KTrace V2 AA wallet is already deployed,
             create the session, and sign the final authorization.
           </p>
           {/* Request meta chip */}
@@ -1150,7 +1146,7 @@ export default function ApprovalPageClient({
                 </p>
                 {[
                   "Connect to Kite Testnet and verify request matches your EOA.",
-                  "Deploy or confirm the AA wallet, then authorize the session address.",
+                  "Confirm the KTrace V2 AA wallet is already deployed, then authorize the session address.",
                   "Sign the final KTRACE approval — no owner key leaves the browser.",
                 ].map((line, i) => (
                   <div key={i} className="flex items-start gap-3 py-2">

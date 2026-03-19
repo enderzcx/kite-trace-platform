@@ -1,10 +1,14 @@
 export const COMMAND_CATALOG = {
   auth: {
-    description: 'Wallet identity and AA session readiness',
+    description: 'Wallet identity, AA session readiness, and consumer authority management',
     actions: {
       login: { batch: 'Batch 1: Auth And Session Readiness', implemented: true },
       whoami: { batch: 'Batch 1: Auth And Session Readiness', implemented: true },
-      session: { batch: 'Batch 1: Auth And Session Readiness', implemented: true }
+      session: { batch: 'Batch 1: Auth And Session Readiness', implemented: true },
+      policy: { batch: 'Consumer Authority Control Plane', implemented: true },
+      'policy-set': { batch: 'Consumer Authority Control Plane', implemented: true },
+      'policy-revoke': { batch: 'Consumer Authority Control Plane', implemented: true },
+      validate: { batch: 'Consumer Authority Control Plane', implemented: true }
     }
   },
   session: {

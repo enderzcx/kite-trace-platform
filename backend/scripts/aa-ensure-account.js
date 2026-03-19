@@ -4,6 +4,12 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GokiteAASDK } from '../lib/gokite-aa-sdk.js';
+import {
+  resolveAaAccountImplementation,
+  resolveAaExpectedImplementation,
+  resolveAaFactoryAddress,
+  resolveAaRequiredVersion
+} from '../lib/aaConfig.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,15 +21,12 @@ const BUNDLER_URL =
   process.env.KITEAI_BUNDLER_URL || 'https://bundler-service.staging.gokite.ai/rpc/';
 const ENTRYPOINT =
   process.env.KITE_ENTRYPOINT_ADDRESS || '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108';
-const BACKEND_SIGNER_KEY = process.env.KITECLAW_BACKEND_SIGNER_PRIVATE_KEY || '';
 const IMPLEMENTATION_SLOT =
   '0x360894A13BA1A3210667C828492DB98DCA3E2076CC3735A920A3CA505D382BBC';
-const EXPECTED_IMPLEMENTATION = ethers.getAddress(
-  String(process.env.KITE_AA_EXPECTED_IMPLEMENTATION || '0xD0dA36a3B402160901dC03a0B9B9f88D6cffA7b6')
-);
-const EXPECTED_VERSION = String(
-  process.env.KITE_AA_REQUIRED_VERSION || 'GokiteAccountV2-session-userop'
-).trim();
+const ACCOUNT_FACTORY_ADDRESS = resolveAaFactoryAddress();
+const ACCOUNT_IMPLEMENTATION_ADDRESS = resolveAaAccountImplementation();
+const EXPECTED_IMPLEMENTATION = ethers.getAddress(resolveAaExpectedImplementation());
+const EXPECTED_VERSION = resolveAaRequiredVersion();
 
 function parseArg(name) {
   const idx = process.argv.findIndex((item) => item === `--${name}`);
@@ -81,26 +84,25 @@ async function main() {
       'Missing valid owner address. Provide --owner 0x... or set KITECLAW_OWNER_ADDRESS in backend/.env.'
     );
   }
-  if (!BACKEND_SIGNER_KEY) {
-    throw new Error('Missing KITECLAW_BACKEND_SIGNER_PRIVATE_KEY in backend/.env.');
-  }
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const network = await provider.getNetwork();
-  const signer = new ethers.Wallet(BACKEND_SIGNER_KEY, provider);
   const sdk = new GokiteAASDK({
     network: 'kite_testnet',
     rpcUrl: RPC_URL,
     bundlerUrl: BUNDLER_URL,
-    entryPointAddress: ENTRYPOINT
+    entryPointAddress: ENTRYPOINT,
+    accountFactoryAddress: ACCOUNT_FACTORY_ADDRESS,
+    accountImplementationAddress: ACCOUNT_IMPLEMENTATION_ADDRESS
   });
 
-  const accountAddress = sdk.getAccountAddress(owner, salt);
+  const accountAddress = await sdk.resolveAccountAddress(owner, salt);
   const code = await provider.getCode(accountAddress);
   const isDeployed = Boolean(code && code !== '0x');
 
   console.log(`chainId: ${network.chainId}`);
   console.log(`factory: ${sdk.config.accountFactoryAddress}`);
+  console.log(`accountImplementation: ${sdk.config.accountImplementationAddress}`);
   console.log(`owner: ${owner}`);
   console.log(`salt: ${salt.toString()}`);
   console.log(`predictedAA: ${accountAddress}`);
@@ -112,23 +114,9 @@ async function main() {
     console.log('AA account already deployed. No action needed.');
     return;
   }
-
-  const factory = new ethers.Contract(
-    sdk.config.accountFactoryAddress,
-    ['function createAccount(address owner, uint256 salt) returns (address)'],
-    signer
+  throw new Error(
+    `Generic AA deployment via createAccount has been removed from KTrace. Provision the V2 AA wallet at ${accountAddress} first, then rerun this check.`
   );
-  const tx = await factory.createAccount(owner, salt);
-  console.log(`createAccount tx: ${tx.hash}`);
-  await tx.wait();
-
-  const codeAfter = await provider.getCode(accountAddress);
-  if (!codeAfter || codeAfter === '0x') {
-    throw new Error('createAccount tx confirmed, but no code found at predicted AA address.');
-  }
-  await assertUpgradedImplementation(provider, accountAddress);
-  await assertAccountVersion(provider, accountAddress);
-  console.log('AA account deployed successfully.');
 }
 
 main().catch((error) => {

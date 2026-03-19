@@ -27,10 +27,14 @@ export function createSessionRuntimeHelpers({
     const sessionPrivateKey = String(input.sessionPrivateKey || '').trim();
     const sessionId = String(input.sessionId || '').trim();
     const sessionTxHash = String(input.sessionTxHash || '').trim();
+    const tokenAddress = normalizeAddress(input.tokenAddress || '');
     const expiresAt = Number(input.expiresAt || 0);
     const maxPerTx = Number(input.maxPerTx || 0);
     const dailyLimit = Number(input.dailyLimit || 0);
     const gatewayRecipient = normalizeAddress(input.gatewayRecipient || '');
+    const accountVersion = String(input.accountVersion || '').trim();
+    const accountFactoryAddress = normalizeAddress(input.accountFactoryAddress || '');
+    const accountImplementationAddress = normalizeAddress(input.accountImplementationAddress || '');
     const explicitAuthorizedBy = normalizeAddress(input.authorizedBy || '');
     const authorizedBy = explicitAuthorizedBy || owner;
     const updatedAt = Number(input.updatedAt || Date.now());
@@ -60,6 +64,26 @@ export function createSessionRuntimeHelpers({
           .map((item) => String(item || '').trim().toLowerCase())
           .filter(Boolean)
       : [];
+    const allowedProviders = Array.isArray(input.allowedProviders)
+      ? input.allowedProviders
+          .map((item) => String(item || '').trim().toLowerCase())
+          .filter(Boolean)
+      : [];
+    const allowedRecipients = Array.isArray(input.allowedRecipients)
+      ? input.allowedRecipients
+          .map((item) => normalizeAddress(item || ''))
+          .filter(Boolean)
+      : [];
+    const totalLimit = Number(input.totalLimit || 0);
+    const authorityId = String(input.authorityId || '').trim();
+    const consumerAgentLabel = String(input.consumerAgentLabel || '').trim();
+    const authorityExpiresAt = Number(input.authorityExpiresAt || 0);
+    const authorityStatus = String(input.authorityStatus || '').trim().toLowerCase();
+    const authorityRevokedAt = Number(input.authorityRevokedAt || 0);
+    const authorityRevocationReason = String(input.authorityRevocationReason || '').trim();
+    const authorityCreatedAt = Number(input.authorityCreatedAt || 0);
+    const authorityUpdatedAt = Number(input.authorityUpdatedAt || 0);
+    const runtimePurpose = String(input.runtimePurpose || input.purpose || '').trim().toLowerCase();
     const source = String(input.source || 'frontend').trim();
 
     return {
@@ -69,10 +93,16 @@ export function createSessionRuntimeHelpers({
       sessionPrivateKey: /^0x[0-9a-fA-F]{64}$/.test(sessionPrivateKey) ? sessionPrivateKey : '',
       sessionId: /^0x[0-9a-fA-F]{64}$/.test(sessionId) ? sessionId : '',
       sessionTxHash: /^0x[0-9a-fA-F]{64}$/.test(sessionTxHash) ? sessionTxHash : '',
+      tokenAddress: ethers.isAddress(tokenAddress) ? tokenAddress : '',
       expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : 0,
       maxPerTx: Number.isFinite(maxPerTx) && maxPerTx > 0 ? maxPerTx : 0,
       dailyLimit: Number.isFinite(dailyLimit) && dailyLimit > 0 ? dailyLimit : 0,
       gatewayRecipient: ethers.isAddress(gatewayRecipient) ? gatewayRecipient : '',
+      accountVersion,
+      accountFactoryAddress: ethers.isAddress(accountFactoryAddress) ? accountFactoryAddress : '',
+      accountImplementationAddress: ethers.isAddress(accountImplementationAddress)
+        ? accountImplementationAddress
+        : '',
       authorizedBy: ethers.isAddress(authorizedBy) ? authorizedBy : '',
       authorizedAt: Number.isFinite(authorizedAt) && authorizedAt > 0 ? authorizedAt : 0,
       authorizationMode,
@@ -86,6 +116,18 @@ export function createSessionRuntimeHelpers({
       authorizedAgentWallet: ethers.isAddress(authorizedAgentWallet) ? authorizedAgentWallet : '',
       authorizationAudience,
       allowedCapabilities: Array.from(new Set(allowedCapabilities)),
+      allowedProviders: Array.from(new Set(allowedProviders)),
+      allowedRecipients: Array.from(new Set(allowedRecipients)),
+      totalLimit: Number.isFinite(totalLimit) && totalLimit > 0 ? totalLimit : 0,
+      authorityId,
+      consumerAgentLabel,
+      authorityExpiresAt: Number.isFinite(authorityExpiresAt) && authorityExpiresAt > 0 ? authorityExpiresAt : 0,
+      authorityStatus,
+      authorityRevokedAt: Number.isFinite(authorityRevokedAt) && authorityRevokedAt > 0 ? authorityRevokedAt : 0,
+      authorityRevocationReason,
+      authorityCreatedAt: Number.isFinite(authorityCreatedAt) && authorityCreatedAt > 0 ? authorityCreatedAt : 0,
+      authorityUpdatedAt: Number.isFinite(authorityUpdatedAt) && authorityUpdatedAt > 0 ? authorityUpdatedAt : 0,
+      runtimePurpose,
       source,
       updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : Date.now()
     };
@@ -167,25 +209,47 @@ export function createSessionRuntimeHelpers({
     return Array.from(byOwner.values());
   }
 
-  function resolveSessionRuntime({ owner = '', aaWallet = '', sessionId = '' } = {}) {
+  function resolveSessionRuntime({
+    owner = '',
+    aaWallet = '',
+    sessionId = '',
+    runtimePurpose = '',
+    strictOwnerMatch = false
+  } = {}) {
     const normalizedOwner = normalizeAddress(owner || '');
     const normalizedAaWallet = normalizeAddress(aaWallet || '');
     const normalizedSessionId = String(sessionId || '').trim();
+    const normalizedRuntimePurpose = String(runtimePurpose || '').trim().toLowerCase();
+    const requireStrictOwnerMatch = Boolean(strictOwnerMatch);
     if (normalizedOwner) {
       const runtimeByOwner = readSessionRuntimeByOwner(normalizedOwner);
-      if (runtimeByOwner.owner) return runtimeByOwner;
+      if (
+        runtimeByOwner.owner &&
+        (!normalizedRuntimePurpose || String(runtimeByOwner.runtimePurpose || '').trim().toLowerCase() === normalizedRuntimePurpose)
+      ) {
+        return runtimeByOwner;
+      }
+      if (requireStrictOwnerMatch) {
+        return sanitizeSessionRuntime({});
+      }
     }
     const current = readSessionRuntime();
     if (
-      (normalizedAaWallet && current.aaWallet === normalizedAaWallet) ||
-      (normalizedSessionId && current.sessionId === normalizedSessionId)
+      (
+        (normalizedAaWallet && current.aaWallet === normalizedAaWallet) ||
+        (normalizedSessionId && current.sessionId === normalizedSessionId)
+      ) &&
+      (!normalizedRuntimePurpose || String(current.runtimePurpose || '').trim().toLowerCase() === normalizedRuntimePurpose)
     ) {
       return current;
     }
     for (const runtime of listSessionRuntimes()) {
       if (
-        (normalizedAaWallet && runtime.aaWallet === normalizedAaWallet) ||
-        (normalizedSessionId && runtime.sessionId === normalizedSessionId)
+        (
+          (normalizedAaWallet && runtime.aaWallet === normalizedAaWallet) ||
+          (normalizedSessionId && runtime.sessionId === normalizedSessionId)
+        ) &&
+        (!normalizedRuntimePurpose || String(runtime.runtimePurpose || '').trim().toLowerCase() === normalizedRuntimePurpose)
       ) {
         return runtime;
       }

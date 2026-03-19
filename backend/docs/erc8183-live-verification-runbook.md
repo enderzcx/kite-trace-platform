@@ -11,7 +11,13 @@ Goal:
 - verify escrow allowance readiness
 - verify one real escrow-backed job can progress onchain
 - record exact tx hashes and failure points before approval work begins
-- keep role-signer funding requirements explicit once deadline / stake / slash enforcement is enabled
+- keep AA-runtime funding requirements explicit once deadline / stake / slash enforcement is enabled
+
+AA-native update:
+
+- requester / executor / validator should now be treated as AA addresses
+- `npm run erc8183:approve:escrow` now prepares allowance through AA runtimes, not owner EOAs
+- a fresh live rerun should replace any older signer-based demo artifact
 
 ## Environment
 

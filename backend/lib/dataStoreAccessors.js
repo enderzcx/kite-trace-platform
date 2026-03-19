@@ -53,6 +53,38 @@ export function createDataStoreAccessors({
     writeJsonArray(paths.identityChallengePath, records);
   }
 
+  function readOnboardingChallenges() {
+    return readJsonArray(paths.onboardingChallengesPath);
+  }
+
+  function writeOnboardingChallenges(records) {
+    writeJsonArray(paths.onboardingChallengesPath, records);
+  }
+
+  function readAccountApiKeys() {
+    return readJsonArray(paths.accountApiKeysPath);
+  }
+
+  function writeAccountApiKeys(records) {
+    writeJsonArray(paths.accountApiKeysPath, records);
+  }
+
+  function readConnectorInstallCodes() {
+    return readJsonArray(paths.connectorInstallCodesPath);
+  }
+
+  function writeConnectorInstallCodes(records) {
+    writeJsonArray(paths.connectorInstallCodesPath, records);
+  }
+
+  function readConnectorGrants() {
+    return readJsonArray(paths.connectorGrantsPath);
+  }
+
+  function writeConnectorGrants(records) {
+    writeJsonArray(paths.connectorGrantsPath, records);
+  }
+
   function readPublishedServices() {
     return readJsonArray(paths.servicesPath);
   }
@@ -91,6 +123,14 @@ export function createDataStoreAccessors({
 
   function writeJobs(records) {
     writeJsonArray(paths.jobsPath, records);
+  }
+
+  function readConsumerIntents() {
+    return readJsonArray(paths.consumerIntentsPath);
+  }
+
+  function writeConsumerIntents(records) {
+    writeJsonArray(paths.consumerIntentsPath, records);
   }
 
   function readReputationSignals() {
@@ -192,6 +232,14 @@ export function createDataStoreAccessors({
     writeWorkflows,
     readIdentityChallenges,
     writeIdentityChallenges,
+    readOnboardingChallenges,
+    writeOnboardingChallenges,
+    readAccountApiKeys,
+    writeAccountApiKeys,
+    readConnectorInstallCodes,
+    writeConnectorInstallCodes,
+    readConnectorGrants,
+    writeConnectorGrants,
     readPublishedServices,
     writePublishedServices,
     readTemplates,
@@ -202,6 +250,8 @@ export function createDataStoreAccessors({
     writePurchases,
     readJobs,
     writeJobs,
+    readConsumerIntents,
+    writeConsumerIntents,
     readReputationSignals,
     writeReputationSignals,
     readValidationRecords,

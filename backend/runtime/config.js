@@ -8,6 +8,10 @@ import {
   toBoundedIntEnv
 } from '../lib/env.js';
 import {
+  DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION,
+  DEFAULT_KITE_AA_FACTORY_ADDRESS
+} from '../lib/aaConfig.js';
+import {
   deriveAddressFromPrivateKey,
   normalizeAddress,
   normalizePrivateKey
@@ -64,6 +68,10 @@ export function createRuntimeConfig() {
   const sessionRuntimeIndexPath = path.resolve('data', 'session_runtimes.json');
   const sessionAuthorizationsPath = path.resolve('data', 'session_authorizations.json');
   const sessionApprovalRequestsPath = path.resolve('data', 'session_approval_requests.json');
+  const onboardingChallengesPath = path.resolve('data', 'onboarding_challenges.json');
+  const accountApiKeysPath = path.resolve('data', 'account_api_keys.json');
+  const connectorInstallCodesPath = path.resolve('data', 'connector_install_codes.json');
+  const connectorGrantsPath = path.resolve('data', 'connector_grants.json');
   const workflowPath = path.resolve('data', 'workflows.json');
   const identityChallengePath = path.resolve('data', 'identity_challenges.json');
   const servicesPath = path.resolve('data', 'services.json');
@@ -71,6 +79,7 @@ export function createRuntimeConfig() {
   const serviceInvocationsPath = path.resolve('data', 'service_invocations.json');
   const purchasesPath = path.resolve('data', 'purchases.json');
   const jobsPath = path.resolve('data', 'jobs.json');
+  const consumerIntentsPath = path.resolve('data', 'consumer_intents.json');
   const reputationSignalsPath = path.resolve('data', 'reputation_signals.json');
   const validationRecordsPath = path.resolve('data', 'validation_records.json');
   const trustPublicationsPath = path.resolve('data', 'trust_publications.json');
@@ -125,6 +134,15 @@ export function createRuntimeConfig() {
     process.env.KITEAI_BUNDLER_URL || 'https://bundler-service.staging.gokite.ai/rpc/';
   const BACKEND_ENTRYPOINT_ADDRESS =
     process.env.KITE_ENTRYPOINT_ADDRESS || '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108';
+  const KITE_AA_FACTORY_ADDRESS =
+    normalizeAddress(process.env.KITE_AA_FACTORY_ADDRESS || DEFAULT_KITE_AA_FACTORY_ADDRESS) ||
+    DEFAULT_KITE_AA_FACTORY_ADDRESS;
+  const KITE_AA_ACCOUNT_IMPLEMENTATION =
+    normalizeAddress(
+      process.env.KITE_AA_ACCOUNT_IMPLEMENTATION ||
+        process.env.KITE_AA_EXPECTED_IMPLEMENTATION ||
+        DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION
+    ) || DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION;
   const KITE_MIN_NATIVE_GAS = String(process.env.KITE_MIN_NATIVE_GAS || '0.0001').trim();
   const AA_V2_VERSION_TAG = String(
     process.env.KITE_AA_REQUIRED_VERSION || 'GokiteAccountV2-session-userop'
@@ -152,6 +170,24 @@ export function createRuntimeConfig() {
   const KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS = toBoundedIntEnv(
     process.env.KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS,
     1_000,
+    800,
+    15_000
+  );
+  const KTRACE_ESCROW_USEROP_SUBMIT_TIMEOUT_MS = toBoundedIntEnv(
+    process.env.KTRACE_ESCROW_USEROP_SUBMIT_TIMEOUT_MS,
+    30_000,
+    5_000,
+    300_000
+  );
+  const KTRACE_ESCROW_USEROP_WAIT_TIMEOUT_MS = toBoundedIntEnv(
+    process.env.KTRACE_ESCROW_USEROP_WAIT_TIMEOUT_MS,
+    300_000,
+    30_000,
+    900_000
+  );
+  const KTRACE_ESCROW_USEROP_POLL_INTERVAL_MS = toBoundedIntEnv(
+    process.env.KTRACE_ESCROW_USEROP_POLL_INTERVAL_MS,
+    Math.max(1_500, KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS),
     800,
     15_000
   );
@@ -336,6 +372,45 @@ export function createRuntimeConfig() {
   const API_KEY_AGENT = String(process.env.KITECLAW_API_KEY_AGENT || '').trim();
   const API_KEY_VIEWER = String(process.env.KITECLAW_API_KEY_VIEWER || '').trim();
   const AUTH_DISABLED = /^(1|true|yes|on)$/i.test(String(process.env.KITECLAW_AUTH_DISABLED || '').trim());
+  const KTRACE_ONBOARDING_COOKIE_NAME =
+    String(process.env.KTRACE_ONBOARDING_COOKIE_NAME || 'ktrace_onboard').trim() || 'ktrace_onboard';
+  const KTRACE_ONBOARDING_COOKIE_SECRET = String(process.env.KTRACE_ONBOARDING_COOKIE_SECRET || '').trim();
+  const KTRACE_ONBOARDING_COOKIE_TTL_MS = toBoundedIntEnv(
+    process.env.KTRACE_ONBOARDING_COOKIE_TTL_MS,
+    30 * 60 * 1000,
+    60_000,
+    24 * 60 * 60 * 1000
+  );
+  const KTRACE_ONBOARDING_CHALLENGE_TTL_MS = toBoundedIntEnv(
+    process.env.KTRACE_ONBOARDING_CHALLENGE_TTL_MS,
+    10 * 60 * 1000,
+    30_000,
+    24 * 60 * 60 * 1000
+  );
+  const KTRACE_ONBOARDING_CHALLENGE_MAX_ROWS = toBoundedIntEnv(
+    process.env.KTRACE_ONBOARDING_CHALLENGE_MAX_ROWS,
+    500,
+    50,
+    5_000
+  );
+  const KTRACE_CONNECTOR_INSTALL_CODE_TTL_MS = toBoundedIntEnv(
+    process.env.KTRACE_CONNECTOR_INSTALL_CODE_TTL_MS,
+    900_000,
+    60_000,
+    7 * 24 * 60 * 60 * 1000
+  );
+  const KTRACE_CONNECTOR_INSTALL_CODE_MAX_ROWS = toBoundedIntEnv(
+    process.env.KTRACE_CONNECTOR_INSTALL_CODE_MAX_ROWS,
+    500,
+    50,
+    5_000
+  );
+  const KTRACE_CONNECTOR_GRANT_MAX_ROWS = toBoundedIntEnv(
+    process.env.KTRACE_CONNECTOR_GRANT_MAX_ROWS,
+    1_000,
+    50,
+    10_000
+  );
   const RATE_LIMIT_WINDOW_MS = Number(process.env.KITECLAW_RATE_LIMIT_WINDOW_MS || 60_000);
   const RATE_LIMIT_MAX = Number(process.env.KITECLAW_RATE_LIMIT_MAX || 240);
   const IDENTITY_CHALLENGE_TTL_MS = Number(process.env.IDENTITY_CHALLENGE_TTL_MS || 120_000);
@@ -482,6 +557,10 @@ export function createRuntimeConfig() {
     sessionRuntimeIndexPath,
     sessionAuthorizationsPath,
     sessionApprovalRequestsPath,
+    onboardingChallengesPath,
+    accountApiKeysPath,
+    connectorInstallCodesPath,
+    connectorGrantsPath,
     workflowPath,
     identityChallengePath,
     servicesPath,
@@ -489,6 +568,7 @@ export function createRuntimeConfig() {
     serviceInvocationsPath,
     purchasesPath,
     jobsPath,
+    consumerIntentsPath,
     reputationSignalsPath,
     validationRecordsPath,
     trustPublicationsPath,
@@ -527,6 +607,8 @@ export function createRuntimeConfig() {
     BACKEND_RPC_URL,
     BACKEND_BUNDLER_URL,
     BACKEND_ENTRYPOINT_ADDRESS,
+    KITE_AA_FACTORY_ADDRESS,
+    KITE_AA_ACCOUNT_IMPLEMENTATION,
     KITE_MIN_NATIVE_GAS,
     AA_V2_VERSION_TAG,
     KITE_REQUIRE_AA_V2,
@@ -539,6 +621,9 @@ export function createRuntimeConfig() {
     KITE_BUNDLER_RPC_BACKOFF_FACTOR,
     KITE_BUNDLER_RPC_BACKOFF_JITTER_MS,
     KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS,
+    KTRACE_ESCROW_USEROP_SUBMIT_TIMEOUT_MS,
+    KTRACE_ESCROW_USEROP_WAIT_TIMEOUT_MS,
+    KTRACE_ESCROW_USEROP_POLL_INTERVAL_MS,
     KITE_SESSION_PAY_RETRIES,
     KITE_SESSION_PAY_TRANSPORT_BACKOFF_BASE_MS,
     KITE_SESSION_PAY_TRANSPORT_BACKOFF_MAX_MS,
@@ -613,6 +698,14 @@ export function createRuntimeConfig() {
     API_KEY_AGENT,
     API_KEY_VIEWER,
     AUTH_DISABLED,
+    KTRACE_ONBOARDING_COOKIE_NAME,
+    KTRACE_ONBOARDING_COOKIE_SECRET,
+    KTRACE_ONBOARDING_COOKIE_TTL_MS,
+    KTRACE_ONBOARDING_CHALLENGE_TTL_MS,
+    KTRACE_ONBOARDING_CHALLENGE_MAX_ROWS,
+    KTRACE_CONNECTOR_INSTALL_CODE_TTL_MS,
+    KTRACE_CONNECTOR_INSTALL_CODE_MAX_ROWS,
+    KTRACE_CONNECTOR_GRANT_MAX_ROWS,
     RATE_LIMIT_WINDOW_MS,
     RATE_LIMIT_MAX,
     IDENTITY_CHALLENGE_TTL_MS,

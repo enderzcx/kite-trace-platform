@@ -1,5 +1,10 @@
 import { ethers } from 'ethers';
 import { GokiteAASDK } from '../../lib/gokite-aa-sdk.js';
+import {
+  resolveAaAccountImplementation,
+  resolveAaFactoryAddress,
+  resolveAaRequiredVersion
+} from '../../lib/aaConfig.js';
 import { getServiceProviderBytes32 } from '../../lib/addressPolicyHelpers.js';
 import { createCliError } from './errors.js';
 import { requestJson, resolveAdminTransportApiKey, resolveAgentTransportApiKey } from './httpRuntime.js';
@@ -376,8 +381,10 @@ export async function createSelfCustodialSession(
     process.env.KITE_ENTRYPOINT_ADDRESS || '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
   ).trim();
   const requiredAaVersion = String(
-    process.env.KITE_AA_REQUIRED_VERSION || 'GokiteAccountV2-session-userop'
+    resolveAaRequiredVersion()
   ).trim();
+  const accountFactoryAddress = resolveAaFactoryAddress();
+  const accountImplementationAddress = resolveAaAccountImplementation();
   const saltRaw = String(process.env.KITECLAW_AA_SALT || '0').trim() || '0';
 
   let salt = 0n;
@@ -396,23 +403,24 @@ export async function createSelfCustodialSession(
     network: 'kite_testnet',
     rpcUrl,
     bundlerUrl,
-    entryPointAddress
+    entryPointAddress,
+    accountFactoryAddress,
+    accountImplementationAddress
   });
-  const aaWallet = sdk.getAccountAddress(owner, salt);
-  const factory = new ethers.Contract(
-    sdk.config.accountFactoryAddress,
-    ['function createAccount(address owner, uint256 salt) returns (address)'],
-    ownerWallet
-  );
-
+  const aaWallet = await sdk.resolveAccountAddress(owner, salt);
   const beforeCode = await provider.getCode(aaWallet);
-  let accountCreatedNow = false;
-  let accountTxHash = '';
   if (!beforeCode || beforeCode === '0x') {
-    const createTx = await factory.createAccount(owner, salt);
-    await createTx.wait();
-    accountCreatedNow = true;
-    accountTxHash = String(createTx.hash || '').trim();
+    throw createCliError(
+      `Generic AA deployment via createAccount has been removed from KTrace. Provision the V2 AA wallet at ${aaWallet} first, then retry session creation.`,
+      {
+        code: 'self_custodial_aa_deploy_removed',
+        data: {
+          owner,
+          aaWallet,
+          salt: salt.toString()
+        }
+      }
+    );
   }
 
   const account = new ethers.Contract(
@@ -513,8 +521,8 @@ export async function createSelfCustodialSession(
     sessionPrivateKey: sessionSigner?.privateKey || '',
     sessionId,
     sessionTxHash: String(sessionTx.hash || '').trim(),
-    accountCreatedNow,
-    accountTxHash,
+    accountCreatedNow: false,
+    accountTxHash: '',
     maxPerTx: Number(normalizedSingleLimit),
     dailyLimit: Number(normalizedDailyLimit),
     gatewayRecipient: normalizedGatewayRecipient,
@@ -571,8 +579,10 @@ export async function sendLocalSessionPayment(
     process.env.KITE_ENTRYPOINT_ADDRESS || '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
   ).trim();
   const requiredAaVersion = String(
-    process.env.KITE_AA_REQUIRED_VERSION || 'GokiteAccountV2-session-userop'
+    resolveAaRequiredVersion()
   ).trim();
+  const accountFactoryAddress = resolveAaFactoryAddress();
+  const accountImplementationAddress = resolveAaAccountImplementation();
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const sessionWallet = new ethers.Wallet(localRuntime.sessionPrivateKey, provider);
@@ -659,6 +669,8 @@ export async function sendLocalSessionPayment(
     rpcUrl,
     bundlerUrl,
     entryPointAddress,
+    accountFactoryAddress,
+    accountImplementationAddress,
     proxyAddress: localRuntime.aaWallet,
     bundlerRpcTimeoutMs: Number(process.env.KITE_BUNDLER_RPC_TIMEOUT_MS || 15000),
     bundlerRpcRetries: Number(process.env.KITE_BUNDLER_RPC_RETRIES || 3),

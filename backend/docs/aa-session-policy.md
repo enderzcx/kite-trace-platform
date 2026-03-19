@@ -1,55 +1,58 @@
-# AA Session Policy (No Backend Private-Key Confirmation)
+# AA Session Policy
 
-Last updated: 2026-03-01 (Asia/Shanghai)
+Updated: 2026-03-18
+Status: active
 
-## Scope / 范围
-- Applies to `/api/session/pay` and all x402 settlement paths that use AA session execution.
-- 适用于 `/api/session/pay` 及所有依赖 AA session 的 x402 结算路径。
+## Scope
 
-## Mandatory Policy / 强制策略
-1. Session key must be the signer for userOp path.
-2. Backend private key must not be used to confirm or sign userOp in normal flow.
-3. EOA relay fallback is disabled by default and only allowed for emergency troubleshooting with explicit env flag.
+This policy applies to all normal AA execution paths:
 
-1. userOp 必须由 session key 签名。
-2. 正常流程禁止使用后端私钥确认或签名 userOp。
-3. EOA relay fallback 默认关闭，仅允许在显式开关下用于应急排障。
+- `POST /api/session/pay`
+- x402 settlement
+- consumer buy flows
+- MCP paid tool calls
+- ERC-8183 job fund
+- ERC-8183 job accept / submit / validate
 
-## Runtime Guards / 运行时防护
-- `KITE_ALLOW_BACKEND_USEROP_SIGN=0` (default)
-- `KITE_ALLOW_EOA_RELAY_FALLBACK=0` (default)
-- Session prechecks in `/api/session/pay` must pass before submit:
-  - session exists on-chain
-  - session agent equals runtime session key address
-  - session spending rule check passes
-  - AA v2 version check passes when `KITE_REQUIRE_AA_V2=1`
+## Mandatory Rules
 
-## Bundler Transport Resilience / Bundler 传输抗抖动
-- Retry path handles transient transport failures (`ECONNRESET`, `ETIMEDOUT`, `UND_ERR_SOCKET`, `UND_ERR_CONNECT_TIMEOUT`, `5xx`).
-- Configurable env knobs:
-  - `KITE_BUNDLER_RPC_TIMEOUT_MS` (default: `15000`)
-  - `KITE_BUNDLER_RPC_RETRIES` (default: `3`)
-  - `KITE_BUNDLER_RPC_BACKOFF_BASE_MS` (default: `650`)
-  - `KITE_BUNDLER_RPC_BACKOFF_MAX_MS` (default: `6000`)
-  - `KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS` (default: `3000`)
+1. Session key must sign normal userOp execution.
+2. Backend private keys must not be used to sign normal userOps.
+3. `KITE_ALLOW_EOA_RELAY_FALLBACK=0` remains the default.
+4. If a flow only works through owner EOA fallback, treat it as a migration blocker, not a valid steady-state path.
 
-## Verification Checklist / 核对清单
-1. Confirm policy flags:
-   - `KITE_ALLOW_BACKEND_USEROP_SIGN=0`
-   - `KITE_ALLOW_EOA_RELAY_FALLBACK=0`
-2. Confirm runtime session material:
-   - `GET /api/session/runtime` returns `hasSessionPrivateKey=true`
-   - session address/sessionId are present
-3. Trigger one settlement and verify response:
-   - `signerMode` should be `aa-session`
-   - no `eoa_relay_*` reason in failure path unless fallback is intentionally enabled
+## Runtime Guards
 
-## Incident Handling / 故障处理
-- If settlement fails with transport errors, tune retry/backoff first.
-- Do not re-enable backend private-key confirmation as a quick fix.
-- For production incidents, attach:
-  - requestId
-  - sessionId
-  - userOpHash (if available)
-  - full reason string with transport markers
+Normal AA execution should verify:
 
+- AA account code exists
+- required AA version matches when `KITE_REQUIRE_AA_V2=1`
+- session exists on-chain
+- session agent matches the synced session key
+- AA wallet has enough native gas
+
+Where relevant, authority checks should also pass before submission.
+
+## Job Lane Extension
+
+This policy now explicitly applies to ERC-8183 job mutations.
+
+Canonical AA role model:
+
+- requester = consumer AA wallet
+- executor = executor AA wallet
+- validator = validator AA wallet
+
+The backend normal path must not send job lifecycle transactions with owner EOA signers.
+
+## Operational Notes
+
+- owner EOA may still be used for setup, authorization, revoke, and recovery
+- legacy signer-based records may remain readable
+- new execution should emit AA-native audit metadata
+
+## Reference
+
+Platform source of truth:
+
+- [ktrace-full-stack-aa-plan.md](/E:/CODEX/kite-trace-platform/docs/ktrace-full-stack-aa-plan.md)
