@@ -12,7 +12,7 @@ import { requestJson, resolveAdminTransportApiKey, resolveAgentTransportApiKey }
 export function normalizeWalletAddress(value = '') {
   const raw = String(value || '').trim();
   if (!raw) return '';
-  return /^0x[0-9a-fA-F]{40}$/.test(raw) ? raw : '';
+  return /^0x[0-9a-fA-F]{40}$/.test(raw) ? ethers.getAddress(raw) : '';
 }
 
 export function normalizeSessionStrategy(value = '', fallback = 'managed') {
@@ -410,17 +410,28 @@ export async function createSelfCustodialSession(
   const aaWallet = await sdk.resolveAccountAddress(owner, salt);
   const beforeCode = await provider.getCode(aaWallet);
   if (!beforeCode || beforeCode === '0x') {
-    throw createCliError(
-      `Generic AA deployment via createAccount has been removed from KTrace. Provision the V2 AA wallet at ${aaWallet} first, then retry session creation.`,
-      {
-        code: 'self_custodial_aa_deploy_removed',
-        data: {
-          owner,
-          aaWallet,
-          salt: salt.toString()
-        }
-      }
+    const factory = new ethers.Contract(
+      accountFactoryAddress,
+      ['function createAccount(address owner, uint256 salt) returns (address)'],
+      ownerWallet
     );
+    const deployTx = await factory.createAccount(owner, salt);
+    await deployTx.wait();
+    const afterCode = await provider.getCode(aaWallet);
+    if (!afterCode || afterCode === '0x') {
+      throw createCliError(
+        `AA deployment did not produce contract code at ${aaWallet}.`,
+        {
+          code: 'self_custodial_aa_deploy_failed',
+          data: {
+            owner,
+            aaWallet,
+            salt: salt.toString(),
+            txHash: String(deployTx.hash || '').trim()
+          }
+        }
+      );
+    }
   }
 
   const account = new ethers.Contract(
@@ -445,7 +456,7 @@ export async function createSelfCustodialSession(
   const aaVersion = String(await account.version().catch(() => '')).trim();
   if (requiredAaVersion && aaVersion !== requiredAaVersion) {
     throw createCliError(
-      `AA must be upgraded to V2 for session-userop payments. required=${requiredAaVersion}, current=${aaVersion || 'unknown_or_legacy'}`,
+      `AA version mismatch for session payments. required=${requiredAaVersion}, current=${aaVersion || 'unknown_or_legacy'}`,
       { code: 'self_custodial_aa_version_mismatch' }
     );
   }
@@ -604,7 +615,7 @@ export async function sendLocalSessionPayment(
   }
   if (requiredAaVersion && aaVersion !== requiredAaVersion) {
     throw createCliError(
-      `AA must be upgraded to V2 for session-userop payments. required=${requiredAaVersion}, current=${aaVersion || 'unknown_or_legacy'}`,
+      `AA version mismatch for session payments. required=${requiredAaVersion}, current=${aaVersion || 'unknown_or_legacy'}`,
       {
         code: 'local_payment_aa_version_mismatch'
       }

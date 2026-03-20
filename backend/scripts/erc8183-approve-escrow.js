@@ -88,10 +88,17 @@ function findRuntimeByAaWallet(aaWallet = '') {
 }
 
 function buildRoleSpecs() {
+  const currentRuntime = readJsonObject(SESSION_RUNTIME_PATH);
+  const currentRuntimeAaWallet = normalizeAddress(currentRuntime?.aaWallet || '');
+  const configuredRequesterAaWallet = normalizeAddress(process.env.ERC8183_REQUESTER_AA_ADDRESS || '');
+  const requesterAaWallet =
+    findRuntimeByAaWallet(configuredRequesterAaWallet)?.aaWallet ||
+    currentRuntimeAaWallet ||
+    configuredRequesterAaWallet;
   return [
     {
       role: 'requester',
-      aaWallet: normalizeAddress(process.env.ERC8183_REQUESTER_AA_ADDRESS || ''),
+      aaWallet: requesterAaWallet,
       ownerPrivateKey: normalizePrivateKey(
         process.env.ERC8183_REQUESTER_PRIVATE_KEY ||
           process.env.ERC8004_REGISTRAR_PRIVATE_KEY ||

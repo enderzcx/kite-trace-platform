@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import { KTRACE_BUILTIN_TOOLS } from './ktraceBuiltinTools.js';
 
 function normalizeText(value = '') {
   return String(value ?? '').trim();
@@ -13,6 +14,36 @@ function normalizeToolName(capabilityId = '') {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')}`;
+}
+
+function inferTitleOverride(capability = {}) {
+  const capabilityId = normalizeText(capability?.capabilityId || capability?.id || capability?.serviceId || '').toLowerCase();
+  if (capabilityId === 'svc_btcusd_minute') {
+    return 'BTC Price Quote (Primary)';
+  }
+  if (capabilityId === 'cap-market-price-feed') {
+    return 'Market Snapshot (Secondary)';
+  }
+  return normalizeText(capability?.name || capabilityId);
+}
+
+function inferDescriptionOverride(capability = {}) {
+  const capabilityId = normalizeText(capability?.capabilityId || capability?.id || capability?.serviceId || '').toLowerCase();
+  const baseDescription = normalizeText(capability?.description || capabilityId);
+  if (capabilityId === 'svc_btcusd_minute') {
+    return `${baseDescription} Prefer this tool for current BTC/BTCUSDT price requests.`;
+  }
+  if (capabilityId === 'cap-market-price-feed') {
+    return `${baseDescription} Use this for multi-asset snapshots, not for the primary single-BTC quote path.`;
+  }
+  return baseDescription;
+}
+
+function inferToolPriority(capability = {}) {
+  const capabilityId = normalizeText(capability?.capabilityId || capability?.id || capability?.serviceId || '').toLowerCase();
+  if (capabilityId === 'svc_btcusd_minute') return 100;
+  if (capabilityId === 'cap-market-price-feed') return 10;
+  return 50;
 }
 
 function inferReadOnlyHint(action = '') {
@@ -84,8 +115,8 @@ function buildToolDefinition(capability = {}) {
 
   return {
     name: normalizeToolName(capabilityId),
-    title: normalizeText(capability?.name || capabilityId),
-    description: normalizeText(capability?.description || capabilityId),
+    title: inferTitleOverride(capability),
+    description: inferDescriptionOverride(capability),
     annotations: {
       readOnlyHint: inferReadOnlyHint(capability?.action),
       destructiveHint: normalizeText(capability?.action || '').toLowerCase() === 'hyperliquid-order-testnet',
@@ -110,10 +141,18 @@ export function createMcpToolsAdapter({ fetchLoopbackJson }) {
     });
 
     const items = Array.isArray(payload?.items) ? payload.items : [];
-    return items
+    const capabilityTools = items
       .filter((item) => item?.active !== false)
       .map((item) => buildToolDefinition(item))
-      .filter(Boolean);
+      .filter(Boolean)
+      .sort((left, right) => {
+        const priorityDiff = inferToolPriority(right?.rawCapability) - inferToolPriority(left?.rawCapability);
+        if (priorityDiff !== 0) return priorityDiff;
+        return normalizeText(left?.title).localeCompare(normalizeText(right?.title));
+      });
+
+    const builtinTools = KTRACE_BUILTIN_TOOLS.map((tool) => ({ ...tool }));
+    return [...builtinTools, ...capabilityTools];
   }
 
   return {

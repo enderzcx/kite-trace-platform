@@ -5,10 +5,12 @@ import { fileURLToPath } from 'url';
 
 import { resolveAaExpectedImplementation, resolveAaRequiredVersion } from '../lib/aaConfig.js';
 import { compileKTraceAccountFactory } from '../lib/contracts/compileKTraceAccountFactory.js';
+import { applyNodeEnvProxyPreference, getEnvProxyDiagnostics } from '../lib/envProxy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 loadEnv({ path: path.resolve(__dirname, '..', '.env') });
+applyNodeEnvProxyPreference();
 
 const RPC_URL = process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/';
 const PRIVATE_KEY = process.env.KITECLAW_BACKEND_SIGNER_PRIVATE_KEY || '';
@@ -42,7 +44,7 @@ async function main() {
   const implementationVersion = String(await implementation.version().catch(() => '')).trim();
   if (implementationVersion !== REQUIRED_VERSION) {
     throw new Error(
-      `Target implementation is not the expected V2. required=${REQUIRED_VERSION}, actual=${implementationVersion || 'unknown'}`
+      `Target implementation does not match the configured required AA version. required=${REQUIRED_VERSION}, actual=${implementationVersion || 'unknown'}`
     );
   }
 
@@ -83,6 +85,7 @@ async function main() {
         accountImplementation,
         requiredVersion: REQUIRED_VERSION,
         implementationVersion,
+        proxyDiagnostics: getEnvProxyDiagnostics(),
         txHash: deploymentTx?.hash || '',
         address
       },

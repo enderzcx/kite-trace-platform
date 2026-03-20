@@ -1,5 +1,9 @@
 import fs from 'fs';
 
+import {
+  DEFAULT_KITE_AA_JOB_LANE_REQUIRED_VERSION,
+  deriveAaAccountCapabilities
+} from './aaConfig.js';
 import { GokiteAASDK } from './gokite-aa-sdk.js';
 
 const ERC20_DECIMALS_FALLBACK = 6;
@@ -22,6 +26,56 @@ function buildEscrowError(code = 'escrow_execution_failed', message = 'escrow ex
   error.code = normalizeText(code) || 'escrow_execution_failed';
   error.detail = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : {};
   return error;
+}
+
+export function describeAaJobLaneCapability({
+  runtime = {},
+  role = '',
+  roleAddress = '',
+  runtimeOwner = '',
+  runtimeAddress = '',
+  requiredAccountVersionTag = ''
+} = {}) {
+  const capabilitySnapshot = deriveAaAccountCapabilities({
+    accountVersion: runtime?.accountVersion,
+    accountVersionTag: runtime?.accountVersionTag,
+    accountCapabilities: runtime?.accountCapabilities,
+    requiredForJobLane: runtime?.requiredForJobLane
+  });
+  return {
+    role: normalizeText(role),
+    roleAddress: normalizeText(roleAddress),
+    runtimeOwner: normalizeText(runtimeOwner || runtime?.owner),
+    runtimeAddress: normalizeText(runtimeAddress || runtime?.aaWallet),
+    accountVersion: normalizeText(runtime?.accountVersion),
+    accountVersionTag:
+      capabilitySnapshot.accountVersionTag || normalizeText(runtime?.accountVersion),
+    accountCapabilities: capabilitySnapshot.accountCapabilities,
+    requiredForJobLane: capabilitySnapshot.requiredForJobLane,
+    requiredAccountVersionTag: normalizeText(requiredAccountVersionTag),
+    aaMethod: capabilitySnapshot.accountCapabilities.sessionGenericExecute
+      ? 'executeWithSession'
+      : '',
+    supportsSessionGenericExecute: capabilitySnapshot.accountCapabilities.sessionGenericExecute === true
+  };
+}
+
+export function assertAaJobLaneCapability(input = {}) {
+  const detail = describeAaJobLaneCapability(input);
+  if (detail.supportsSessionGenericExecute) {
+    return detail;
+  }
+  const requiredVersionText =
+    detail.requiredAccountVersionTag || DEFAULT_KITE_AA_JOB_LANE_REQUIRED_VERSION;
+  throw buildEscrowError(
+    'aa_session_execute_not_supported',
+    `${detail.role || 'job lane'} AA runtime only supports payment-session flows. Upgrade to ${requiredVersionText} for session-scoped generic execution.`,
+    {
+      ...detail,
+      upgradeRequired: true,
+      aaAccountUpgradeRequired: true
+    }
+  );
 }
 
 function isTraceAnchorRequiredError(error = null) {
@@ -78,6 +132,20 @@ async function wait(ms = 0) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
 }
 
+function emitEscrowDiagnostic(event = '', detail = {}) {
+  try {
+    console.log(
+      JSON.stringify({
+        component: 'escrow-helpers',
+        event: normalizeText(event),
+        ...detail
+      })
+    );
+  } catch {
+    // best-effort logging only
+  }
+}
+
 function mapEscrowState(state) {
   const numericState = Number(state || 0);
   switch (numericState) {
@@ -106,6 +174,7 @@ export function createEscrowHelpers({
   tokenDecimals = ERC20_DECIMALS_FALLBACK,
   resolveSessionRuntime,
   resolveSessionOwnerByAaWallet,
+  resolveSessionOwnerPrivateKey,
   rpcUrl = '',
   bundlerUrl = '',
   entryPointAddress = '',
@@ -118,27 +187,58 @@ export function createEscrowHelpers({
   bundlerRpcBackoffFactor = 2,
   bundlerRpcBackoffJitterMs = 250,
   bundlerReceiptPollIntervalMs = 1_000,
-  escrowUserOpSubmitTimeoutMs = 30_000,
+  escrowUserOpSubmitTimeoutMs = 120_000,
   escrowUserOpWaitTimeoutMs = 300_000,
   escrowUserOpPollIntervalMs = 1_500,
   aaVersionTag = '',
+  jobLaneRequiredAaVersionTag = DEFAULT_KITE_AA_JOB_LANE_REQUIRED_VERSION,
   requireAaV2 = false,
   kiteMinNativeGas = '0.0001'
 } = {}) {
   const contractAddress = normalizeText(escrowAddress);
   const settlementTokenAddress = normalizeText(settlementToken);
   const abi = loadJobEscrowAbi();
+  const jobEscrowInterface = new ethers.Interface(abi);
   const erc20MetadataAbi = [
     'function decimals() view returns (uint8)',
     'function allowance(address owner, address spender) view returns (uint256)'
   ];
+  const erc20ApproveAbi = [
+    'function approve(address spender, uint256 amount) returns (bool)'
+  ];
+  const erc20ApproveInterface = new ethers.Interface(erc20ApproveAbi);
+  const accountPermissionReadAbi = [
+    'function getSessionSelectorPermission(bytes32 sessionId, address target, bytes4 selector) view returns (bool enabled, uint256 maxAmount)'
+  ];
+  const accountPermissionWriteAbi = [
+    'function setSessionSelectorPermissions(tuple(bytes32 sessionId,address target,bytes4 selector,bool enabled,uint256 maxAmount)[] updates) external'
+  ];
+  const jobLaneSelectorByAction = {
+    job_fund_failed: jobEscrowInterface.getFunction('lockFunds').selector,
+    job_accept_failed: jobEscrowInterface.getFunction('acceptJob').selector,
+    job_submit_failed: jobEscrowInterface.getFunction('submitResult').selector,
+    job_validate_failed: jobEscrowInterface.getFunction('validate').selector,
+    job_expire_failed: jobEscrowInterface.getFunction('expireJob').selector,
+    job_prepare_funding: erc20ApproveInterface.getFunction('approve').selector,
+    job_prepare_acceptance: erc20ApproveInterface.getFunction('approve').selector,
+    erc20_approve_escrow: erc20ApproveInterface.getFunction('approve').selector
+  };
   const staticNetwork = ethers.Network.from({
     chainId: 2368,
     name: 'kite_testnet'
   });
+  const providerRequest =
+    !backendSigner?.provider && rpcUrl
+      ? (() => {
+          const request = new ethers.FetchRequest(rpcUrl);
+          request.timeout = Math.max(60_000, Number(bundlerRpcTimeoutMs || 0) * 4, 15_000);
+          return request;
+        })()
+      : null;
   const provider =
-    backendSigner?.provider ||
-    (rpcUrl ? new ethers.JsonRpcProvider(rpcUrl, staticNetwork, { staticNetwork }) : null);
+    (providerRequest
+      ? new ethers.JsonRpcProvider(providerRequest, staticNetwork, { staticNetwork })
+      : backendSigner?.provider || null);
   let resolvedTokenDecimalsPromise = null;
 
   function normalizeAddress(value = '') {
@@ -168,7 +268,7 @@ export function createEscrowHelpers({
     if (!ethers?.isAddress(contractAddress)) {
       throw new Error(`Invalid ERC8183_ESCROW_ADDRESS: ${contractAddress}`);
     }
-    const signerOrProvider = backendSigner || provider;
+    const signerOrProvider = provider || backendSigner;
     if (!signerOrProvider) {
       throw new Error('No signer or provider available for escrow helper.');
     }
@@ -225,7 +325,7 @@ export function createEscrowHelpers({
     return BigInt(Math.floor(parsed / 1000));
   }
 
-  async function buildAaExecutionContext({ role = '', roleAddress = '' } = {}) {
+  function resolveRuntimeContext({ role = '', roleAddress = '' } = {}) {
     const normalizedRoleAddress = normalizeAddress(roleAddress);
     if (!normalizedRoleAddress) {
       throw buildEscrowError('runtime_not_found', `${role} AA address is required.`, {
@@ -239,13 +339,6 @@ export function createEscrowHelpers({
         roleAddress: normalizedRoleAddress
       });
     }
-    if (!provider) {
-      throw buildEscrowError('runtime_not_found', 'RPC provider is not configured for AA execution.', {
-        role,
-        roleAddress: normalizedRoleAddress
-      });
-    }
-
     const inferredOwner = normalizeAddress(resolveSessionOwnerByAaWallet?.(normalizedRoleAddress) || '');
     const runtime = resolveSessionRuntime({
       owner: inferredOwner,
@@ -268,8 +361,49 @@ export function createEscrowHelpers({
         runtimeOwner
       });
     }
+    return {
+      role,
+      roleAddress: normalizedRoleAddress,
+      runtime,
+      runtimeOwner,
+      runtimeAddress: runtimeAaWallet,
+      sessionId
+    };
+  }
 
-    const accountCode = await withTimeout(provider.getCode(runtimeAaWallet), 15000, 'getCode');
+  function preflightJobLaneCapability({ role = '', roleAddress = '' } = {}) {
+    const runtimeContext = resolveRuntimeContext({ role, roleAddress });
+    const capabilityDetail = assertAaJobLaneCapability({
+      runtime: runtimeContext.runtime,
+      role,
+      roleAddress: runtimeContext.roleAddress,
+      runtimeOwner: runtimeContext.runtimeOwner,
+      runtimeAddress: runtimeContext.runtimeAddress,
+      requiredAccountVersionTag: jobLaneRequiredAaVersionTag
+    });
+    return {
+      ...runtimeContext,
+      capabilityDetail
+    };
+  }
+
+  async function buildAaExecutionContext({ role = '', roleAddress = '' } = {}) {
+    const runtimeContext = preflightJobLaneCapability({ role, roleAddress });
+    const normalizedRoleAddress = runtimeContext.roleAddress;
+    const runtime = runtimeContext.runtime;
+    const runtimeAaWallet = runtimeContext.runtimeAddress;
+    const runtimeOwner = runtimeContext.runtimeOwner;
+    const sessionId = runtimeContext.sessionId;
+    if (!provider) {
+      throw buildEscrowError('runtime_not_found', 'RPC provider is not configured for AA execution.', {
+        role,
+        roleAddress: normalizedRoleAddress
+      });
+    }
+
+    const accountCode = await runWithOnchainRetry(() =>
+      withTimeout(provider.getCode(runtimeAaWallet), 15000, 'getCode')
+    );
     if (!accountCode || accountCode === '0x') {
       throw buildEscrowError('aa_role_not_deployed', `${role} AA runtime is not deployed on-chain.`, {
         role,
@@ -278,22 +412,40 @@ export function createEscrowHelpers({
       });
     }
 
-    if (requireAaV2) {
+    if (requireAaV2 || normalizeText(jobLaneRequiredAaVersionTag)) {
       let aaVersion = '';
       try {
         const versionReadAbi = ['function version() view returns (string)'];
         const versionContract = new ethers.Contract(runtimeAaWallet, versionReadAbi, provider);
-        aaVersion = String(await versionContract.version()).trim();
+        aaVersion = String(
+          await runWithOnchainRetry(() =>
+            withTimeout(versionContract.version(), 15000, 'version')
+          )
+        ).trim();
       } catch {
         aaVersion = '';
       }
-      if (aaVersion !== aaVersionTag) {
-        throw buildEscrowError('aa_version_mismatch', `${role} AA runtime must be upgraded to V2.`, {
+      const requiredVersion = runtimeContext.capabilityDetail.supportsSessionGenericExecute
+        ? normalizeText(jobLaneRequiredAaVersionTag)
+        : normalizeText(requireAaV2 ? aaVersionTag : '');
+      if (requiredVersion && aaVersion !== requiredVersion) {
+        const versionErrorCode = runtimeContext.capabilityDetail.supportsSessionGenericExecute
+          ? 'aa_account_upgrade_required'
+          : 'aa_version_mismatch';
+        const versionErrorMessage = runtimeContext.capabilityDetail.supportsSessionGenericExecute
+          ? `${role} AA runtime must be upgraded to ${requiredVersion} for session-scoped generic execution.`
+          : `${role} AA runtime must be upgraded to V2.`;
+        throw buildEscrowError(versionErrorCode, versionErrorMessage, {
           role,
           roleAddress: normalizedRoleAddress,
           runtimeOwner,
           currentVersion: aaVersion || '',
-          requiredVersion: aaVersionTag || ''
+          requiredVersion,
+          accountVersionTag: runtimeContext.capabilityDetail.accountVersionTag,
+          accountCapabilities: runtimeContext.capabilityDetail.accountCapabilities,
+          requiredForJobLane: runtimeContext.capabilityDetail.requiredForJobLane,
+          upgradeRequired: true,
+          aaAccountUpgradeRequired: true
         });
       }
     }
@@ -305,10 +457,12 @@ export function createEscrowHelpers({
       'function getSessionAgent(bytes32 sessionId) view returns (address)'
     ];
     const account = new ethers.Contract(runtimeAaWallet, sessionReadAbi, provider);
-    const [exists, agentAddr] = await withTimeout(Promise.all([
-      account.sessionExists(sessionId),
-      account.getSessionAgent(sessionId)
-    ]), 15000, 'session check');
+    const [exists, agentAddr] = await runWithOnchainRetry(() =>
+      withTimeout(Promise.all([
+        account.sessionExists(sessionId),
+        account.getSessionAgent(sessionId)
+      ]), 15000, 'session check')
+    );
     if (!exists) {
       throw buildEscrowError('session_authorization_missing', `${role} AA runtime does not have an active on-chain session.`, {
         role,
@@ -335,7 +489,9 @@ export function createEscrowHelpers({
       minNativeGas = 0n;
     }
     if (minNativeGas > 0n) {
-      const nativeBalance = await withTimeout(provider.getBalance(runtimeAaWallet), 15000, 'getBalance');
+      const nativeBalance = await runWithOnchainRetry(() =>
+        withTimeout(provider.getBalance(runtimeAaWallet), 15000, 'getBalance')
+      );
       if (nativeBalance < minNativeGas) {
         throw buildEscrowError('insufficient_kite_gas', `${role} AA runtime has insufficient KITE for gas.`, {
           role,
@@ -374,6 +530,10 @@ export function createEscrowHelpers({
       runtime,
       runtimeOwner,
       runtimeAddress: runtimeAaWallet,
+      sessionId,
+      accountVersionTag: runtimeContext.capabilityDetail.accountVersionTag,
+      accountCapabilities: runtimeContext.capabilityDetail.accountCapabilities,
+      requiredForJobLane: runtimeContext.capabilityDetail.requiredForJobLane,
       sdk,
       signFunction
     };
@@ -405,6 +565,231 @@ export function createEscrowHelpers({
     );
   }
 
+  async function readCurrentAllowance(ownerAddress = '') {
+    const normalizedOwner = normalizeAddress(ownerAddress);
+    if (!normalizedOwner || !settlementTokenAddress || !ethers?.isAddress(settlementTokenAddress) || !provider) {
+      return 0n;
+    }
+    const tokenContract = new ethers.Contract(settlementTokenAddress, erc20MetadataAbi, provider);
+    const allowance = await withTimeout(
+      runWithOnchainRetry(() => tokenContract.allowance(normalizedOwner, contractAddress)),
+      15000,
+      'allowance check'
+    );
+    return ethers.getBigInt(allowance || 0);
+  }
+
+  function normalizeSelector(selector = '') {
+    const normalized = normalizeText(selector);
+    return /^0x[0-9a-fA-F]{8}$/.test(normalized) ? normalized.toLowerCase() : '';
+  }
+
+  function selectorFromCallData(callData = '0x') {
+    const normalized = normalizeText(callData);
+    return /^0x[0-9a-fA-F]{8,}$/.test(normalized) ? normalized.slice(0, 10).toLowerCase() : '';
+  }
+
+  function resolveExpectedJobLaneSelector(actionCode = '') {
+    return normalizeSelector(jobLaneSelectorByAction[normalizeText(actionCode)]);
+  }
+
+  async function ensureSessionGenericPermission({
+    context,
+    target,
+    callData,
+    actionCode = ''
+  } = {}) {
+    if (!context?.runtimeAddress || !context?.sessionId || !provider) {
+      return null;
+    }
+    const normalizedTarget = normalizeAddress(target);
+    const selector = selectorFromCallData(callData);
+    const expectedSelector = resolveExpectedJobLaneSelector(actionCode);
+    if (!normalizedTarget || !selector) {
+      throw buildEscrowError(
+        'aa_session_permission_setup_required',
+        'Unable to derive V3 session selector permission for job-lane execution.',
+        {
+          role: context?.role,
+          runtimeAddress: context?.runtimeAddress,
+          target: normalizeText(target),
+          selector,
+          actionCode: normalizeText(actionCode)
+        }
+      );
+    }
+    if (expectedSelector && selector !== expectedSelector) {
+      throw buildEscrowError(
+        'aa_session_permission_setup_required',
+        'Resolved job-lane selector does not match the expected V3 permission profile.',
+        {
+          role: context?.role,
+          runtimeAddress: context?.runtimeAddress,
+          target: normalizedTarget,
+          selector,
+          expectedSelector,
+          actionCode: normalizeText(actionCode)
+        }
+      );
+    }
+    const readContract = new ethers.Contract(
+      context.runtimeAddress,
+      accountPermissionReadAbi,
+      provider
+    );
+    const [enabled] = await withTimeout(
+      runWithOnchainRetry(() =>
+        readContract.getSessionSelectorPermission(context.sessionId, normalizedTarget, selector)
+      ),
+      15000,
+      'getSessionSelectorPermission'
+    );
+    if (enabled) {
+      return {
+        configured: false,
+        selector,
+        target: normalizedTarget
+      };
+    }
+    const ownerKey = normalizeText(resolveSessionOwnerPrivateKey?.(context.runtimeOwner) || '');
+    if (!ownerKey) {
+      throw buildEscrowError(
+        'aa_session_permission_setup_required',
+        `${context.role || 'job lane'} AA runtime is missing V3 selector permission setup and no owner key is available for bootstrap.`,
+        {
+          role: context?.role,
+          roleAddress: context?.roleAddress,
+          runtimeAddress: context?.runtimeAddress,
+          runtimeOwner: context?.runtimeOwner,
+          sessionId: context?.sessionId,
+          target: normalizedTarget,
+          selector,
+          actionCode: normalizeText(actionCode),
+          upgradeRequired: false
+        }
+      );
+    }
+    const ownerWallet = new ethers.Wallet(ownerKey, provider);
+    const writeContract = new ethers.Contract(
+      context.runtimeAddress,
+      accountPermissionWriteAbi,
+      ownerWallet
+    );
+    const tx = await withTimeout(
+      runWithOnchainRetry(() =>
+        writeContract.setSessionSelectorPermissions([
+          {
+            sessionId: context.sessionId,
+            target: normalizedTarget,
+            selector,
+            enabled: true,
+            maxAmount: 0n
+          }
+        ])
+      ),
+      30000,
+      'setSessionSelectorPermissions'
+    );
+    const receipt = await withTimeout(tx.wait(), 60000, 'wait permission bootstrap tx');
+    emitEscrowDiagnostic('session_permission_bootstrapped', {
+      role: normalizeText(context?.role),
+      runtimeAddress: normalizeText(context?.runtimeAddress),
+      runtimeOwner: normalizeText(context?.runtimeOwner),
+      target: normalizedTarget,
+      selector,
+      actionCode: normalizeText(actionCode),
+      txHash: normalizeText(tx?.hash),
+      blockNumber: Number(receipt?.blockNumber || 0) || undefined
+    });
+    return {
+      configured: true,
+      selector,
+      target: normalizedTarget,
+      txHash: normalizeText(tx?.hash)
+    };
+  }
+
+  async function approveEscrowAllowance({
+    role = '',
+    roleAddress = '',
+    amount = '',
+    amountAtomic = null,
+    actionCode = 'erc20_approve_escrow'
+  } = {}) {
+    if (!contractAddress || !settlementTokenAddress) {
+      return {
+        configured: false,
+        approved: false,
+        contractAddress,
+        tokenAddress: settlementTokenAddress,
+        txHash: '',
+        userOpHash: ''
+      };
+    }
+    const context = await buildAaExecutionContext({ role, roleAddress });
+    const requiredAmount =
+      amountAtomic !== null && amountAtomic !== undefined
+        ? ethers.getBigInt(amountAtomic)
+        : await normalizeUnits(amount);
+    const currentAllowance = await readCurrentAllowance(context.runtimeAddress);
+    if (currentAllowance >= requiredAmount) {
+      return {
+        configured: true,
+        approved: true,
+        alreadyApproved: true,
+        contractAddress,
+        tokenAddress: settlementTokenAddress,
+        spender: contractAddress,
+        requiredAmount: requiredAmount.toString(),
+        currentAllowance: currentAllowance.toString(),
+        approvedAmount: currentAllowance.toString(),
+        txHash: '',
+        userOpHash: '',
+        runtimeAddress: context.runtimeAddress,
+        runtimeOwner: context.runtimeOwner,
+        accountVersionTag: context.accountVersionTag,
+        accountCapabilities: context.accountCapabilities,
+        aaMethod: 'executeWithSession',
+        executionMode: 'aa-session-generic'
+      };
+    }
+    const callData = erc20ApproveInterface.encodeFunctionData('approve', [
+      contractAddress,
+      ethers.MaxUint256
+    ]);
+    const execution = await executeEscrowCall({
+      context,
+      target: settlementTokenAddress,
+      callData,
+      gasOverrides: {
+        callGasLimit: 220000n,
+        verificationGasLimit: 500000n,
+        preVerificationGas: 105000n
+      },
+      actionCode
+    });
+    const updatedAllowance = await readCurrentAllowance(context.runtimeAddress);
+    return {
+      configured: true,
+      approved: true,
+      alreadyApproved: false,
+      contractAddress,
+      tokenAddress: settlementTokenAddress,
+      spender: contractAddress,
+      requiredAmount: requiredAmount.toString(),
+      currentAllowance: currentAllowance.toString(),
+      approvedAmount: updatedAllowance.toString(),
+      txHash: execution.txHash,
+      userOpHash: execution.userOpHash,
+      runtimeAddress: execution.runtimeAddress,
+      runtimeOwner: execution.runtimeOwner,
+      accountVersionTag: execution.accountVersionTag,
+      accountCapabilities: execution.accountCapabilities,
+      aaMethod: execution.aaMethod,
+      executionMode: execution.executionMode
+    };
+  }
+
   async function executeEscrowCall({
     context,
     target,
@@ -415,12 +800,34 @@ export function createEscrowHelpers({
     waitTimeoutMs = escrowUserOpWaitTimeoutMs
   } = {}) {
     let lastFailure = null;
-    const executeCallData = context.sdk.account.interface.encodeFunctionData('execute', [
+    const permissionBootstrap = await ensureSessionGenericPermission({
+      context,
+      target,
+      callData,
+      actionCode
+    });
+    const actionId = normalizeBytes32(
+      `${normalizeText(actionCode || 'escrow_call')}:${normalizeText(context?.role)}:${normalizeText(target)}`
+    );
+    const executeCallData = context.sdk.account.interface.encodeFunctionData('executeWithSession', [
+      context.sessionId,
       target,
       0n,
-      callData
+      callData,
+      actionId,
+      '0x'
     ]);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const submitStartedAt = Date.now();
+      emitEscrowDiagnostic('userop_submit_started', {
+        actionCode: normalizeText(actionCode || 'escrow_call'),
+        attempt,
+        role: normalizeText(context?.role),
+        roleAddress: normalizeText(context?.roleAddress),
+        runtimeAddress: normalizeText(context?.runtimeAddress),
+        runtimeOwner: normalizeText(context?.runtimeOwner),
+        target: normalizeText(target)
+      });
       const submitResult = await withTimeout(
         context.sdk.sendRawCallDataUserOperation(
           executeCallData,
@@ -430,6 +837,16 @@ export function createEscrowHelpers({
         submitTimeoutMs,
         `${actionCode || 'escrow call'} submit attempt ${attempt}`
       );
+      emitEscrowDiagnostic('userop_submit_finished', {
+        actionCode: normalizeText(actionCode || 'escrow_call'),
+        attempt,
+        role: normalizeText(context?.role),
+        runtimeAddress: normalizeText(context?.runtimeAddress),
+        elapsedMs: Date.now() - submitStartedAt,
+        status: normalizeText(submitResult?.status),
+        userOpHash: normalizeText(submitResult?.userOpHash),
+        reason: normalizeText(submitResult?.reason || submitResult?.error?.message || '')
+      });
       if (submitResult?.status !== 'submitted' || !normalizeText(submitResult?.userOpHash)) {
         const reason = normalizeText(
           submitResult?.reason || submitResult?.error?.message || `${actionCode || 'escrow call'} submit failed`
@@ -445,19 +862,43 @@ export function createEscrowHelpers({
         await wait(1000 * attempt);
         continue;
       }
+      const waitStartedAt = Date.now();
+      emitEscrowDiagnostic('userop_wait_started', {
+        actionCode: normalizeText(actionCode || 'escrow_call'),
+        attempt,
+        role: normalizeText(context?.role),
+        runtimeAddress: normalizeText(context?.runtimeAddress),
+        userOpHash: normalizeText(submitResult.userOpHash),
+        waitTimeoutMs
+      });
       const result = await context.sdk.waitForUserOperationResult(
         normalizeText(submitResult.userOpHash),
         waitTimeoutMs,
         escrowUserOpPollIntervalMs || bundlerReceiptPollIntervalMs
       );
+      emitEscrowDiagnostic('userop_wait_finished', {
+        actionCode: normalizeText(actionCode || 'escrow_call'),
+        attempt,
+        role: normalizeText(context?.role),
+        runtimeAddress: normalizeText(context?.runtimeAddress),
+        userOpHash: normalizeText(result?.userOpHash || submitResult?.userOpHash),
+        elapsedMs: Date.now() - waitStartedAt,
+        status: normalizeText(result?.status),
+        transactionHash: normalizeText(result?.transactionHash),
+        reason: normalizeText(result?.reason || result?.error?.message || '')
+      });
       if (result?.status === 'success' && normalizeText(result?.transactionHash)) {
         return {
           configured: true,
           txHash: normalizeText(result.transactionHash),
           userOpHash: normalizeText(result.userOpHash || submitResult.userOpHash),
+          permissionBootstrapTxHash: normalizeText(permissionBootstrap?.txHash),
           runtimeAddress: normalizeText(context.runtimeAddress),
           runtimeOwner: normalizeText(context.runtimeOwner),
-          executionMode: 'aa-native'
+          accountVersionTag: normalizeText(context.accountVersionTag),
+          accountCapabilities: context.accountCapabilities || {},
+          aaMethod: 'executeWithSession',
+          executionMode: 'aa-session-generic'
         };
       }
       const reason = normalizeText(result?.reason || result?.error?.message || `${actionCode || 'escrow call'} failed`);
@@ -467,6 +908,14 @@ export function createEscrowHelpers({
         runtimeAddress: context.runtimeAddress,
         userOpHash: normalizeText(result?.userOpHash || submitResult?.userOpHash),
         attempt
+      });
+      emitEscrowDiagnostic('userop_attempt_failed', {
+        actionCode: normalizeText(actionCode || 'escrow_call'),
+        attempt,
+        role: normalizeText(context?.role),
+        runtimeAddress: normalizeText(context?.runtimeAddress),
+        userOpHash: normalizeText(result?.userOpHash || submitResult?.userOpHash),
+        reason
       });
       if (attempt >= 3 || !isRetryableOnchainError(lastFailure)) break;
       await wait(1000 * attempt);
@@ -507,8 +956,7 @@ export function createEscrowHelpers({
     const normalizedDeadline = normalizeDeadline(deadlineAt);
     const context = await buildAaExecutionContext({ role: 'requester', roleAddress: requesterAddress });
     await ensureErc20Allowance(context, normalizedAmount);
-    const contractInterface = new ethers.Interface(abi);
-    const callData = contractInterface.encodeFunctionData('lockFunds', [
+    const callData = jobEscrowInterface.encodeFunctionData('lockFunds', [
       normalizeText(jobId),
       requesterAddress,
       executorAddress,
@@ -537,6 +985,9 @@ export function createEscrowHelpers({
       userOpHash: execution.userOpHash,
       runtimeAddress: execution.runtimeAddress,
       runtimeOwner: execution.runtimeOwner,
+      accountVersionTag: execution.accountVersionTag,
+      accountCapabilities: execution.accountCapabilities,
+      aaMethod: execution.aaMethod,
       executionMode: execution.executionMode,
       escrowState: 'funded'
     };
@@ -563,8 +1014,7 @@ export function createEscrowHelpers({
     if (Number(escrowJob?.executorStakeAmount || 0) > 0) {
       await ensureErc20Allowance(context, ethers.getBigInt(escrowJob.executorStakeAmount));
     }
-    const contractInterface = new ethers.Interface(abi);
-    const callData = contractInterface.encodeFunctionData('acceptJob', [normalizeText(jobId)]);
+    const callData = jobEscrowInterface.encodeFunctionData('acceptJob', [normalizeText(jobId)]);
     const execution = await executeEscrowCall({
       context,
       target: contractAddress,
@@ -574,7 +1024,9 @@ export function createEscrowHelpers({
         verificationGasLimit: 520000n,
         preVerificationGas: 110000n
       },
-      actionCode: 'job_accept_failed'
+      actionCode: 'job_accept_failed',
+      submitTimeoutMs: Math.max(120_000, Number(escrowUserOpSubmitTimeoutMs || 0)),
+      waitTimeoutMs: Math.max(300_000, Number(escrowUserOpWaitTimeoutMs || 0))
     });
     return {
       configured: true,
@@ -585,6 +1037,9 @@ export function createEscrowHelpers({
       userOpHash: execution.userOpHash,
       runtimeAddress: execution.runtimeAddress,
       runtimeOwner: execution.runtimeOwner,
+      accountVersionTag: execution.accountVersionTag,
+      accountCapabilities: execution.accountCapabilities,
+      aaMethod: execution.aaMethod,
       executionMode: execution.executionMode,
       escrowState: 'accepted'
     };
@@ -607,8 +1062,7 @@ export function createEscrowHelpers({
       });
     }
     const context = await buildAaExecutionContext({ role: 'executor', roleAddress: executorAddress });
-    const contractInterface = new ethers.Interface(abi);
-    const callData = contractInterface.encodeFunctionData('submitResult', [
+    const callData = jobEscrowInterface.encodeFunctionData('submitResult', [
       normalizeText(jobId),
       normalizeBytes32(resultHash)
     ]);
@@ -624,7 +1078,9 @@ export function createEscrowHelpers({
           verificationGasLimit: 520000n,
           preVerificationGas: 110000n
         },
-        actionCode: 'job_submit_failed'
+        actionCode: 'job_submit_failed',
+        submitTimeoutMs: Math.max(120_000, Number(escrowUserOpSubmitTimeoutMs || 0)),
+        waitTimeoutMs: Math.max(300_000, Number(escrowUserOpWaitTimeoutMs || 0))
       });
     } catch (error) {
       if (isTraceAnchorRequiredError(error)) {
@@ -645,6 +1101,9 @@ export function createEscrowHelpers({
       userOpHash: execution.userOpHash,
       runtimeAddress: execution.runtimeAddress,
       runtimeOwner: execution.runtimeOwner,
+      accountVersionTag: execution.accountVersionTag,
+      accountCapabilities: execution.accountCapabilities,
+      aaMethod: execution.aaMethod,
       executionMode: execution.executionMode,
       escrowState: 'submitted'
     };
@@ -667,8 +1126,7 @@ export function createEscrowHelpers({
       });
     }
     const context = await buildAaExecutionContext({ role: 'validator', roleAddress: validatorAddress });
-    const contractInterface = new ethers.Interface(abi);
-    const callData = contractInterface.encodeFunctionData('validate', [
+    const callData = jobEscrowInterface.encodeFunctionData('validate', [
       normalizeText(jobId),
       Boolean(approved)
     ]);
@@ -681,7 +1139,9 @@ export function createEscrowHelpers({
         verificationGasLimit: 520000n,
         preVerificationGas: 110000n
       },
-      actionCode: 'job_validate_failed'
+      actionCode: 'job_validate_failed',
+      submitTimeoutMs: Math.max(120_000, Number(escrowUserOpSubmitTimeoutMs || 0)),
+      waitTimeoutMs: Math.max(300_000, Number(escrowUserOpWaitTimeoutMs || 0))
     });
     return {
       configured: true,
@@ -692,6 +1152,9 @@ export function createEscrowHelpers({
       userOpHash: execution.userOpHash,
       runtimeAddress: execution.runtimeAddress,
       runtimeOwner: execution.runtimeOwner,
+      accountVersionTag: execution.accountVersionTag,
+      accountCapabilities: execution.accountCapabilities,
+      aaMethod: execution.aaMethod,
       executionMode: execution.executionMode,
       escrowState: approved ? 'completed' : 'rejected'
     };
@@ -714,8 +1177,7 @@ export function createEscrowHelpers({
       });
     }
     const context = await buildAaExecutionContext({ role: 'requester', roleAddress: requesterAddress });
-    const contractInterface = new ethers.Interface(abi);
-    const callData = contractInterface.encodeFunctionData('expireJob', [normalizeText(jobId)]);
+    const callData = jobEscrowInterface.encodeFunctionData('expireJob', [normalizeText(jobId)]);
     const execution = await executeEscrowCall({
       context,
       target: contractAddress,
@@ -725,7 +1187,9 @@ export function createEscrowHelpers({
         verificationGasLimit: 520000n,
         preVerificationGas: 110000n
       },
-      actionCode: 'job_expire_failed'
+      actionCode: 'job_expire_failed',
+      submitTimeoutMs: Math.max(120_000, Number(escrowUserOpSubmitTimeoutMs || 0)),
+      waitTimeoutMs: Math.max(300_000, Number(escrowUserOpWaitTimeoutMs || 0))
     });
     return {
       configured: true,
@@ -736,6 +1200,9 @@ export function createEscrowHelpers({
       userOpHash: execution.userOpHash,
       runtimeAddress: execution.runtimeAddress,
       runtimeOwner: execution.runtimeOwner,
+      accountVersionTag: execution.accountVersionTag,
+      accountCapabilities: execution.accountCapabilities,
+      aaMethod: execution.aaMethod,
       executionMode: execution.executionMode,
       escrowState: 'expired'
     };
@@ -779,7 +1246,56 @@ export function createEscrowHelpers({
     };
   }
 
+  async function prepareEscrowFunding({
+    requester = '',
+    executor = '',
+    escrowAmount = '',
+    executorStakeAmount = ''
+  } = {}) {
+    if (!contractAddress || !settlementTokenAddress) {
+      return {
+        configured: false,
+        prepared: false,
+        contractAddress,
+        tokenAddress: settlementTokenAddress,
+        requesterAllowance: null,
+        executorAllowance: null
+      };
+    }
+    const requesterAmount = normalizeText(escrowAmount);
+    const executorStake = normalizeText(executorStakeAmount);
+    const [requesterAllowance, executorAllowance] = await Promise.all([
+      requesterAmount && requesterAmount !== '0' && requester
+        ? approveEscrowAllowance({
+            role: 'requester',
+            roleAddress: requester,
+            amount: requesterAmount,
+            actionCode: 'job_prepare_funding'
+          })
+        : Promise.resolve(null),
+      executorStake && executorStake !== '0' && executor
+        ? approveEscrowAllowance({
+            role: 'executor',
+            roleAddress: executor,
+            amount: executorStake,
+            actionCode: 'job_prepare_acceptance'
+          })
+        : Promise.resolve(null)
+    ]);
+
+    return {
+      configured: true,
+      prepared: Boolean(requesterAllowance || executorAllowance),
+      contractAddress,
+      tokenAddress: settlementTokenAddress,
+      requesterAllowance,
+      executorAllowance
+    };
+  }
+
   return {
+    preflightJobLaneCapability,
+    prepareEscrowFunding,
     lockEscrowFunds,
     acceptEscrowJob,
     submitEscrowResult,

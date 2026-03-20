@@ -1,3 +1,5 @@
+import { invokeBuiltinTool } from './ktraceBuiltinTools.js';
+
 function normalizeText(value = '') {
   return String(value ?? '').trim();
 }
@@ -187,13 +189,31 @@ export function createMcpInvokeAdapter({ fetchLoopbackJson }) {
     authSource = '',
     grantId = ''
   } = {}) {
+    const traceId = pickTraceId(isPlainObject(args) ? args : {}, extra);
+
+    if (normalizeText(tool?.kind || '') === 'builtin') {
+      return invokeBuiltinTool({
+        tool,
+        args,
+        fetchLoopbackJson,
+        traceId,
+        requestContext: {
+          ownerEoa,
+          aaWallet,
+          authSource,
+          grantId,
+          apiKey
+        }
+      });
+    }
+
     const invokePayload = buildInvokePayload(tool, args, extra, paymentMode, {
       ownerEoa,
       aaWallet,
       authSource,
       grantId
     });
-    const traceId = normalizeText(invokePayload.traceId || '');
+    const effectiveTraceId = normalizeText(invokePayload.traceId || traceId || '');
 
     try {
       const { status, payload } = await fetchLoopbackJson({
@@ -201,20 +221,39 @@ export function createMcpInvokeAdapter({ fetchLoopbackJson }) {
         method: 'POST',
         body: invokePayload,
         apiKey,
-        traceId
+        traceId: effectiveTraceId
       });
 
       if (status >= 200 && status < 300 && payload?.ok !== false) {
-        return buildSuccessResult(tool, payload, traceId);
+        return buildSuccessResult(tool, payload, effectiveTraceId);
       }
 
-      return buildErrorResult(tool, payload, status, traceId, `HTTP ${status}`);
+      // Handle 402 payment-required responses based on payment mode:
+      // - hosted: server-side payment failed → return error with details
+      // - agent:  x402 protocol preview → return data as success if available
+      if (status === 402) {
+        const hasPreviewData = payload?.result && typeof payload.result === 'object';
+        if (normalizeText(paymentMode) === 'hosted') {
+          // Hosted mode tried to pay on-chain but failed; report as error
+          // but still include any preview data in the response for debugging
+          return hasPreviewData
+            ? buildErrorResult(tool, payload, status, effectiveTraceId,
+                normalizeText(payload?.reason || 'Server-side payment failed. Check AA wallet balance and session.'))
+            : buildErrorResult(tool, payload, status, effectiveTraceId, `HTTP ${status}`);
+        }
+        // Agent mode: return preview data as success (x402 protocol)
+        if (hasPreviewData) {
+          return buildSuccessResult(tool, payload, effectiveTraceId);
+        }
+      }
+
+      return buildErrorResult(tool, payload, status, effectiveTraceId, `HTTP ${status}`);
     } catch (error) {
       return buildErrorResult(
         tool,
         {},
         500,
-        traceId,
+        effectiveTraceId,
         normalizeText(error?.message || 'invoke_failed') || 'invoke_failed'
       );
     }

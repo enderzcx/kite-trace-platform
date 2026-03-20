@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { deriveAaAccountCapabilities } from './aaConfig.js';
 
 export function maskSecret(secret = '') {
   const value = String(secret || '');
@@ -33,8 +34,15 @@ export function createSessionRuntimeHelpers({
     const dailyLimit = Number(input.dailyLimit || 0);
     const gatewayRecipient = normalizeAddress(input.gatewayRecipient || '');
     const accountVersion = String(input.accountVersion || '').trim();
+    const accountVersionTag = String(input.accountVersionTag || '').trim();
     const accountFactoryAddress = normalizeAddress(input.accountFactoryAddress || '');
     const accountImplementationAddress = normalizeAddress(input.accountImplementationAddress || '');
+    const explicitAccountCapabilities =
+      input.accountCapabilities && typeof input.accountCapabilities === 'object' && !Array.isArray(input.accountCapabilities)
+        ? input.accountCapabilities
+        : {};
+    const requiredForJobLane = String(input.requiredForJobLane || '').trim();
+    const runtimeHealth = String(input.runtimeHealth || '').trim().toLowerCase();
     const explicitAuthorizedBy = normalizeAddress(input.authorizedBy || '');
     const authorizedBy = explicitAuthorizedBy || owner;
     const updatedAt = Number(input.updatedAt || Date.now());
@@ -85,6 +93,12 @@ export function createSessionRuntimeHelpers({
     const authorityUpdatedAt = Number(input.authorityUpdatedAt || 0);
     const runtimePurpose = String(input.runtimePurpose || input.purpose || '').trim().toLowerCase();
     const source = String(input.source || 'frontend').trim();
+    const aaCapabilitySnapshot = deriveAaAccountCapabilities({
+      accountVersion,
+      accountVersionTag,
+      accountCapabilities: explicitAccountCapabilities,
+      requiredForJobLane
+    });
 
     return {
       aaWallet: ethers.isAddress(aaWallet) ? aaWallet : '',
@@ -99,10 +113,14 @@ export function createSessionRuntimeHelpers({
       dailyLimit: Number.isFinite(dailyLimit) && dailyLimit > 0 ? dailyLimit : 0,
       gatewayRecipient: ethers.isAddress(gatewayRecipient) ? gatewayRecipient : '',
       accountVersion,
+      accountVersionTag: aaCapabilitySnapshot.accountVersionTag || accountVersion,
       accountFactoryAddress: ethers.isAddress(accountFactoryAddress) ? accountFactoryAddress : '',
       accountImplementationAddress: ethers.isAddress(accountImplementationAddress)
         ? accountImplementationAddress
         : '',
+      accountCapabilities: aaCapabilitySnapshot.accountCapabilities,
+      requiredForJobLane: aaCapabilitySnapshot.requiredForJobLane,
+      runtimeHealth,
       authorizedBy: ethers.isAddress(authorizedBy) ? authorizedBy : '',
       authorizedAt: Number.isFinite(authorizedAt) && authorizedAt > 0 ? authorizedAt : 0,
       authorizationMode,
@@ -258,7 +276,24 @@ export function createSessionRuntimeHelpers({
   }
 
   function writeSessionRuntime(input = {}, options = {}) {
-    const next = sanitizeSessionRuntime(input);
+    const existing =
+      (input?.owner
+        ? resolveSessionRuntime({
+            owner: input.owner,
+            strictOwnerMatch: true
+          })
+        : resolveSessionRuntime({
+            aaWallet: input?.aaWallet,
+            sessionId: input?.sessionId
+          })) || {};
+    const merged =
+      existing && typeof existing === 'object'
+        ? {
+            ...existing,
+            ...input
+          }
+        : { ...input };
+    const next = sanitizeSessionRuntime(merged);
     const setCurrent = options?.setCurrent !== false;
     const index = readSessionRuntimeIndex();
     const nextIndex = {

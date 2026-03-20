@@ -58,6 +58,27 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     return String(value || '').trim();
   }
 
+  const SELF_SERVE_VIEW_AUTH = {
+    allowEnvApiKey: false,
+    allowAccountApiKey: true,
+    allowOnboardingCookie: true,
+    unauthorizedCode: 'sign_in_required',
+    unauthorizedMessage: 'Sign-in required. Complete wallet onboarding or use a compatible account credential.'
+  };
+
+  const SELF_SERVE_MUTATION_AUTH = {
+    allowEnvApiKey: false,
+    allowAccountApiKey: false,
+    allowOnboardingCookie: true,
+    unauthorizedCode: 'sign_in_required',
+    unauthorizedMessage: 'Sign-in required. Complete wallet onboarding to continue.'
+  };
+
+  const CONNECTOR_COMPAT_AUTH = {
+    ...SELF_SERVE_MUTATION_AUTH,
+    allowEnvApiKey: true
+  };
+
   function getScopedOwnerFromAuth(req) {
     return normalizeSessionGrantAddress(req?.authOwnerEoa || req?.accountCtx?.ownerEoa || '');
   }
@@ -139,7 +160,16 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     return `${protocol}://${host}`.replace(/\/+$/, '');
   }
 
-  function evaluateClaudeConnectorSetup(ownerEoa = '') {
+  function normalizeConnectorClient(value = '') {
+    const normalized = normalizeText(value || '').toLowerCase();
+    return normalized || 'agent';
+  }
+
+  function normalizeConnectorClientId(value = '') {
+    return normalizeText(value || '');
+  }
+
+  function evaluateAgentConnectorSetup(ownerEoa = '') {
     const normalizedOwner = normalizeOwnerInput(ownerEoa || '');
     const missing = [];
     if (!normalizedOwner) {
@@ -155,14 +185,24 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
       owner: normalizedOwner,
       strictOwnerMatch: true
     });
+    const runtimeSource = normalizeText(runtime?.source || '').toLowerCase();
+    const authorizationMode = normalizeText(runtime?.authorizationMode || '').toLowerCase();
+    const supportsManagedConnectorCompat =
+      authorizationMode === 'owner_runtime_sync' ||
+      runtimeSource === 'api-session-runtime-ensure' ||
+      runtimeSource.startsWith('backend-managed');
     if (!runtime?.owner || normalizeOwnerInput(runtime.owner) !== normalizedOwner) {
       missing.push('runtime_owner_missing');
     }
     if (!normalizeText(runtime?.aaWallet || '')) missing.push('aa_wallet_missing');
     if (!normalizeText(runtime?.sessionAddress || '')) missing.push('session_address_missing');
     if (!normalizeText(runtime?.sessionId || '')) missing.push('session_id_missing');
-    if (!normalizeText(runtime?.authorizationSignature || '')) missing.push('authorization_signature_missing');
-    if (!normalizeText(runtime?.authorizationPayloadHash || '')) missing.push('authorization_payload_hash_missing');
+    if (!supportsManagedConnectorCompat && !normalizeText(runtime?.authorizationSignature || '')) {
+      missing.push('authorization_signature_missing');
+    }
+    if (!supportsManagedConnectorCompat && !normalizeText(runtime?.authorizationPayloadHash || '')) {
+      missing.push('authorization_payload_hash_missing');
+    }
 
     const authorityResult = materializeAuthority?.({
       owner: normalizedOwner
@@ -199,10 +239,20 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     };
   }
 
-  function buildClaudeConnectorStatus(ownerEoa = '', req) {
-    const setup = evaluateClaudeConnectorSetup(ownerEoa);
-    const pendingInstallCode = findPendingClaudeConnectorInstallCode?.(ownerEoa) || null;
-    const activeGrant = findActiveClaudeConnectorGrant?.(ownerEoa) || null;
+  function buildAgentConnectorStatus(ownerEoa = '', req, { client = 'agent', clientId = '' } = {}) {
+    const normalizedClient = normalizeConnectorClient(client);
+    const normalizedClientId = normalizeConnectorClientId(clientId);
+    const setup = evaluateAgentConnectorSetup(ownerEoa);
+    const pendingInstallCode =
+      findPendingClaudeConnectorInstallCode?.(ownerEoa, {
+        client: normalizedClient,
+        clientId: normalizedClientId
+      }) || null;
+    const activeGrant =
+      findActiveClaudeConnectorGrant?.(ownerEoa, {
+        client: normalizedClient,
+        clientId: normalizedClientId
+      }) || null;
     let state = 'not_connected';
     if (!setup.ready) state = 'not_ready';
     else if (activeGrant) state = 'connected';
@@ -217,7 +267,8 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
         runtime: buildSessionRuntimePayload(setup.runtime || {})
       },
       connector: {
-        client: 'claude',
+        client: normalizedClient,
+        clientId: normalizedClientId,
         state,
         pendingInstallCode: pendingInstallCode
           ? buildClaudeConnectorInstallCodePublicRecord?.(pendingInstallCode) || null
@@ -227,6 +278,10 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
           : null
       }
     };
+  }
+
+  function buildClaudeConnectorStatus(ownerEoa = '', req) {
+    return buildAgentConnectorStatus(ownerEoa, req, { client: 'claude' });
   }
 
   function normalizePolicyExpiry(value = 0) {
@@ -393,11 +448,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
 
   app.get(
     '/api/session/runtime',
-    requireRole('viewer', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
+    requireRole('viewer', SELF_SERVE_VIEW_AUTH),
     (req, res) => {
     const lookup = buildRuntimeLookup(req);
     const explicitOwnerLookup = normalizeOwnerInput(req.query.owner || req.query.ownerEoa || '');
@@ -416,11 +467,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
 
   app.post(
     '/api/setup/runtime/prepare',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
+    requireRole('agent', SELF_SERVE_MUTATION_AUTH),
     async (req, res) => {
       try {
         const scopedBody = buildSetupRouteBody(req, req.body || {});
@@ -458,11 +505,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
 
   app.post(
     '/api/setup/runtime/finalize',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
+    requireRole('agent', SELF_SERVE_MUTATION_AUTH),
     async (req, res) => {
       try {
         const scopedBody = buildSetupRouteBody(req, req.body || {}, { includeUserEoa: true });
@@ -521,6 +564,27 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
       runtime: buildSessionRuntimePayload(result?.runtime || {})
     });
   });
+
+  app.post(
+    '/api/setup/session/policy',
+    requireRole('agent', SELF_SERVE_MUTATION_AUTH),
+    (req, res) => {
+      const scopedBody = buildSetupRouteBody(req, req.body || {});
+      if (scopedBody?.error) {
+        return sendRouteFailure(req, res, scopedBody.error);
+      }
+      const result = writeConsumerAuthorityPolicy?.(buildAuthorityRouteInput(req, scopedBody || {}));
+      if (!result?.ok) {
+        return sendAuthorityFailure(req, res, result);
+      }
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        authority: result?.authority || null,
+        runtime: buildSessionRuntimePayload(result?.runtime || {})
+      });
+    }
+  );
 
   app.post('/api/session/policy', requireRole('agent'), (req, res) => {
     const result = writeConsumerAuthorityPolicy?.(buildAuthorityRouteInput(req, req.body || {}));
@@ -641,8 +705,11 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
       dailyLimit: body.dailyLimit,
       gatewayRecipient: body.gatewayRecipient,
       accountVersion: body.accountVersion,
+      accountVersionTag: body.accountVersionTag,
       accountFactoryAddress: body.accountFactoryAddress,
       accountImplementationAddress: body.accountImplementationAddress,
+      accountCapabilities: body.accountCapabilities,
+      requiredForJobLane: body.requiredForJobLane,
       authorizedBy: body.authorizedBy,
       authorizedAt: body.authorizedAt,
       authorizationMode: body.authorizationMode,
@@ -666,11 +733,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
 
   app.post(
     '/api/session/runtime/ensure',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
+    requireRole('agent', SELF_SERVE_MUTATION_AUTH),
     async (req, res) => {
     try {
       const scopedBody = buildSetupRouteBody(req, req.body || {});
@@ -731,11 +794,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
 
   app.post(
     '/api/v1/session/authorize',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
+    requireRole('agent', SELF_SERVE_MUTATION_AUTH),
     async (req, res) => {
     try {
       const scopedBody = buildSetupRouteBody(req, req.body || {}, { includeUserEoa: true });
@@ -806,11 +865,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
 
   app.get(
     '/api/account/api-key',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
+    requireRole('agent', SELF_SERVE_MUTATION_AUTH),
     (req, res) => {
       const ownerEoa = resolveAccountOwner(req);
       if (!ownerEoa) {
@@ -840,11 +895,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
 
   app.post(
     '/api/account/api-key/generate',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
+    requireRole('agent', SELF_SERVE_MUTATION_AUTH),
     (req, res) => {
       const body = req.body || {};
       const ownerEoa = resolveAccountOwner(req, body);
@@ -878,11 +929,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
 
   app.post(
     '/api/account/api-key/revoke',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
+    requireRole('agent', SELF_SERVE_MUTATION_AUTH),
     (req, res) => {
       const body = req.body || {};
       const ownerEoa = resolveAccountOwner(req, body);
@@ -910,128 +957,188 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     }
   );
 
+  function handleConnectorStatus(req, res, { client = 'agent', clientId = '' } = {}) {
+    const ownerEoa = resolveAccountOwner(req);
+    return res.json(
+      buildAgentConnectorStatus(ownerEoa, req, {
+        client,
+        clientId
+      })
+    );
+  }
+
+  function handleConnectorBootstrap(req, res, { client = 'agent' } = {}) {
+    const body = req.body || {};
+    const ownerEoa = resolveAccountOwner(req, body);
+    const normalizedClient = normalizeConnectorClient(body.client || client);
+    const normalizedClientId = normalizeConnectorClientId(body.clientId || body.deviceId || '');
+    const setup = evaluateAgentConnectorSetup(ownerEoa);
+    if (!normalizeOwnerInput(ownerEoa)) {
+      return sendRouteFailure(req, res, {
+        statusCode: 400,
+        code: 'connector_setup_incomplete',
+        reason: 'A valid ownerEoa is required to issue an agent connector credential.'
+      });
+    }
+    if (!normalizeText(setup?.runtime?.owner || '')) {
+      return res.status(409).json({
+        ok: false,
+        error: 'connector_runtime_not_ready',
+        reason: 'Agent connector setup requires a ready owner-scoped runtime.',
+        traceId: req.traceId || '',
+        missing: setup.missing
+      });
+    }
+    const runtimeSource = normalizeText(setup?.runtime?.source || '').toLowerCase();
+    const authorizationMode = normalizeText(setup?.runtime?.authorizationMode || '').toLowerCase();
+    const supportsManagedConnectorCompat =
+      authorizationMode === 'owner_runtime_sync' ||
+      runtimeSource === 'api-session-runtime-ensure' ||
+      runtimeSource.startsWith('backend-managed');
+    if (
+      !normalizeText(setup?.runtime?.aaWallet || '') ||
+      !normalizeText(setup?.runtime?.sessionAddress || '') ||
+      !normalizeText(setup?.runtime?.sessionId || '') ||
+      (!supportsManagedConnectorCompat && !normalizeText(setup?.runtime?.authorizationSignature || '')) ||
+      (!supportsManagedConnectorCompat && !normalizeText(setup?.runtime?.authorizationPayloadHash || ''))
+    ) {
+      return res.status(409).json({
+        ok: false,
+        error: 'connector_runtime_not_ready',
+        reason: 'Agent connector setup requires a ready AA session runtime.',
+        traceId: req.traceId || '',
+        missing: setup.missing
+      });
+    }
+    if (!setup.authority || setup.missing.some((item) => item.startsWith('authority_'))) {
+      return res.status(409).json({
+        ok: false,
+        error: 'connector_authority_inactive',
+        reason: 'Agent connector setup requires an active consumer authority policy.',
+        traceId: req.traceId || '',
+        missing: setup.missing
+      });
+    }
+
+    const activeGrant =
+      findActiveClaudeConnectorGrant?.(ownerEoa, {
+        client: normalizedClient,
+        clientId: normalizedClientId
+      }) || null;
+    if (activeGrant) {
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        ownerEoa,
+        connector: {
+          client: normalizedClient,
+          clientId: normalizedClientId,
+          state: 'connected',
+          alreadyConnected: true,
+          activeGrant:
+            buildClaudeConnectorGrantPublicRecord?.(activeGrant) || activeGrant || null
+        }
+      });
+    }
+
+    const issued = issueClaudeConnectorInstallCode?.({
+      ownerEoa,
+      aaWallet: setup.runtime?.aaWallet || '',
+      authorityId: setup.authority?.authorityId || '',
+      policySnapshotHash: buildAuthorityPolicySnapshotHash(setup.authority),
+      client: normalizedClient,
+      clientId: normalizedClientId
+    });
+    if (!issued?.ok) {
+      return sendRouteFailure(req, res, issued);
+    }
+
+    const connectorUrl = `${buildPublicBaseUrl(req)}/mcp/connect/${encodeURIComponent(issued.token)}`;
+    return res.json({
+      ok: true,
+      traceId: req.traceId || '',
+      ownerEoa,
+      connector: {
+        client: normalizedClient,
+        clientId: normalizedClientId,
+        state: 'install_code_issued',
+        installCodeId: issued.publicRecord?.installCodeId || '',
+        maskedPreview: issued.publicRecord?.maskedPreview || '',
+        expiresAt: issued.publicRecord?.expiresAt || 0,
+        connectorUrl
+      }
+    });
+  }
+
+  function handleConnectorRevoke(req, res, { client = 'agent' } = {}) {
+    const body = req.body || {};
+    const ownerEoa = resolveAccountOwner(req, body);
+    const normalizedClient = normalizeConnectorClient(body.client || client);
+    const normalizedClientId = normalizeConnectorClientId(body.clientId || body.deviceId || '');
+    const result = revokeClaudeConnectorGrant?.({
+      ownerEoa,
+      reason: body.reason || body.revocationReason || 'revoked',
+      client: normalizedClient,
+      clientId: normalizedClientId
+    });
+    if (!result?.ok) {
+      return sendRouteFailure(req, res, result);
+    }
+    return res.json({
+      ok: true,
+      traceId: req.traceId || '',
+      ownerEoa,
+      connector: {
+        client: normalizedClient,
+        clientId: normalizedClientId,
+        revoked: true,
+        grant: result.grant || null,
+        pendingInstallCode: result.pendingInstallCode || null
+      }
+    });
+  }
+
+  app.get(
+    '/api/connector/agent/status',
+    requireRole('agent', CONNECTOR_COMPAT_AUTH),
+    (req, res) => handleConnectorStatus(req, res, {
+      client: req.query.client || 'agent',
+      clientId: req.query.clientId || req.query.deviceId || ''
+    })
+  );
+
+  app.post(
+    '/api/connector/agent/bootstrap',
+    requireRole('agent', CONNECTOR_COMPAT_AUTH),
+    (req, res) => handleConnectorBootstrap(req, res, {
+      client: req.body?.client || 'agent'
+    })
+  );
+
+  app.post(
+    '/api/connector/agent/revoke',
+    requireRole('agent', CONNECTOR_COMPAT_AUTH),
+    (req, res) => handleConnectorRevoke(req, res, {
+      client: req.body?.client || 'agent'
+    })
+  );
+
   app.get(
     '/api/connector/claude/status',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
-    (req, res) => {
-      const ownerEoa = resolveAccountOwner(req);
-      return res.json(buildClaudeConnectorStatus(ownerEoa, req));
-    }
+    requireRole('agent', CONNECTOR_COMPAT_AUTH),
+    (req, res) => handleConnectorStatus(req, res, { client: 'claude' })
   );
 
   app.post(
     '/api/connector/claude/install-code',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
-    (req, res) => {
-      const body = req.body || {};
-      const ownerEoa = resolveAccountOwner(req, body);
-      const setup = evaluateClaudeConnectorSetup(ownerEoa);
-      if (!normalizeOwnerInput(ownerEoa)) {
-        return sendRouteFailure(req, res, {
-          statusCode: 400,
-          code: 'connector_setup_incomplete',
-          reason: 'A valid ownerEoa is required to issue a Claude connector install code.'
-        });
-      }
-      if (!normalizeText(setup?.runtime?.owner || '')) {
-        return res.status(409).json({
-          ok: false,
-          error: 'connector_runtime_not_ready',
-          reason: 'Claude connector setup requires a ready owner-scoped runtime.',
-          traceId: req.traceId || '',
-          missing: setup.missing
-        });
-      }
-      if (
-        !normalizeText(setup?.runtime?.aaWallet || '') ||
-        !normalizeText(setup?.runtime?.sessionAddress || '') ||
-        !normalizeText(setup?.runtime?.sessionId || '') ||
-        !normalizeText(setup?.runtime?.authorizationSignature || '') ||
-        !normalizeText(setup?.runtime?.authorizationPayloadHash || '')
-      ) {
-        return res.status(409).json({
-          ok: false,
-          error: 'connector_runtime_not_ready',
-          reason: 'Claude connector setup requires a ready AA session runtime.',
-          traceId: req.traceId || '',
-          missing: setup.missing
-        });
-      }
-      if (!setup.authority || setup.missing.some((item) => item.startsWith('authority_'))) {
-        return res.status(409).json({
-          ok: false,
-          error: 'connector_authority_inactive',
-          reason: 'Claude connector setup requires an active consumer authority policy.',
-          traceId: req.traceId || '',
-          missing: setup.missing
-        });
-      }
-
-      const issued = issueClaudeConnectorInstallCode?.({
-        ownerEoa,
-        aaWallet: setup.runtime?.aaWallet || '',
-        authorityId: setup.authority?.authorityId || '',
-        policySnapshotHash: buildAuthorityPolicySnapshotHash(setup.authority),
-        client: 'claude'
-      });
-      if (!issued?.ok) {
-        return sendRouteFailure(req, res, issued);
-      }
-
-      const connectorUrl = `${buildPublicBaseUrl(req)}/mcp/connect/${encodeURIComponent(issued.token)}`;
-      return res.json({
-        ok: true,
-        traceId: req.traceId || '',
-        ownerEoa,
-        connector: {
-          client: 'claude',
-          state: 'install_code_issued',
-          installCodeId: issued.publicRecord?.installCodeId || '',
-          maskedPreview: issued.publicRecord?.maskedPreview || '',
-          expiresAt: issued.publicRecord?.expiresAt || 0,
-          connectorUrl
-        }
-      });
-    }
+    requireRole('agent', CONNECTOR_COMPAT_AUTH),
+    (req, res) => handleConnectorBootstrap(req, res, { client: 'claude' })
   );
 
   app.post(
     '/api/connector/claude/revoke',
-    requireRole('agent', {
-      allowEnvApiKey: true,
-      allowAccountApiKey: false,
-      allowOnboardingCookie: true
-    }),
-    (req, res) => {
-      const body = req.body || {};
-      const ownerEoa = resolveAccountOwner(req, body);
-      const result = revokeClaudeConnectorGrant?.({
-        ownerEoa,
-        reason: body.reason || body.revocationReason || 'revoked'
-      });
-      if (!result?.ok) {
-        return sendRouteFailure(req, res, result);
-      }
-      return res.json({
-        ok: true,
-        traceId: req.traceId || '',
-        ownerEoa,
-        connector: {
-          client: 'claude',
-          revoked: true,
-          grant: result.grant || null,
-          pendingInstallCode: result.pendingInstallCode || null
-        }
-      });
-    }
+    requireRole('agent', CONNECTOR_COMPAT_AUTH),
+    (req, res) => handleConnectorRevoke(req, res, { client: 'claude' })
   );
 
   app.post('/api/v1/session/approval-requests', requireRole('agent'), async (req, res) => {
@@ -1060,7 +1167,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
       const payload = normalizeSessionGrantPayload(rawPayload, {
         audience: normalizeSessionGrantText(
           rawPayload.audience,
-          `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`
+          buildPublicBaseUrl(req)
         ),
         nonce: rawPayload.nonce || `0x${crypto.randomBytes(16).toString('hex')}`,
         issuedAt: rawPayload.issuedAt || Date.now(),

@@ -352,6 +352,14 @@ export function createSharedJobStateHelpers(deps = {}) {
       paymentTxHash: normalizeText(materialized?.paymentTxHash),
       signerMode: normalizeText(materialized?.signerMode),
       executionMode: normalizeText(materialized?.executionMode),
+      aaMethod: normalizeText(materialized?.aaMethod),
+      accountVersionTag: normalizeText(materialized?.accountVersionTag),
+      accountCapabilities:
+        materialized?.accountCapabilities &&
+        typeof materialized.accountCapabilities === 'object' &&
+        !Array.isArray(materialized.accountCapabilities)
+          ? materialized.accountCapabilities
+          : {},
       requesterRuntimeAddress: normalizeText(materialized?.requesterRuntimeAddress),
       executorRuntimeAddress: normalizeText(materialized?.executorRuntimeAddress),
       validatorRuntimeAddress: normalizeText(materialized?.validatorRuntimeAddress),

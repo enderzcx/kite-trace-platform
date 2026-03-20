@@ -1480,7 +1480,13 @@ export function registerMarketAgentServiceRoutes(app, deps) {
                 ...buildExternalFeedPaymentRequiredResponse(evidenceRequest, 'x402 payment required'),
                 traceId,
                 serviceId,
-                invocationId
+                invocationId,
+                result: externalResult || evidenceRequest?.previewResult?.external || null,
+                receipt: {
+                  result: {
+                    summary: buildExternalFeedSummary(service, externalResult || evidenceRequest?.previewResult?.external)
+                  }
+                }
               });
             }
             const intentState = startIntent(evidenceRequest?.requestId || invocationId);
@@ -1600,11 +1606,12 @@ export function registerMarketAgentServiceRoutes(app, deps) {
                 recipient: evidenceRequest?.recipient || invocation.recipient || '',
                 amount: evidenceRequest?.amount || invocation.amount || '',
                 payer,
+                owner: normalizeText(body.ownerEoa || ''),
                 requestId: evidenceRequest?.requestId || '',
                 action: capabilityId || effectiveAction,
                 query: normalizeText(evidenceRequest?.query || `${service?.name || serviceId} ${effectiveAction}`)
               },
-              { maxAttempts: 2, timeoutMs: 600_000 }
+              { maxAttempts: 2, timeoutMs: 60_000 }
             );
             const payBody = pay?.body || {};
             txHash = normalizeText(payBody?.payment?.txHash || '');

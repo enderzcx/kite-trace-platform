@@ -1,15 +1,8 @@
 #!/usr/bin/env node
 
-if (
-  !String(process.env.NODE_USE_ENV_PROXY || '').trim() &&
-  (
-    String(process.env.HTTP_PROXY || '').trim() ||
-    String(process.env.HTTPS_PROXY || '').trim() ||
-    String(process.env.ALL_PROXY || '').trim()
-  )
-) {
-  process.env.NODE_USE_ENV_PROXY = '1';
-}
+import { applyNodeEnvProxyPreference } from '../lib/envProxy.js';
+
+applyNodeEnvProxyPreference();
 
 async function main() {
   const { runKtraceCli } = await import('../cli/runKtraceCli.js');

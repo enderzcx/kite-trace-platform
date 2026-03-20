@@ -47,15 +47,21 @@ function resolveRequiredRole(body = null) {
   return 'viewer';
 }
 
-function resolvePaymentMode(req) {
+function resolvePaymentMode(req, auth = {}) {
   const headerValue = normalizeLower(req.headers['x-ktrace-mcp-payment-mode'] || '');
-  return headerValue === 'agent' ? 'agent' : '';
+  if (headerValue === 'agent') return 'agent';
+  if (headerValue === 'hosted') return 'hosted';
+  // Connector-grant users have a server-managed session runtime; use hosted
+  // payment so the backend can perform on-chain payment automatically.
+  if (auth.authSource === 'connector-grant' && auth.ownerEoa) return 'hosted';
+  // All other MCP calls default to agent mode so the invoke route never falls
+  // into the slow hosted payment path without a known session runtime.
+  return 'agent';
 }
 
 function buildPublicBaseUrl(req) {
   const configured = normalizeText(process.env.BACKEND_PUBLIC_URL || '');
   if (configured) return configured.replace(/\/+$/, '');
-
   const forwardedProto = normalizeText(req.headers['x-forwarded-proto'] || '');
   const forwardedHost = normalizeText(req.headers['x-forwarded-host'] || '');
   const protocol = forwardedProto || req.protocol || 'http';
@@ -75,10 +81,18 @@ function buildWellKnownPayload(req, deps) {
     transport: 'streamable-http',
     auth: deps.authConfigured?.()
       ? {
-          type: 'api-key-header',
-          header: 'x-api-key',
-          listRole: 'viewer',
-          toolCallRole: 'agent'
+          type: 'multi',
+          primary: {
+            type: 'connector-token',
+            path: '/mcp/connect/:token',
+            role: 'agent'
+          },
+          compatibility: {
+            type: 'api-key-header',
+            header: 'x-api-key',
+            listRole: 'viewer',
+            toolCallRole: 'agent'
+          }
         }
       : { type: 'none' },
     toolNamePrefix: 'ktrace__'
@@ -116,9 +130,14 @@ function applyConnectorGrantAuth(req, grant = {}) {
 function buildRequestAuth(req, deps) {
   const connectorToken = normalizeText(req.params?.token || '');
   if (connectorToken) {
-    let grant = deps.resolveClaudeConnectorToken?.(connectorToken) || null;
+    const resolveConnectorToken = deps.resolveAgentConnectorToken || deps.resolveClaudeConnectorToken;
+    const claimConnectorInstallCode =
+      deps.claimAgentConnectorInstallCode || deps.claimClaudeConnectorInstallCode;
+    const touchConnectorGrantUsage =
+      deps.touchAgentConnectorGrantUsage || deps.touchClaudeConnectorGrantUsage;
+    let grant = resolveConnectorToken?.(connectorToken) || null;
     if (grant?.type === 'install_code') {
-      const claimed = deps.claimClaudeConnectorInstallCode?.(connectorToken) || null;
+      const claimed = claimConnectorInstallCode?.(connectorToken) || null;
       if (claimed?.ok && claimed.grant) {
         grant = {
           type: 'grant',
@@ -136,7 +155,7 @@ function buildRequestAuth(req, deps) {
         code: -32001
       };
     }
-    const touchedGrant = deps.touchClaudeConnectorGrantUsage?.(grant.grant) || grant.grant;
+    const touchedGrant = touchConnectorGrantUsage?.(grant.grant) || grant.grant;
     const effectiveGrant = touchedGrant || grant.grant;
     applyConnectorGrantAuth(req, effectiveGrant);
     return {
@@ -290,7 +309,7 @@ async function handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter) {
 
     registerTools(server, tools, invokeAdapter, {
       apiKey: auth.apiKey,
-      paymentMode: resolvePaymentMode(req),
+      paymentMode: resolvePaymentMode(req, auth),
       ownerEoa: auth.ownerEoa,
       aaWallet: auth.aaWallet,
       authSource: auth.authSource,

@@ -26,8 +26,7 @@ export function createEnvelope({
       authMode: runtime.authMode,
       sessionMode: runtime.sessionMode,
       sessionStrategy: runtime.sessionStrategy,
-      outputMode: runtime.outputMode,
-      apiKeyConfigured: Boolean(runtime.apiKeyConfigured)
+      outputMode: runtime.outputMode
     },
     error: error || undefined,
     message: message || undefined,
@@ -47,7 +46,6 @@ function printConfigShow(envelope) {
   console.log(`sessionMode: ${config.sessionMode || '-'}`);
   console.log(`sessionStrategy: ${config.sessionStrategy || '-'}`);
   console.log(`outputMode: ${config.defaultOutputMode || '-'}`);
-  console.log(`apiKey: ${config.apiKeyConfigured ? config.apiKeyMasked || 'configured' : 'not configured'}`);
   console.log(`configPath: ${meta.configPath || '-'}`);
   console.log(`profileExists: ${meta.profileExists ? 'yes' : 'no'}`);
 }
@@ -62,7 +60,6 @@ function printAuthLogin(envelope) {
   console.log(`chain: ${login.chain || envelope?.runtime?.chain || '-'}`);
   console.log(`role: ${auth.role || '-'}`);
   console.log(`authConfigured: ${auth.authConfigured ? 'yes' : 'no'}`);
-  console.log(`apiKey: ${login.apiKeyConfigured ? login.apiKeyMasked || 'configured' : 'not configured'}`);
   console.log(`configPath: ${login.configPath || '-'}`);
 }
 

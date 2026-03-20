@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { listCommandFamilies } from '../commandCatalog.js';
-import { createEnvelope, maskApiKey } from '../output.js';
+import { createEnvelope } from '../output.js';
 
 export async function readPackageVersion() {
   const packageJsonPath = new URL('../../package.json', import.meta.url);
@@ -33,14 +33,16 @@ Global flags:
   --chain <name>         Override chain label
   --session-strategy <managed|external>
                          Control whether ktrace may create/renew backend sessions
-  --api-key <key>        Override transport auth key (usually saved in profile/env)
   --config <path>        Override local config file path
   -h, --help             Show help
   -v, --version          Show version
 
+Advanced compatibility:
+  --api-key <key>        Override transport auth key for legacy/internal paths
+
 Implemented:
   config show            Inspect resolved runtime config
-  auth login             Save wallet/baseUrl/apiKey locally and verify backend auth
+  auth login             Save wallet/baseUrl locally and verify backend auth
   auth whoami            Show backend auth role and current AA session readiness
   auth session           Ensure AA wallet + session runtime on the backend
   session authorize      Record a user EOA grant for managed or self-custodial session execution
@@ -102,7 +104,7 @@ Implemented:
   system start-fresh     Kill stale listeners on a target port and launch a fresh backend process
 
 Examples:
-  ktrace auth login --base-url http://127.0.0.1:3102 --api-key agent-local-dev-key
+  ktrace auth login --base-url http://127.0.0.1:3102 --wallet 0x1234...abcd
   ktrace agent invoke --capability cap-listing-alert --input data/ktrace-job-input.json
   ktrace artifact evidence <trace-id>
   ktrace --base-url http://127.0.0.1:3102 auth session
@@ -141,18 +143,20 @@ Examples:
   ktrace --base-url http://127.0.0.1:3102 trust publish --input data/trust-publication.json
   ktrace system start-fresh --port 3399 --dry-run
 
-External-agent quickstart:
-  1. Save base URL and auth once:
-     ktrace auth login --base-url https://kiteclaw.duckdns.org --api-key <agent-key>
+Access-method quickstart:
+  1. Save wallet and base URL:
+     ktrace auth login --base-url https://kiteclaw.duckdns.org --wallet 0x1234...abcd
   2. For the local desktop-wallet approval flow:
      ktrace --base-url http://127.0.0.1:3399 --session-strategy external session request --eoa 0x1234...abcd --single-limit 1 --daily-limit 5
      Open the returned approvalUrl in a desktop browser with MetaMask or another injected wallet.
      After the user approves in-browser, run:
      ktrace session wait <approvalRequestId> --token <approvalToken>
-  2. Discover or invoke a capability:
+  3. For the managed backend session flow:
+     ktrace --base-url http://127.0.0.1:3399 auth session
+  4. Discover or invoke a capability:
      ktrace discovery select --capability cap-listing-alert
      ktrace agent invoke --capability cap-listing-alert --input '{"exchange":"all","limit":3}'
-  3. Audit the finished trace:
+  5. Audit the finished trace:
      ktrace artifact evidence <trace-id>
 `;
 }
@@ -199,9 +203,7 @@ export function createConfigEnvelope(runtimeBundle) {
         defaultOutputMode: config.outputMode,
         authMode: config.authMode,
         sessionMode: config.sessionMode,
-        sessionStrategy: config.sessionStrategy,
-        apiKeyConfigured: config.apiKeyConfigured,
-        apiKeyMasked: maskApiKey(config.apiKey)
+        sessionStrategy: config.sessionStrategy
       },
       meta
     }

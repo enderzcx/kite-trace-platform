@@ -509,7 +509,7 @@ export function registerAutomationX402Routes(app, deps) {
       }
   
       const rpcRequest = new ethers.FetchRequest(BACKEND_RPC_URL);
-      rpcRequest.timeout = Math.max(60_000, Number(KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 4, 15_000);
+      rpcRequest.timeout = Math.min(30_000, Math.max(15_000, Number(KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 4));
       const provider = new ethers.JsonRpcProvider(rpcRequest);
       const sessionWallet = new ethers.Wallet(runtime.sessionPrivateKey, provider);
       const sessionSignerAddress = await sessionWallet.getAddress();
@@ -538,7 +538,7 @@ export function registerAutomationX402Routes(app, deps) {
       if (KITE_REQUIRE_AA_V2 && aaVersion !== AA_V2_VERSION_TAG) {
         return failSessionPay(400, {
           error: 'aa_version_mismatch',
-          reason: `AA must be upgraded to V2 for session-userop payments. required=${AA_V2_VERSION_TAG}, current=${aaVersion || 'unknown_or_legacy'}`,
+          reason: `AA version mismatch for session payments. required=${AA_V2_VERSION_TAG}, current=${aaVersion || 'unknown_or_legacy'}`,
           details: {
             aaWallet: runtime.aaWallet,
             requiredVersion: AA_V2_VERSION_TAG,

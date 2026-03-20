@@ -33,18 +33,14 @@ contract KTraceAccountFactory is Ownable {
             return account;
         }
 
-        bytes memory initializeCallData = abi.encodeCall(IKTraceAccountInitializable.initialize, (owner));
-        account = address(new ERC1967Proxy{salt: bytes32(salt)}(accountImplementation, initializeCallData));
+        bytes memory creationCode = _buildCreationCode(owner);
+        account = Create2.deploy(0, bytes32(salt), creationCode);
         emit AccountCreated(owner, salt, account);
     }
 
     function getAddress(address owner, uint256 salt) public view returns (address) {
         if (owner == address(0)) revert InvalidOwner();
-        bytes memory initializeCallData = abi.encodeCall(IKTraceAccountInitializable.initialize, (owner));
-        bytes memory creationCode = abi.encodePacked(
-            type(ERC1967Proxy).creationCode,
-            abi.encode(accountImplementation, initializeCallData)
-        );
+        bytes memory creationCode = _buildCreationCode(owner);
         return Create2.computeAddress(bytes32(salt), keccak256(creationCode), address(this));
     }
 
@@ -53,5 +49,10 @@ contract KTraceAccountFactory is Ownable {
         address previousImplementation = accountImplementation;
         accountImplementation = nextImplementation;
         emit AccountImplementationUpdated(previousImplementation, nextImplementation);
+    }
+
+    function _buildCreationCode(address owner) internal view returns (bytes memory) {
+        bytes memory initializeCallData = abi.encodeCall(IKTraceAccountInitializable.initialize, (owner));
+        return abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(accountImplementation, initializeCallData));
     }
 }

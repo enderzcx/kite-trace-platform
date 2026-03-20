@@ -1,15 +1,8 @@
 import { createRequestLogger } from './lib/logger.js';
 
-if (
-  !String(process.env.NODE_USE_ENV_PROXY || '').trim() &&
-  (
-    String(process.env.HTTP_PROXY || '').trim() ||
-    String(process.env.HTTPS_PROXY || '').trim() ||
-    String(process.env.ALL_PROXY || '').trim()
-  )
-) {
-  process.env.NODE_USE_ENV_PROXY = '1';
-}
+import { applyNodeEnvProxyPreference } from './lib/envProxy.js';
+
+applyNodeEnvProxyPreference();
 
 const { startServer, shutdownServer } = await import('./app.js');
 const logger = createRequestLogger('backend-server');

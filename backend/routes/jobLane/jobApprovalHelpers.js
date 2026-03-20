@@ -140,7 +140,10 @@ export function createJobApprovalHelpers(deps = {}, shared = {}) {
         ''
     ).trim();
     if (explicit) return explicit.replace(/\/+$/, '');
-    const fallback = String(audience || '').trim() || `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
+    const fallback =
+      String(audience || '').trim() ||
+      String(process.env.BACKEND_PUBLIC_URL || '').trim() ||
+      `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
     try {
       const url = new URL(fallback);
       if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.port && url.port !== '3000') {
@@ -154,7 +157,10 @@ export function createJobApprovalHelpers(deps = {}, shared = {}) {
 
   function buildApprovalRequestUrl(approvalRequestId = '', approvalToken = '', audience = '') {
     const frontendBaseUrl = resolveApprovalFrontendBaseUrl(audience);
-    const backendBaseUrl = String(audience || '').trim() || `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
+    const backendBaseUrl =
+      String(audience || '').trim() ||
+      String(process.env.BACKEND_PUBLIC_URL || '').trim() ||
+      `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
     try {
       const url = new URL(
         `/approval/${encodeURIComponent(normalizeText(approvalRequestId))}`,

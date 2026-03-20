@@ -31,6 +31,72 @@ function sendJobRouteError(req, res, status, code, message, detail = {}) {
   });
 }
 
+function mapJobLaneExecutionError(error, fallbackCode = 'job_lane_execution_failed', fallbackMessage = 'job lane execution failed') {
+  const detail = detailObject(error?.detail);
+  const errorCode = String(error?.code || '').trim();
+  const message = String(error?.message || '').trim() || fallbackMessage;
+  if (errorCode === 'aa_session_execute_not_supported') {
+    return {
+      status: 409,
+      code: 'aa_session_execute_not_supported',
+      message,
+      detail: {
+        ...detail,
+        upgradeRequired: detail.upgradeRequired !== false,
+        aaAccountUpgradeRequired: detail.aaAccountUpgradeRequired !== false
+      }
+    };
+  }
+  if (errorCode === 'aa_version_mismatch') {
+    return {
+      status: 409,
+      code: 'aa_account_upgrade_required',
+      message,
+      detail: {
+        ...detail,
+        upgradeRequired: true,
+        aaAccountUpgradeRequired: true
+      }
+    };
+  }
+  if (errorCode === 'aa_account_upgrade_required') {
+    return {
+      status: 409,
+      code: 'aa_account_upgrade_required',
+      message,
+      detail: {
+        ...detail,
+        upgradeRequired: true,
+        aaAccountUpgradeRequired: true
+      }
+    };
+  }
+  if (
+    [
+      'runtime_not_found',
+      'session_authorization_missing',
+      'role_runtime_address_mismatch',
+      'aa_role_not_deployed',
+      'aa_session_permission_setup_required',
+      'aa_allowance_required',
+      'insufficient_kite_gas'
+    ].includes(errorCode)
+  ) {
+    return {
+      status: 409,
+      code: errorCode,
+      message,
+      detail
+    };
+  }
+  return {
+    status: 500,
+    code: fallbackCode,
+    message,
+    detail
+  };
+}
+
 function normalizeAddressLike(value = '') {
   const normalized = String(value || '').trim().toLowerCase();
   return /^0x[0-9a-f]{40}$/.test(normalized) ? normalized : '';
@@ -48,6 +114,37 @@ function firstExplicitAddress(...values) {
     if (normalized) return normalized;
   }
   return '';
+}
+
+function resolveRuntimeForAaWallet({
+  aaWallet = '',
+  readSessionRuntime,
+  resolveSessionOwnerByAaWallet,
+  resolveSessionRuntime
+} = {}) {
+  const normalizedAaWallet = normalizeAddressLike(aaWallet);
+  const currentRuntime = readSessionRuntime?.() || {};
+  if (!normalizedAaWallet) {
+    return currentRuntime;
+  }
+  const inferredOwner = normalizeAddressLike(resolveSessionOwnerByAaWallet?.(normalizedAaWallet) || '');
+  if (typeof resolveSessionRuntime === 'function') {
+    const resolved = resolveSessionRuntime({
+      owner: inferredOwner,
+      aaWallet: normalizedAaWallet,
+      strictOwnerMatch: Boolean(inferredOwner)
+    });
+    if (normalizeAddressLike(resolved?.aaWallet || '') === normalizedAaWallet) {
+      return resolved;
+    }
+  }
+  if (normalizeAddressLike(currentRuntime?.aaWallet || '') === normalizedAaWallet) {
+    return currentRuntime;
+  }
+  if (inferredOwner && normalizeAddressLike(currentRuntime?.owner || '') === inferredOwner) {
+    return currentRuntime;
+  }
+  return {};
 }
 
 export function registerJobMutationRoutes(ctx = {}) {
@@ -74,10 +171,13 @@ export function registerJobMutationRoutes(ctx = {}) {
     finalizeConsumerIntent,
     getInternalAgentApiKey,
     lockEscrowFunds,
+    preflightJobLaneCapability,
+    prepareEscrowFunding,
     findConsumerIntent,
     readSessionRuntime,
     requireRole,
     resolveSessionOwnerByAaWallet,
+    resolveSessionRuntime,
     resolveWorkflowTraceId,
     submitEscrowResult,
     upsertJobRecord,
@@ -139,10 +239,48 @@ export function registerJobMutationRoutes(ctx = {}) {
     const provider = normalizeText(body.provider);
     const capability = normalizeCapability(body.capability);
     const budget = normalizeText(body.budget);
-    const runtime = readSessionRuntime();
     const explicitPayer = firstExplicitAddress(body.requesterAddress, body.requester, body.payer);
+    const runtime = explicitPayer
+      ? resolveRuntimeForAaWallet({
+          aaWallet: explicitPayer,
+          readSessionRuntime,
+          resolveSessionOwnerByAaWallet,
+          resolveSessionRuntime
+        })
+      : readSessionRuntime();
     const explicitExecutor = firstExplicitAddress(body.executorAddress, body.executor);
     const explicitValidator = firstExplicitAddress(body.validatorAddress, body.validator);
+    const requesterRuntimeByOwner = typeof resolveSessionRuntime === 'function'
+      ? resolveSessionRuntime({
+          owner: ERC8183_REQUESTER_OWNER_ADDRESS,
+          strictOwnerMatch: true
+        })
+      : {};
+    const executorRuntimeByOwner = typeof resolveSessionRuntime === 'function'
+      ? resolveSessionRuntime({
+          owner: ERC8183_EXECUTOR_OWNER_ADDRESS,
+          strictOwnerMatch: true
+        })
+      : {};
+    const validatorRuntimeByOwner = typeof resolveSessionRuntime === 'function'
+      ? resolveSessionRuntime({
+          owner: ERC8183_VALIDATOR_OWNER_ADDRESS,
+          strictOwnerMatch: true
+        })
+      : {};
+    const requesterAaDefault = firstExplicitAddress(
+      runtime?.aaWallet,
+      requesterRuntimeByOwner?.aaWallet,
+      ERC8183_REQUESTER_AA_ADDRESS
+    );
+    const executorAaDefault = firstExplicitAddress(
+      executorRuntimeByOwner?.aaWallet,
+      ERC8183_EXECUTOR_AA_ADDRESS
+    );
+    const validatorAaDefault = firstExplicitAddress(
+      validatorRuntimeByOwner?.aaWallet,
+      ERC8183_VALIDATOR_AA_ADDRESS
+    );
     if (explicitPayer && addressesEqual(explicitPayer, runtime?.owner) && normalizeAddressLike(runtime?.aaWallet || '')) {
       return sendJobRouteError(
         req,
@@ -159,7 +297,7 @@ export function registerJobMutationRoutes(ctx = {}) {
     if (
       explicitPayer &&
       addressesEqual(explicitPayer, ERC8183_REQUESTER_OWNER_ADDRESS) &&
-      normalizeAddressLike(ERC8183_REQUESTER_AA_ADDRESS)
+      requesterAaDefault
     ) {
       return sendJobRouteError(
         req,
@@ -169,14 +307,14 @@ export function registerJobMutationRoutes(ctx = {}) {
         'payer must use the requester AA wallet, not the owner EOA',
         {
           field: 'payer',
-          expectedAa: normalizeText(ERC8183_REQUESTER_AA_ADDRESS)
+          expectedAa: normalizeText(requesterAaDefault)
         }
       );
     }
     if (
       explicitExecutor &&
       addressesEqual(explicitExecutor, ERC8183_EXECUTOR_OWNER_ADDRESS) &&
-      normalizeAddressLike(ERC8183_EXECUTOR_AA_ADDRESS)
+      executorAaDefault
     ) {
       return sendJobRouteError(
         req,
@@ -186,14 +324,14 @@ export function registerJobMutationRoutes(ctx = {}) {
         'executor must use the executor AA wallet, not the owner EOA',
         {
           field: 'executor',
-          expectedAa: normalizeText(ERC8183_EXECUTOR_AA_ADDRESS)
+          expectedAa: normalizeText(executorAaDefault)
         }
       );
     }
     if (
       explicitValidator &&
       addressesEqual(explicitValidator, ERC8183_VALIDATOR_OWNER_ADDRESS) &&
-      normalizeAddressLike(ERC8183_VALIDATOR_AA_ADDRESS)
+      validatorAaDefault
     ) {
       return sendJobRouteError(
         req,
@@ -203,7 +341,7 @@ export function registerJobMutationRoutes(ctx = {}) {
         'validator must use the validator AA wallet, not the owner EOA',
         {
           field: 'validator',
-          expectedAa: normalizeText(ERC8183_VALIDATOR_AA_ADDRESS)
+          expectedAa: normalizeText(validatorAaDefault)
         }
       );
     }
@@ -212,17 +350,17 @@ export function registerJobMutationRoutes(ctx = {}) {
       body.requester,
       body.payer,
       runtime?.aaWallet,
-      ERC8183_REQUESTER_AA_ADDRESS
+      requesterAaDefault
     );
     const executor = pickAddress(
       body.executorAddress,
       body.executor,
-      ERC8183_EXECUTOR_AA_ADDRESS
+      executorAaDefault
     );
     const validator = pickAddress(
       body.validatorAddress,
       body.validator,
-      ERC8183_VALIDATOR_AA_ADDRESS
+      validatorAaDefault
     );
     const escrowAmount = normalizeText(body.escrowAmount || budget);
     const input = body?.input && typeof body.input === 'object' && !Array.isArray(body.input) ? body.input : {};
@@ -428,7 +566,14 @@ export function registerJobMutationRoutes(ctx = {}) {
     const approvalToken = normalizeText(body.token || body.approvalToken);
     const nowMs = Date.now();
     const fundIntentId = normalizeText(body.intentId || body.idempotencyKey || '');
+    const authorityRuntime = resolveRuntimeForAaWallet({
+      aaWallet: normalizeText(job?.payer || ''),
+      readSessionRuntime,
+      resolveSessionOwnerByAaWallet,
+      resolveSessionRuntime
+    });
     const authorityResult = validateConsumerAuthority?.({
+      runtime: authorityRuntime,
       payer: normalizeText(job?.payer || ''),
       provider: normalizeText(job?.provider || ''),
       capability: normalizeText(job?.capability || ''),
@@ -532,7 +677,9 @@ export function registerJobMutationRoutes(ctx = {}) {
         return res.status(202).json({ ok: true, traceId: req.traceId || '', state: 'pending_approval', approval, job: buildJobView(pendingJob) });
       }
 
-      const runtime = readSessionRuntime() || {};
+      const runtime = authorityRuntime && typeof authorityRuntime === 'object' && Object.keys(authorityRuntime).length > 0
+        ? authorityRuntime
+        : readSessionRuntime() || {};
       const requestedByAaWallet = pickAddress(runtime?.aaWallet, body.payerAaWallet, body.payer, job.payer);
       const requestedByOwnerEoa = pickAddress(
         runtime?.owner,
@@ -607,6 +754,23 @@ export function registerJobMutationRoutes(ctx = {}) {
       updatedAt: now
     };
 
+    try {
+      deps.preflightJobLaneCapability?.({ role: 'requester', roleAddress: next.payer });
+    } catch (error) {
+      const mapped = mapJobLaneExecutionError(error, 'job_fund_failed', 'job fund failed');
+      return sendJobRouteError(
+        req,
+        res,
+        mapped.status,
+        mapped.code,
+        mapped.message,
+        {
+          jobId: normalizeText(job?.jobId),
+          ...mapped.detail
+        }
+      );
+    }
+
     const asyncMode = body.async === true || normalizeText(req.query?.async) === 'true';
 
     async function executeFundChainWork() {
@@ -628,7 +792,7 @@ export function registerJobMutationRoutes(ctx = {}) {
           intentState
         });
       }
-      const escrow = await lockEscrowFunds?.({
+      const escrow = await deps.lockEscrowFunds?.({
         jobId: next.jobId,
         requester: next.payer,
         executor: next.executor,
@@ -642,6 +806,9 @@ export function registerJobMutationRoutes(ctx = {}) {
           ...next,
           signerMode: escrow?.configured ? 'aa-runtime-escrow' : 'degraded-local',
           executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+          aaMethod: normalizeText(escrow?.aaMethod || next.aaMethod || ''),
+          accountVersionTag: normalizeText(escrow?.accountVersionTag || next.accountVersionTag || ''),
+          accountCapabilities: detailObject(escrow?.accountCapabilities || next.accountCapabilities),
           requesterRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.requesterRuntimeAddress || next.payer),
           executorRuntimeAddress: normalizeText(next.executorRuntimeAddress || next.executor),
           validatorRuntimeAddress: normalizeText(next.validatorRuntimeAddress || next.validator),
@@ -742,31 +909,79 @@ export function registerJobMutationRoutes(ctx = {}) {
     try {
       await executeFundChainWork();
     } catch (error) {
+      const mapped = mapJobLaneExecutionError(error, 'job_fund_failed', 'job fund failed');
       finalizeConsumerIntent?.(fundIntentId, {
         status: 'failed',
         resultRef: normalizeText(job?.jobId),
         traceId: normalizeText(job?.traceId),
-        failureReason: normalizeText(error?.message || 'job fund failed')
+        failureReason: normalizeText(mapped.message || 'job fund failed')
       });
       if (normalizeText(job?.approvalId)) {
         updateApprovalRequest(normalizeText(job.approvalId), {
           status: normalizeText(job?.approvalState || 'approved') || 'approved',
           updatedAt: Date.now(),
           resumeStatus: 'failed',
-          resumeError: normalizeText(error?.message || 'job fund failed')
+          resumeError: normalizeText(mapped.message || 'job fund failed')
         });
       }
       return sendJobRouteError(
         req,
         res,
-        500,
-        'job_fund_failed',
-        normalizeText(error?.message || 'job fund failed'),
-        { jobId: normalizeText(job?.jobId) }
+        mapped.status,
+        mapped.code,
+        mapped.message,
+        { jobId: normalizeText(job?.jobId), ...mapped.detail }
       );
     }
     upsertJobRecord(next);
     return res.json({ ok: true, traceId: req.traceId || '', job: buildJobView(next) });
+  });
+
+  app.post('/api/jobs/:jobId/prepare-funding', requireRole('agent'), async (req, res) => {
+    const job = materializeJob(findJob(req.params.jobId));
+    if (!job) {
+      return sendJobRouteError(req, res, 404, 'job_not_found', 'Job was not found.', {
+        jobId: normalizeText(req.params.jobId)
+      });
+    }
+    if (!['created', 'funding_failed', 'funded', 'accepted', 'submitted'].includes(normalizeJobState(job.state))) {
+      return sendJobRouteError(
+        req,
+        res,
+        409,
+        'job_not_preparable',
+        `job state ${normalizeJobState(job.state)} cannot prepare escrow funding`,
+        {
+          jobId: normalizeText(job.jobId),
+          state: normalizeJobState(job.state)
+        }
+      );
+    }
+
+    try {
+      const preparation = await prepareEscrowFunding?.({
+        requester: normalizeText(job?.payer || ''),
+        executor: normalizeText(job?.executor || ''),
+        escrowAmount: normalizeText(job?.escrowAmount || job?.budget || ''),
+        executorStakeAmount: normalizeText(job?.executorStakeAmount || '')
+      });
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        job: buildJobView(job),
+        preparation: preparation || null
+      });
+    } catch (error) {
+      const mapped = mapJobLaneExecutionError(
+        error,
+        'job_prepare_funding_failed',
+        'job funding preparation failed'
+      );
+      return sendJobRouteError(req, res, mapped.status, mapped.code, mapped.message, {
+        job: buildJobView(job),
+        ...mapped.detail
+      });
+    }
   });
 }
 
@@ -786,6 +1001,7 @@ export function registerJobMutationContinuation(ctx = {}) {
     getInternalAgentApiKey,
     findConsumerIntent,
     requireRole,
+    resolveSessionRuntime,
     submitEscrowResult,
     upsertJobRecord,
     validateConsumerAuthority,
@@ -854,16 +1070,20 @@ export function registerJobMutationContinuation(ctx = {}) {
     let next = { ...job, state: 'accepted', summary: 'Job accepted by executor.', error: '', acceptedAt: now, updatedAt: now };
 
     try {
-      const escrow = await acceptEscrowJob?.({ jobId: next.jobId, executor: next.executor });
+      deps.preflightJobLaneCapability?.({ role: 'executor', roleAddress: next.executor });
+      const escrow = await deps.acceptEscrowJob?.({ jobId: next.jobId, executor: next.executor });
       next = applyEscrowOutcome(
         {
           ...next,
           signerMode: escrow?.configured ? 'aa-runtime-escrow' : normalizeText(next.signerMode || 'aa-runtime-escrow'),
-            executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
-            executorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.executorRuntimeAddress || next.executor),
-            escrowAcceptUserOpHash: normalizeText(escrow?.userOpHash),
-            escrowAcceptTxHash: normalizeText(escrow?.txHash)
-          },
+          executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+          aaMethod: normalizeText(escrow?.aaMethod || next.aaMethod || ''),
+          accountVersionTag: normalizeText(escrow?.accountVersionTag || next.accountVersionTag || ''),
+          accountCapabilities: detailObject(escrow?.accountCapabilities || next.accountCapabilities),
+          executorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.executorRuntimeAddress || next.executor),
+          escrowAcceptUserOpHash: normalizeText(escrow?.userOpHash),
+          escrowAcceptTxHash: normalizeText(escrow?.txHash)
+        },
         escrow,
         escrow?.configured ? 'accepted' : 'not_configured'
       );
@@ -878,13 +1098,14 @@ export function registerJobMutationContinuation(ctx = {}) {
         acceptAnchorTxHash: normalizeText(anchor?.anchorTxHash || next.acceptAnchorTxHash)
       };
     } catch (error) {
+      const mapped = mapJobLaneExecutionError(error, 'job_accept_failed', 'job accept failed');
       return sendJobRouteError(
         req,
         res,
-        500,
-        'job_accept_failed',
-        normalizeText(error?.message || 'job accept failed'),
-        { jobId: normalizeText(job?.jobId) }
+        mapped.status,
+        mapped.code,
+        mapped.message,
+        { jobId: normalizeText(job?.jobId), ...mapped.detail }
       );
     }
 
@@ -1083,7 +1304,8 @@ export function registerJobMutationContinuation(ctx = {}) {
       }
 
       try {
-        const escrow = await submitEscrowResult?.({
+        deps.preflightJobLaneCapability?.({ role: 'executor', roleAddress: next.executor });
+        const escrow = await deps.submitEscrowResult?.({
           jobId: next.jobId,
           resultHash: next.resultHash,
           executor: next.executor
@@ -1093,26 +1315,31 @@ export function registerJobMutationContinuation(ctx = {}) {
             ...next,
             signerMode: escrow?.configured ? 'aa-runtime-escrow' : normalizeText(next.signerMode || 'aa-runtime-escrow'),
             executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+            aaMethod: normalizeText(escrow?.aaMethod || next.aaMethod || ''),
+            accountVersionTag: normalizeText(escrow?.accountVersionTag || next.accountVersionTag || ''),
+            accountCapabilities: detailObject(escrow?.accountCapabilities || next.accountCapabilities),
             executorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.executorRuntimeAddress || next.executor),
-              state: 'submitted',
-              summary: escrow?.configured ? next.summary : `${next.summary} Escrow not configured.`,
-              escrowSubmitUserOpHash: normalizeText(escrow?.userOpHash),
-              escrowSubmitTxHash: normalizeText(escrow?.txHash),
-              submittedAt: now,
-              updatedAt: new Date().toISOString()
+            state: 'submitted',
+            summary: escrow?.configured ? next.summary : `${next.summary} Escrow not configured.`,
+            escrowSubmitUserOpHash: normalizeText(escrow?.userOpHash),
+            escrowSubmitTxHash: normalizeText(escrow?.txHash),
+            submittedAt: now,
+            updatedAt: new Date().toISOString()
           },
           escrow,
           escrow?.configured ? 'submitted' : 'not_configured'
         );
       } catch (error) {
-        const errorCode =
+        const mapped =
           normalizeText(error?.code) === 'trace_anchor_required'
-            ? 'trace_anchor_required_before_submit'
-            : 'job_submit_failed';
-        const reason =
-          normalizeText(error?.message || '') === 'trace_anchor_required'
-            ? 'trace anchor required before submit'
-            : normalizeText(error?.message || 'job submit failed');
+            ? {
+                status: 500,
+                code: 'trace_anchor_required_before_submit',
+                message: 'trace anchor required before submit',
+                detail: {}
+              }
+            : mapJobLaneExecutionError(error, 'job_submit_failed', 'job submit failed');
+        const reason = normalizeText(mapped.message || 'job submit failed');
         const failed = {
           ...next,
           state: 'accepted',
@@ -1124,8 +1351,9 @@ export function registerJobMutationContinuation(ctx = {}) {
           updatedAt: new Date().toISOString()
         };
         upsertJobRecord(failed);
-        return sendJobRouteError(req, res, 500, errorCode, failed.error, {
-          job: buildJobView(failed)
+        return sendJobRouteError(req, res, mapped.status, mapped.code, failed.error, {
+          job: buildJobView(failed),
+          ...mapped.detail
         });
       }
 
@@ -1278,7 +1506,8 @@ export function registerJobMutationContinuation(ctx = {}) {
       }
 
       try {
-        const escrow = await submitEscrowResult?.({
+        deps.preflightJobLaneCapability?.({ role: 'executor', roleAddress: next.executor });
+        const escrow = await deps.submitEscrowResult?.({
           jobId: next.jobId,
           resultHash: next.resultHash,
           executor: next.executor
@@ -1288,26 +1517,31 @@ export function registerJobMutationContinuation(ctx = {}) {
             ...next,
             signerMode: escrow?.configured ? 'aa-runtime-escrow' : normalizeText(next.signerMode || 'aa-runtime-escrow'),
             executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+            aaMethod: normalizeText(escrow?.aaMethod || next.aaMethod || ''),
+            accountVersionTag: normalizeText(escrow?.accountVersionTag || next.accountVersionTag || ''),
+            accountCapabilities: detailObject(escrow?.accountCapabilities || next.accountCapabilities),
             executorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.executorRuntimeAddress || next.executor),
-              state: 'submitted',
-              summary: escrow?.configured ? summary : `${summary} Escrow not configured.`,
-              escrowSubmitUserOpHash: normalizeText(escrow?.userOpHash),
-              escrowSubmitTxHash: normalizeText(escrow?.txHash),
-              submittedAt: now,
-              updatedAt: new Date().toISOString()
+            state: 'submitted',
+            summary: escrow?.configured ? summary : `${summary} Escrow not configured.`,
+            escrowSubmitUserOpHash: normalizeText(escrow?.userOpHash),
+            escrowSubmitTxHash: normalizeText(escrow?.txHash),
+            submittedAt: now,
+            updatedAt: new Date().toISOString()
           },
           escrow,
           escrow?.configured ? 'submitted' : 'not_configured'
         );
       } catch (error) {
-        const errorCode =
+        const mapped =
           normalizeText(error?.code) === 'trace_anchor_required'
-            ? 'trace_anchor_required_before_submit'
-            : 'job_submit_failed';
-        const reason =
-          normalizeText(error?.message || '') === 'trace_anchor_required'
-            ? 'trace anchor required before submit'
-            : normalizeText(error?.message || 'job submit failed');
+            ? {
+                status: 500,
+                code: 'trace_anchor_required_before_submit',
+                message: 'trace anchor required before submit',
+                detail: {}
+              }
+            : mapJobLaneExecutionError(error, 'job_submit_failed', 'job submit failed');
+        const reason = normalizeText(mapped.message || 'job submit failed');
         const failed = {
           ...next,
           state: 'accepted',
@@ -1319,10 +1553,11 @@ export function registerJobMutationContinuation(ctx = {}) {
           updatedAt: new Date().toISOString()
         };
         upsertJobRecord(failed);
-        return sendJobRouteError(req, res, 500, errorCode, failed.error, {
+        return sendJobRouteError(req, res, mapped.status, mapped.code, failed.error, {
           job: buildJobView(failed),
           workflow: detailObject(workflow),
-          receipt: detailObject(payload?.receipt)
+          receipt: detailObject(payload?.receipt),
+          ...mapped.detail
         });
       }
 
@@ -1336,23 +1571,25 @@ export function registerJobMutationContinuation(ctx = {}) {
 
       return res.status(response.status).json({ ok: true, traceId: req.traceId || '', job: buildJobView(next), workflow: workflow && typeof workflow === 'object' ? workflow : null, receipt: payload?.receipt || null });
     } catch (error) {
+      const mapped = mapJobLaneExecutionError(error, 'job_submit_failed', 'job submit failed');
       finalizeConsumerIntent?.(submitIntentId, {
         status: 'failed',
         resultRef: normalizeText(job?.jobId),
         traceId: normalizeText(job?.traceId),
-        failureReason: normalizeText(error?.message || 'job submit failed')
+        failureReason: normalizeText(mapped.message || 'job submit failed')
       });
       const next = {
         ...job,
         ...submitExecutionPatch,
         state: 'accepted',
-        error: normalizeText(error?.message || 'job submit failed'),
-        summary: normalizeText(error?.message || 'job submit failed'),
+        error: normalizeText(mapped.message || 'job submit failed'),
+        summary: normalizeText(mapped.message || 'job submit failed'),
         updatedAt: new Date().toISOString()
       };
       upsertJobRecord(next);
-      return sendJobRouteError(req, res, 500, 'job_submit_failed', next.error, {
-        job: buildJobView(next)
+      return sendJobRouteError(req, res, mapped.status, mapped.code, next.error, {
+        job: buildJobView(next),
+        ...mapped.detail
       });
     }
   });
@@ -1385,18 +1622,29 @@ export function registerJobMutationContinuation(ctx = {}) {
     }
 
     const explicitValidatorAddress = firstExplicitAddress(body.validatorAddress, body.validator);
+    const validatorRuntimeByOwner = typeof resolveSessionRuntime === 'function'
+      ? resolveSessionRuntime({
+          owner: ERC8183_VALIDATOR_OWNER_ADDRESS,
+          strictOwnerMatch: true
+        })
+      : {};
+    const validatorAaDefault = firstExplicitAddress(
+      job.validator,
+      validatorRuntimeByOwner?.aaWallet,
+      ERC8183_VALIDATOR_AA_ADDRESS
+    );
     if (
       explicitValidatorAddress &&
       addressesEqual(explicitValidatorAddress, ERC8183_VALIDATOR_OWNER_ADDRESS) &&
-      normalizeAddressLike(ERC8183_VALIDATOR_AA_ADDRESS)
+      validatorAaDefault
     ) {
       return sendJobRouteError(req, res, 400, 'owner_eoa_submitted_for_aa_role', 'validatorAddress must use the validator AA wallet, not the owner EOA', {
         jobId: normalizeText(job.jobId),
-        expectedAa: normalizeText(ERC8183_VALIDATOR_AA_ADDRESS)
+        expectedAa: normalizeText(validatorAaDefault)
       });
     }
 
-    const validatorAddress = pickAddress(body.validatorAddress, body.validator, ERC8183_VALIDATOR_AA_ADDRESS);
+    const validatorAddress = pickAddress(body.validatorAddress, body.validator, validatorAaDefault);
     if (!validatorAddress || !addressesEqual(validatorAddress, job.validator)) {
       return sendJobRouteError(req, res, 403, 'validator_mismatch', 'validatorAddress must match the job validator', {
         jobId: normalizeText(job.jobId)
@@ -1419,16 +1667,20 @@ export function registerJobMutationContinuation(ctx = {}) {
     };
 
     try {
-      const escrow = await validateEscrowJob?.({ jobId: next.jobId, approved, validator: next.validator });
+      deps.preflightJobLaneCapability?.({ role: 'validator', roleAddress: next.validator });
+      const escrow = await deps.validateEscrowJob?.({ jobId: next.jobId, approved, validator: next.validator });
       next = applyEscrowOutcome(
         {
           ...next,
           signerMode: escrow?.configured ? 'aa-runtime-escrow' : normalizeText(next.signerMode || 'aa-runtime-escrow'),
-            executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
-            validatorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.validatorRuntimeAddress || next.validator),
-            escrowValidateUserOpHash: normalizeText(escrow?.userOpHash),
-            escrowValidateTxHash: normalizeText(escrow?.txHash)
-          },
+          executionMode: normalizeText(escrow?.executionMode || next.executionMode || 'aa-native'),
+          aaMethod: normalizeText(escrow?.aaMethod || next.aaMethod || ''),
+          accountVersionTag: normalizeText(escrow?.accountVersionTag || next.accountVersionTag || ''),
+          accountCapabilities: detailObject(escrow?.accountCapabilities || next.accountCapabilities),
+          validatorRuntimeAddress: normalizeText(escrow?.runtimeAddress || next.validatorRuntimeAddress || next.validator),
+          escrowValidateUserOpHash: normalizeText(escrow?.userOpHash),
+          escrowValidateTxHash: normalizeText(escrow?.txHash)
+        },
         escrow,
         approved ? 'completed' : 'rejected'
       );
@@ -1441,13 +1693,14 @@ export function registerJobMutationContinuation(ctx = {}) {
       });
       next = { ...next, anchorRegistry: normalizeText(anchor?.registryAddress || next.anchorRegistry), outcomeAnchorId: normalizeText(anchor?.anchorId || next.outcomeAnchorId), outcomeAnchorTxHash: normalizeText(anchor?.anchorTxHash || next.outcomeAnchorTxHash) };
     } catch (error) {
+      const mapped = mapJobLaneExecutionError(error, 'job_validate_failed', 'job validate failed');
       return sendJobRouteError(
         req,
         res,
-        500,
-        'job_validate_failed',
-        normalizeText(error?.message || 'job validate failed'),
-        { jobId: normalizeText(job?.jobId) }
+        mapped.status,
+        mapped.code,
+        mapped.message,
+        { jobId: normalizeText(job?.jobId), ...mapped.detail }
       );
     }
 

@@ -15,11 +15,13 @@ export function createEnsureAAAccountDeployment({
   BUNDLER_RPC_BACKOFF_POLICY,
   KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS
 } = {}) {
-  return async function ensureAAAccountDeployment({ owner, salt = 0n } = {}) {
+  return async function ensureAAAccountDeployment({ owner, salt = 0n, requiredVersion = '' } = {}) {
     if (!backendSigner) {
       throw new Error('Backend signer unavailable. Set KITECLAW_BACKEND_SIGNER_PRIVATE_KEY first.');
     }
-    const requiredAaVersion = String(AA_V2_VERSION_TAG || process.env.KITE_AA_REQUIRED_VERSION || '').trim();
+    const requiredAaVersion = String(
+      requiredVersion || AA_V2_VERSION_TAG || process.env.KITE_AA_REQUIRED_VERSION || ''
+    ).trim();
     const normalizedOwner = normalizeAddress(owner || '');
     if (!ethers.isAddress(normalizedOwner)) {
       throw new Error('A valid owner address is required.');
@@ -45,24 +47,26 @@ export function createEnsureAAAccountDeployment({
     const beforeCode = await provider.getCode(accountAddress);
     const alreadyDeployed = Boolean(beforeCode && beforeCode !== '0x');
 
+    async function readAccountVersion() {
+      if (!requiredAaVersion) return '';
+      try {
+        const account = new ethers.Contract(
+          accountAddress,
+          ['function version() view returns (string)'],
+          provider
+        );
+        return String(await account.version()).trim();
+      } catch {
+        return '';
+      }
+    }
+
     if (alreadyDeployed) {
-      if (requiredAaVersion) {
-        let accountVersion = '';
-        try {
-          const account = new ethers.Contract(
-            accountAddress,
-            ['function version() view returns (string)'],
-            provider
-          );
-          accountVersion = String(await account.version()).trim();
-        } catch {
-          accountVersion = '';
-        }
-        if (accountVersion !== requiredAaVersion) {
-          throw new Error(
-            `AA must be upgraded to V2 before use. required=${requiredAaVersion}, current=${accountVersion || 'unknown_or_legacy'}`
-          );
-        }
+      const accountVersion = await readAccountVersion();
+      if (requiredAaVersion && accountVersion !== requiredAaVersion) {
+        throw new Error(
+          `AA version mismatch. required=${requiredAaVersion}, current=${accountVersion || 'unknown_or_legacy'}`
+        );
       }
       return {
         owner: normalizedOwner,
@@ -74,8 +78,36 @@ export function createEnsureAAAccountDeployment({
       };
     }
 
-    throw new Error(
-      `Generic AA deployment via createAccount has been removed from KTrace. Provision a V2 AA wallet for owner ${normalizedOwner} at salt ${salt.toString()} before retrying.`
+    const factory = new ethers.Contract(
+      KITE_AA_FACTORY_ADDRESS,
+      ['function createAccount(address owner, uint256 salt) returns (address)'],
+      backendSigner
     );
+    const tx = await factory.createAccount(normalizedOwner, salt);
+    await tx.wait();
+
+    const afterCode = await provider.getCode(accountAddress);
+    const deployedNow = Boolean(afterCode && afterCode !== '0x');
+    if (!deployedNow) {
+      throw new Error(
+        `AA deployment did not produce contract code. owner=${normalizedOwner} account=${accountAddress} salt=${salt.toString()}`
+      );
+    }
+
+    const accountVersion = await readAccountVersion();
+    if (requiredAaVersion && accountVersion !== requiredAaVersion) {
+      throw new Error(
+        `AA deployment produced an unexpected version. required=${requiredAaVersion}, current=${accountVersion || 'unknown_or_legacy'}`
+      );
+    }
+
+    return {
+      owner: normalizedOwner,
+      accountAddress,
+      salt: salt.toString(),
+      deployed: true,
+      createdNow: true,
+      txHash: String(tx.hash || '').trim()
+    };
   };
 }

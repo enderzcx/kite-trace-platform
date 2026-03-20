@@ -10,6 +10,14 @@ function normalizeLower(value = '') {
   return normalizeText(value).toLowerCase();
 }
 
+function normalizeClient(value = '') {
+  return normalizeLower(value || 'agent') || 'agent';
+}
+
+function normalizeClientId(value = '') {
+  return normalizeText(value);
+}
+
 function normalizePositiveInt(value, fallbackValue = 0) {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric > 0) return Math.round(numeric);
@@ -55,7 +63,8 @@ function sanitizeInstallCodeRow(normalizeAddress, row = {}) {
   const tokenHash = normalizeText(row.tokenHash || '');
   const prefix = normalizeText(row.prefix || '');
   const maskedPreview = normalizeText(row.maskedPreview || '');
-  const client = normalizeLower(row.client || 'claude') || 'claude';
+  const client = normalizeClient(row.client || 'agent');
+  const clientId = normalizeClientId(row.clientId || '');
   const createdAt = normalizePositiveInt(row.createdAt);
   const expiresAt = normalizePositiveInt(row.expiresAt);
   const claimedAt = normalizePositiveInt(row.claimedAt);
@@ -70,6 +79,7 @@ function sanitizeInstallCodeRow(normalizeAddress, row = {}) {
     prefix,
     maskedPreview,
     client,
+    clientId,
     createdAt,
     expiresAt,
     claimedAt,
@@ -87,10 +97,12 @@ function sanitizeGrantRow(normalizeAddress, row = {}) {
   const tokenHash = normalizeText(row.tokenHash || '');
   const prefix = normalizeText(row.prefix || '');
   const maskedPreview = normalizeText(row.maskedPreview || '');
-  const client = normalizeLower(row.client || 'claude') || 'claude';
+  const client = normalizeClient(row.client || 'agent');
+  const clientId = normalizeClientId(row.clientId || '');
   const createdAt = normalizePositiveInt(row.createdAt);
   const claimedAt = normalizePositiveInt(row.claimedAt);
   const lastUsedAt = normalizePositiveInt(row.lastUsedAt);
+  const expiresAt = normalizePositiveInt(row.expiresAt);
   const revokedAt = normalizePositiveInt(row.revokedAt);
   const revocationReason = normalizeText(row.revocationReason || '');
   return {
@@ -104,9 +116,11 @@ function sanitizeGrantRow(normalizeAddress, row = {}) {
     prefix,
     maskedPreview,
     client,
+    clientId,
     createdAt,
     claimedAt,
     lastUsedAt,
+    expiresAt,
     revokedAt,
     revocationReason
   };
@@ -115,7 +129,8 @@ function sanitizeGrantRow(normalizeAddress, row = {}) {
 function buildInstallCodePublicRecord(row = {}) {
   return {
     installCodeId: normalizeText(row.installCodeId || ''),
-    client: normalizeLower(row.client || 'claude') || 'claude',
+    client: normalizeClient(row.client || 'agent'),
+    clientId: normalizeClientId(row.clientId || ''),
     maskedPreview: normalizeText(row.maskedPreview || ''),
     createdAt: normalizePositiveInt(row.createdAt),
     expiresAt: normalizePositiveInt(row.expiresAt),
@@ -128,11 +143,13 @@ function buildGrantPublicRecord(row = {}) {
   return {
     grantId: normalizeText(row.grantId || ''),
     installCodeId: normalizeText(row.installCodeId || ''),
-    client: normalizeLower(row.client || 'claude') || 'claude',
+    client: normalizeClient(row.client || 'agent'),
+    clientId: normalizeClientId(row.clientId || ''),
     maskedPreview: normalizeText(row.maskedPreview || ''),
     createdAt: normalizePositiveInt(row.createdAt),
     claimedAt: normalizePositiveInt(row.claimedAt),
     lastUsedAt: normalizePositiveInt(row.lastUsedAt),
+    expiresAt: normalizePositiveInt(row.expiresAt),
     revokedAt: normalizePositiveInt(row.revokedAt),
     revocationReason: normalizeText(row.revocationReason || '')
   };
@@ -140,6 +157,7 @@ function buildGrantPublicRecord(row = {}) {
 
 export function createClaudeConnectorAuthHelpers({
   CONNECTOR_INSTALL_CODE_TTL_MS = 15 * 60 * 1000,
+  CONNECTOR_GRANT_TTL_MS = 24 * 60 * 60 * 1000,
   CONNECTOR_INSTALL_CODE_MAX_ROWS = 500,
   CONNECTOR_GRANT_MAX_ROWS = 1000,
   createTraceId,
@@ -150,6 +168,7 @@ export function createClaudeConnectorAuthHelpers({
   writeConnectorGrants
 } = {}) {
   const installCodeTtlMs = normalizePositiveInt(CONNECTOR_INSTALL_CODE_TTL_MS, 15 * 60 * 1000);
+  const grantTtlMs = normalizePositiveInt(CONNECTOR_GRANT_TTL_MS, 24 * 60 * 60 * 1000);
   const installCodeMaxRows = normalizePositiveInt(CONNECTOR_INSTALL_CODE_MAX_ROWS, 500);
   const grantMaxRows = normalizePositiveInt(CONNECTOR_GRANT_MAX_ROWS, 1000);
 
@@ -171,10 +190,16 @@ export function createClaudeConnectorAuthHelpers({
   }
 
   function listGrants() {
+    const now = Date.now();
     const rows = Array.isArray(readConnectorGrants?.()) ? readConnectorGrants() : [];
     const normalized = rows
       .map((row) => sanitizeGrantRow(normalizeAddress, row))
       .filter((row) => row.grantId && row.ownerEoa && row.tokenHash)
+      .filter((row) => {
+        if (row.revokedAt) return now - row.revokedAt <= 24 * 60 * 60 * 1000;
+        if (row.expiresAt) return row.expiresAt >= now - grantTtlMs;
+        return true;
+      })
       .sort((left, right) => Number(right.createdAt || 0) - Number(left.createdAt || 0))
       .slice(0, grantMaxRows);
     writeConnectorGrants?.(normalized);
@@ -201,14 +226,18 @@ export function createClaudeConnectorAuthHelpers({
     return normalized;
   }
 
-  function findPendingInstallCodeByOwner(ownerEoa = '') {
+  function findPendingInstallCodeByOwner(ownerEoa = '', { client = '', clientId = '' } = {}) {
     const normalizedOwner = normalizeAddress(ownerEoa || '');
     if (!ethers.isAddress(normalizedOwner)) return null;
     const now = Date.now();
+    const normalizedClient = normalizeClient(client || 'agent');
+    const normalizedClientId = normalizeClientId(clientId || '');
     return (
       listInstallCodes().find(
         (row) =>
           row.ownerEoa === normalizedOwner &&
+          row.client === normalizedClient &&
+          (!normalizedClientId || row.clientId === normalizedClientId) &&
           !row.revokedAt &&
           !row.claimedAt &&
           row.expiresAt > now
@@ -216,12 +245,20 @@ export function createClaudeConnectorAuthHelpers({
     );
   }
 
-  function findActiveGrantByOwner(ownerEoa = '') {
+  function findActiveGrantByOwner(ownerEoa = '', { client = '', clientId = '' } = {}) {
     const normalizedOwner = normalizeAddress(ownerEoa || '');
     if (!ethers.isAddress(normalizedOwner)) return null;
+    const normalizedClient = normalizeClient(client || 'agent');
+    const normalizedClientId = normalizeClientId(clientId || '');
+    const now = Date.now();
     return (
       listGrants().find(
-        (row) => row.ownerEoa === normalizedOwner && !row.revokedAt
+        (row) =>
+          row.ownerEoa === normalizedOwner &&
+          row.client === normalizedClient &&
+          (!normalizedClientId || row.clientId === normalizedClientId) &&
+          !row.revokedAt &&
+          (!row.expiresAt || row.expiresAt > now)
       ) || null
     );
   }
@@ -231,25 +268,31 @@ export function createClaudeConnectorAuthHelpers({
     aaWallet = '',
     authorityId = '',
     policySnapshotHash = '',
-    client = 'claude'
+    client = 'agent',
+    clientId = ''
   } = {}) {
     const normalizedOwner = normalizeAddress(ownerEoa || '');
     const normalizedAaWallet = normalizeAddress(aaWallet || '');
+    const normalizedClient = normalizeClient(client || 'agent');
+    const normalizedClientId = normalizeClientId(clientId || '');
     if (!ethers.isAddress(normalizedOwner)) {
       return {
         ok: false,
         statusCode: 400,
         code: 'connector_setup_incomplete',
-        reason: 'A valid ownerEoa is required to issue a Claude connector install code.'
+        reason: 'A valid ownerEoa is required to issue a connector credential.'
       };
     }
-    const activeGrant = findActiveGrantByOwner(normalizedOwner);
+    const activeGrant = findActiveGrantByOwner(normalizedOwner, {
+      client: normalizedClient,
+      clientId: normalizedClientId
+    });
     if (activeGrant) {
       return {
         ok: false,
         statusCode: 409,
         code: 'connector_grant_active',
-        reason: 'An active Claude connector grant already exists for this owner.',
+        reason: 'An active connector grant already exists for this owner and client.',
         grant: buildGrantPublicRecord(activeGrant)
       };
     }
@@ -265,7 +308,8 @@ export function createClaudeConnectorAuthHelpers({
       tokenHash: hashToken(secret),
       prefix: secret.slice(0, Math.min(secret.length, 20)),
       maskedPreview: buildMaskedPreview(secret),
-      client: normalizeLower(client || 'claude') || 'claude',
+      client: normalizedClient,
+      clientId: normalizedClientId,
       createdAt: now,
       expiresAt: now + installCodeTtlMs,
       claimedAt: 0,
@@ -273,7 +317,11 @@ export function createClaudeConnectorAuthHelpers({
     });
 
     const nextRows = listInstallCodes().map((row) =>
-      row.ownerEoa === normalizedOwner && !row.revokedAt && !row.claimedAt
+      row.ownerEoa === normalizedOwner &&
+      row.client === normalizedClient &&
+      row.clientId === normalizedClientId &&
+      !row.revokedAt &&
+      !row.claimedAt
         ? {
             ...row,
             revokedAt: row.revokedAt || now
@@ -293,7 +341,9 @@ export function createClaudeConnectorAuthHelpers({
   function revokeGrant({
     ownerEoa = '',
     reason = '',
-    revokePending = true
+    revokePending = true,
+    client = '',
+    clientId = ''
   } = {}) {
     const normalizedOwner = normalizeAddress(ownerEoa || '');
     if (!ethers.isAddress(normalizedOwner)) {
@@ -305,9 +355,18 @@ export function createClaudeConnectorAuthHelpers({
       };
     }
     const now = Date.now();
+    const normalizedClient = normalizeClient(client || 'agent');
+    const normalizedClientId = normalizeClientId(clientId || '');
     let revokedGrant = null;
     const nextGrants = listGrants().map((row) => {
-      if (row.ownerEoa !== normalizedOwner || row.revokedAt) return row;
+      if (
+        row.ownerEoa !== normalizedOwner ||
+        row.client !== normalizedClient ||
+        (normalizedClientId && row.clientId !== normalizedClientId) ||
+        row.revokedAt
+      ) {
+        return row;
+      }
       revokedGrant = {
         ...row,
         revokedAt: now,
@@ -320,7 +379,15 @@ export function createClaudeConnectorAuthHelpers({
     let revokedInstallCode = null;
     if (revokePending) {
       const nextInstallCodes = listInstallCodes().map((row) => {
-        if (row.ownerEoa !== normalizedOwner || row.revokedAt || row.claimedAt) return row;
+        if (
+          row.ownerEoa !== normalizedOwner ||
+          row.client !== normalizedClient ||
+          (normalizedClientId && row.clientId !== normalizedClientId) ||
+          row.revokedAt ||
+          row.claimedAt
+        ) {
+          return row;
+        }
         revokedInstallCode = {
           ...row,
           revokedAt: now
@@ -382,9 +449,11 @@ export function createClaudeConnectorAuthHelpers({
       prefix: installCode.prefix,
       maskedPreview: installCode.maskedPreview,
       client: installCode.client,
+      clientId: installCode.clientId,
       createdAt: now,
       claimedAt: now,
       lastUsedAt: 0,
+      expiresAt: now + grantTtlMs,
       revokedAt: 0,
       revocationReason: ''
     });
@@ -466,9 +535,11 @@ export function createClaudeConnectorAuthHelpers({
     findPendingInstallCodeByOwner,
     findActiveGrantByOwner,
     issueInstallCode,
+    issueSessionConnector: issueInstallCode,
     revokeGrant,
     claimInstallCode,
     resolveConnectorToken,
+    resolveAgentConnectorToken: resolveConnectorToken,
     touchGrantUsage,
     buildInstallCodePublicRecord,
     buildGrantPublicRecord

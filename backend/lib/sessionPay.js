@@ -245,7 +245,7 @@ export function createSessionPayHelpers({
     // `/api/session/pay` already performs its own AA/bundler retry loop and receipt wait.
     // Keep the outer loopback HTTP timeout comfortably above that internal window so we
     // don't abort a valid payment attempt mid-flight and surface a false "This operation was aborted".
-    const timeoutMs = Math.max(30_000, Math.min(Number(options.timeoutMs || 420_000), 900_000));
+    const timeoutMs = Math.max(30_000, Math.min(Number(options.timeoutMs || 90_000), 180_000));
     const internalApiKey = getInternalAgentApiKey();
     const headers = { 'Content-Type': 'application/json' };
     if (internalApiKey) headers['x-api-key'] = internalApiKey;
