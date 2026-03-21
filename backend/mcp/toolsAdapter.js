@@ -152,6 +152,7 @@ function buildToolDefinition(capability = {}) {
     audience: normalizeAudience(capability?.audience, 'public_product'),
     scopeMode: normalizeScopeMode(capability?.scopeMode, 'scoped'),
     riskLevel: normalizeRiskLevel(capability?.riskLevel, 'standard'),
+    paymentMode: normalizeText(capability?.paymentMode || ''),
     rawCapability: capability,
     inputSchema: buildToolInputSchema(capability)
   };

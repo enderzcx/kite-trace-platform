@@ -67,6 +67,11 @@ export function createSessionRuntimeHelpers({
     const authorizedAgentId = String(input.authorizedAgentId || '').trim();
     const authorizedAgentWallet = normalizeAddress(input.authorizedAgentWallet || '');
     const authorizationAudience = String(input.authorizationAudience || '').trim();
+    const agentId = String(input.agentId || '').trim();
+    const agentWallet = normalizeAddress(input.agentWallet || '');
+    const identityRegistry = normalizeAddress(input.identityRegistry || '');
+    const identityRegisterTxHash = String(input.identityRegisterTxHash || '').trim();
+    const identityBindTxHash = String(input.identityBindTxHash || '').trim();
     const allowedCapabilities = Array.isArray(input.allowedCapabilities)
       ? input.allowedCapabilities
           .map((item) => String(item || '').trim().toLowerCase())
@@ -133,6 +138,11 @@ export function createSessionRuntimeHelpers({
       authorizedAgentId,
       authorizedAgentWallet: ethers.isAddress(authorizedAgentWallet) ? authorizedAgentWallet : '',
       authorizationAudience,
+      agentId,
+      agentWallet: ethers.isAddress(agentWallet) ? agentWallet : '',
+      identityRegistry: ethers.isAddress(identityRegistry) ? identityRegistry : '',
+      identityRegisterTxHash: /^0x[0-9a-fA-F]{64}$/.test(identityRegisterTxHash) ? identityRegisterTxHash : '',
+      identityBindTxHash: /^0x[0-9a-fA-F]{64}$/.test(identityBindTxHash) ? identityBindTxHash : '',
       allowedCapabilities: Array.from(new Set(allowedCapabilities)),
       allowedProviders: Array.from(new Set(allowedProviders)),
       allowedRecipients: Array.from(new Set(allowedRecipients)),

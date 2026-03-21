@@ -15,6 +15,7 @@ export function registerCoreIdentityIdentityRoutes(ctx = {}) {
     readRecords,
     readWorkflows,
     readX402Requests,
+    resolveSessionRuntime,
     requireRole,
     writeIdentityChallenges
   } = deps;
@@ -26,6 +27,75 @@ export function registerCoreIdentityIdentityRoutes(ctx = {}) {
     normalizeIdentityChallengeRows,
     readIdentityProfile
   } = helpers;
+
+  function normalizeText(value = '') {
+    return String(value || '').trim();
+  }
+
+  function getScopedOwnerFromAuth(req) {
+    return normalizeAddress(req?.authOwnerEoa || req?.accountCtx?.ownerEoa || '');
+  }
+
+  function buildUnavailableCurrentIdentityProfile({
+    ownerAddress = '',
+    registry = '',
+    agentId = '',
+    agentWallet = '',
+    reason = 'identity_not_registered'
+  } = {}) {
+    return {
+      available: false,
+      reason,
+      configured: {
+        registry: normalizeAddress(registry || ''),
+        agentId: normalizeText(agentId || '')
+      },
+      registry: normalizeAddress(registry || ''),
+      agentId: normalizeText(agentId || ''),
+      ownerAddress: normalizeAddress(ownerAddress || ''),
+      agentWallet: normalizeAddress(agentWallet || ''),
+      tokenURI: ''
+    };
+  }
+
+  async function readCurrentIdentityProfileForRequest(req) {
+    const scopedOwner = getScopedOwnerFromAuth(req);
+    if (!scopedOwner || typeof resolveSessionRuntime !== 'function') {
+      return readIdentityProfile({});
+    }
+
+    const scopedRuntime = resolveSessionRuntime({
+      owner: scopedOwner,
+      strictOwnerMatch: true
+    });
+    const scopedAgentId = normalizeText(scopedRuntime?.agentId || scopedRuntime?.authorizedAgentId || '');
+    const scopedRegistry = normalizeAddress(
+      scopedRuntime?.identityRegistry ||
+      scopedRuntime?.authorizationPayload?.identityRegistry ||
+      ''
+    );
+    const scopedAgentWallet = normalizeAddress(
+      scopedRuntime?.agentWallet ||
+      scopedRuntime?.authorizedAgentWallet ||
+      scopedRuntime?.aaWallet ||
+      ''
+    );
+
+    if (scopedAgentId && scopedRegistry) {
+      return readIdentityProfile({
+        registry: scopedRegistry,
+        agentId: scopedAgentId
+      });
+    }
+
+    return buildUnavailableCurrentIdentityProfile({
+      ownerAddress: scopedOwner,
+      registry: scopedRegistry,
+      agentId: scopedAgentId,
+      agentWallet: scopedAgentWallet,
+      reason: 'identity_not_registered_for_owner'
+    });
+  }
 
   app.get(
     '/api/identity',
@@ -59,7 +129,7 @@ export function registerCoreIdentityIdentityRoutes(ctx = {}) {
     }),
     async (req, res) => {
     try {
-      const profile = await readIdentityProfile({});
+      const profile = await readCurrentIdentityProfileForRequest(req);
       return res.json({ ok: true, profile });
     } catch (error) {
       return res.status(500).json({

@@ -93,7 +93,14 @@ function buildInvokePayload(tool = {}, args = {}, extra = {}, paymentMode = '', 
   const payer = normalizeText(normalizedArgs?.payer || '');
   const targetAgentId = normalizeText(normalizedArgs?.targetAgentId || '');
   const requestId = normalizeText(normalizedArgs?.requestId || '');
-  const x402Mode = normalizeText(paymentMode || normalizedArgs?.x402Mode || '');
+  // hosted (connector-grant) always wins; otherwise tool-level paymentMode takes precedence over request-level
+  const x402Mode = normalizeText(
+    (paymentMode === 'hosted' ? 'hosted' : null) ||
+    tool?.paymentMode ||
+    paymentMode ||
+    normalizedArgs?.x402Mode ||
+    ''
+  );
   const paymentProof = isPlainObject(normalizedArgs?.paymentProof) ? normalizedArgs.paymentProof : null;
 
   if (traceId) payload.traceId = traceId;

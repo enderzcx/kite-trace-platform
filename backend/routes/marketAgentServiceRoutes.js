@@ -1919,7 +1919,25 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         return res.status(409).json(buildIntentConflictPayload(intentState));
       }
       persistInvocation(invocation);
+      if (process.env.SVC_DEBUG === 'true') {
+        console.log('[svc-invoke] routing to workflow', {
+          serviceId, action: effectiveAction, workflowPath,
+          isExternalFeedCapability, isTechnicalServiceAction, isInfoServiceAction,
+          invocationId, traceId
+        });
+      }
       const { resp, payload } = await postInternalWorkflowWithRetry(workflowPath, headers, invokePayload);
+      if (process.env.SVC_DEBUG === 'true') {
+        console.log('[svc-invoke] workflow response', {
+          status: resp?.status,
+          ok: payload?.ok,
+          error: payload?.error,
+          reason: payload?.reason,
+          state: payload?.state,
+          requestId: payload?.requestId || payload?.paymentRequestId || '',
+          traceId: payload?.traceId || ''
+        });
+      }
       const workflow = payload?.workflow || null;
       if (workflow && typeof workflow === 'object') {
         workflow.authority = authoritySnapshot;

@@ -590,6 +590,58 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     }
   );
 
+  app.post(
+    '/api/setup/runtime/identity',
+    requireRole('agent', SELF_SERVE_MUTATION_AUTH),
+    (req, res) => {
+      const scopedBody = buildSetupRouteBody(req, req.body || {});
+      if (scopedBody?.error) {
+        return sendRouteFailure(req, res, scopedBody.error);
+      }
+      const body = scopedBody || {};
+      const ownerEoa = normalizeOwnerInput(body.owner || body.ownerEoa || '');
+      if (!ownerEoa) {
+        return sendRouteFailure(req, res, {
+          statusCode: 400,
+          code: 'setup_runtime_identity_owner_required',
+          reason: 'A valid ownerEoa is required.'
+        });
+      }
+      const currentRuntime = deps.resolveSessionRuntime({
+        owner: ownerEoa,
+        strictOwnerMatch: true
+      });
+      if (!normalizeText(currentRuntime?.owner || '')) {
+        return sendRouteFailure(req, res, {
+          statusCode: 409,
+          code: 'setup_runtime_identity_missing_runtime',
+          reason: 'Prepare the AA runtime before syncing ERC-8004 identity.'
+        });
+      }
+
+      const nextRuntime = writeSessionRuntime({
+        ...currentRuntime,
+        owner: ownerEoa,
+        aaWallet: body.aaWallet || currentRuntime.aaWallet || '',
+        agentId: body.agentId || currentRuntime.agentId || '',
+        agentWallet: body.agentWallet || currentRuntime.agentWallet || currentRuntime.aaWallet || '',
+        identityRegistry: body.identityRegistry || currentRuntime.identityRegistry || '',
+        identityRegisterTxHash:
+          body.identityRegisterTxHash || currentRuntime.identityRegisterTxHash || '',
+        identityBindTxHash:
+          body.identityBindTxHash || currentRuntime.identityBindTxHash || '',
+        source: currentRuntime.source || 'self_serve_wallet',
+        updatedAt: Date.now()
+      });
+
+      return res.json({
+        ok: true,
+        traceId: req.traceId || '',
+        runtime: buildSessionRuntimePayload(nextRuntime)
+      });
+    }
+  );
+
   app.get('/api/session/policy', requireRole('viewer'), (req, res) => {
     const result = materializeAuthority?.({
       owner: req.query.owner,

@@ -43,6 +43,8 @@ interface SessionRuntime {
   agentId?: string;
   agentWallet?: string;
   identityRegistry?: string;
+  identityRegisterTxHash?: string;
+  identityBindTxHash?: string;
   chainId?: string;
   payerAaWallet?: string;
   tokenAddress?: string;
@@ -94,6 +96,7 @@ interface IdentityProfileResponse {
     agentId?: string;
     registry?: string;
     agentWallet?: string;
+    ownerAddress?: string;
     configured?: {
       agentId?: string;
       registry?: string;
@@ -302,10 +305,12 @@ function parseRuntime(json: Record<string, unknown>): SessionRuntime {
       pick("agentWallet") ??
       pick("authorizedAgentWallet") ??
       (authorizationPayload.agentWallet as string | undefined),
-    identityRegistry:
-      pick("identityRegistry") ??
-      (authorizationPayload.identityRegistry as string | undefined),
-    chainId: pick("chainId") ?? "kite-testnet",
+      identityRegistry:
+        pick("identityRegistry") ??
+        (authorizationPayload.identityRegistry as string | undefined),
+      identityRegisterTxHash: pick("identityRegisterTxHash"),
+      identityBindTxHash: pick("identityBindTxHash"),
+      chainId: pick("chainId") ?? "kite-testnet",
     payerAaWallet: resolvedPayerAaWallet,
     tokenAddress: pick("tokenAddress"),
     gatewayRecipient: pick("gatewayRecipient"),
@@ -426,6 +431,9 @@ async function getTokenBalance(tokenAddress: string, address: string): Promise<n
 }
 
 async function fetchSetupRuntime(ownerEoa: string): Promise<SessionRuntime> {
+  if (!ownerEoa || !isAddress(ownerEoa)) {
+    throw new Error("Please connect a valid Ethereum wallet first.");
+  }
   const runtimeRes = await fetch("/api/setup/session/runtime", {
     method: "GET",
     credentials: "include",
@@ -519,15 +527,22 @@ function mergeRuntimeIdentity(
   runtime: SessionRuntime,
   profile?: IdentityProfileResponse["profile"] | null
 ): SessionRuntime {
-  const configured = profile?.configured ?? {};
+  const runtimeOwner = normalizeAccountAddress(runtime.owner ?? "");
+  const profileOwner = normalizeAccountAddress(profile?.ownerAddress ?? "");
+  const canMergeProfile =
+    Boolean(profile) &&
+    Boolean(runtimeOwner) &&
+    Boolean(profileOwner) &&
+    runtimeOwner === profileOwner;
+  const configured = canMergeProfile ? profile?.configured ?? {} : {};
   const runtimeAgentId = String(runtime.agentId ?? "").trim();
   const runtimeAgentWallet = String(runtime.agentWallet ?? "").trim();
   const runtimeIdentityRegistry = String(runtime.identityRegistry ?? "").trim();
   const configuredAgentId = String(configured.agentId ?? "").trim();
   const configuredRegistry = String(configured.registry ?? "").trim();
-  const profileAgentId = String(profile?.agentId ?? "").trim();
-  const profileAgentWallet = String(profile?.agentWallet ?? "").trim();
-  const profileRegistry = String(profile?.registry ?? "").trim();
+  const profileAgentId = canMergeProfile ? String(profile?.agentId ?? "").trim() : "";
+  const profileAgentWallet = canMergeProfile ? String(profile?.agentWallet ?? "").trim() : "";
+  const profileRegistry = canMergeProfile ? String(profile?.registry ?? "").trim() : "";
   return {
     ...runtime,
     agentId: runtimeAgentId || configuredAgentId || profileAgentId || "",
@@ -694,7 +709,7 @@ function PrimaryBtn({
       onClick={onClick}
       disabled={disabled || loading}
       className={[
-        "inline-flex h-10 items-center gap-2 rounded-full bg-[#3a4220] px-5 text-[13px] font-semibold text-[#faf7f1] transition",
+        "inline-flex h-10 items-center gap-2 rounded-full whitespace-nowrap bg-[#3a4220] px-5 text-[13px] font-semibold text-[#faf7f1] transition",
         "hover:bg-[#4d5a2a] hover:shadow-[0_4px_16px_rgba(58,66,32,0.3)]",
         "disabled:cursor-not-allowed disabled:opacity-40",
         className,
@@ -843,22 +858,33 @@ function DoneRow({
   n,
   title,
   sub,
-}: {
-  n: number;
-  title: string;
-  sub?: string;
-}) {
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-[rgba(58,66,32,0.14)] bg-[rgba(58,66,32,0.04)] px-5 py-3">
-      <StepBadge n={n} active={false} done />
-      <div className="flex-1">
-        <p className="text-[13px] font-semibold text-[#18180e]">{title}</p>
-        {sub && <p className="break-all font-mono text-[11px] text-[#7a6e56]">{sub}</p>}
-      </div>
-      <CheckCircle2 className="size-4 text-[#3a4220]" />
-    </div>
-  );
-}
+  onClick,
+  }: {
+    n: number;
+    title: string;
+    sub?: string;
+    onClick?: () => void;
+  }) {
+      const clickable = typeof onClick === "function";
+      return (
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={!clickable}
+          className={[
+            "flex w-full items-center gap-3 rounded-2xl border border-[rgba(58,66,32,0.14)] bg-[rgba(58,66,32,0.04)] px-5 py-3 text-left transition",
+            clickable ? "hover:bg-[rgba(58,66,32,0.08)]" : "",
+          ].join(" ")}
+        >
+          <StepBadge n={n} active={false} done />
+          <div className="flex-1">
+            <p className="text-[13px] font-semibold text-[#18180e]">{title}</p>
+            {sub && <p className="whitespace-pre-wrap break-all font-mono text-[11px] text-[#7a6e56]">{sub}</p>}
+          </div>
+          {clickable ? <ChevronDown className="size-4 text-[#3a4220]" /> : <CheckCircle2 className="size-4 text-[#3a4220]" />}
+        </button>
+    );
+  }
 
 // 鈹€鈹€鈹€ Step 0: Connect Wallet 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
@@ -996,12 +1022,14 @@ function FundStep({
   address,
   runtime,
   eoaBalance,
+  reviewMode = false,
   onRuntimeUpdate,
   onDone,
 }: {
   address: string;
   runtime: SessionRuntime;
   eoaBalance: number;
+  reviewMode?: boolean;
   onRuntimeUpdate: (runtime: SessionRuntime) => void;
   onDone: () => void;
 }) {
@@ -1150,7 +1178,9 @@ function FundStep({
       if (ready && !doneRef.current) {
         doneRef.current = true;
         if (pollRef.current) clearInterval(pollRef.current);
-        setTimeout(onDone, 900);
+        if (!reviewMode) {
+          setTimeout(onDone, 900);
+        }
       }
     };
 
@@ -1159,7 +1189,7 @@ function FundStep({
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [aaWallet, address, isDeployed, onDone, onRuntimeUpdate, runtime, tokenAddress]);
+  }, [aaWallet, address, isDeployed, onDone, onRuntimeUpdate, reviewMode, runtime, tokenAddress]);
 
   async function sendToAA() {
     const eth = getEthereum();
@@ -1783,6 +1813,7 @@ function AuthorizeStep({
             {isRenew && (
               <InfoBanner msg="Your account and funds are intact. You only need to re-sign the session key - no new deposit required." />
             )}
+            <InfoBanner msg="Wallet may ask for up to two confirmations here: first an on-chain AA permission update if required, then the KTRACE session authorization signature. After permissions are in place, renewals usually only need the signature." />
             {String(runtime.runtimeHealth || "").trim().toLowerCase() !== "active_default" && (
               <ErrorBanner msg="This runtime points to a historical AA wallet. Prepare a replacement wallet in step 2 before creating or renewing a session key." />
             )}
@@ -1880,7 +1911,7 @@ function AuthorizeStep({
               >
                 <ShieldCheck className="size-3.5" />
                 {state === "creatingSession"
-                  ? "Creating session on-chain..."
+                  ? "Checking session permissions..."
                   : state === "signing"
                     ? "Waiting for wallet signature..."
                     : state === "submitting"
@@ -1890,7 +1921,9 @@ function AuthorizeStep({
                         : "Sign & Authorize"}
               </PrimaryBtn>
               {!loading && (
-                <p className="text-[11px] text-[#9e8e76]">Wallet signature required - no gas</p>
+                <p className="text-[11px] text-[#9e8e76]">
+                  Usually one signature. If AA permissions are missing, your wallet may ask for one on-chain confirmation first.
+                </p>
               )}
             </div>
 
@@ -2542,7 +2575,6 @@ function ClaudeConnectorPanel({
 }
 
 function DeveloperSetupPanel() {
-  const [expanded, setExpanded] = useState(false);
   const [state, setState] = useState<"idle" | "generating" | "done">("idle");
   const [revoking, setRevoking] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -2568,7 +2600,6 @@ function DeveloperSetupPanel() {
           if (meta && !meta.revokedAt) {
             setKeyMeta(meta);
             setState("done");
-            setExpanded(true);
           }
         }
       } catch { /* ignore */ }
@@ -2630,390 +2661,153 @@ function DeveloperSetupPanel() {
     }
   }
 
-  const mcpEndpoint = (
-    process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://api.kitetrace.xyz"
-  ).replace(/\/+$/, "") + "/mcp/stream";
-
+  const mcpEndpoint = `${LOCAL_BACKEND_BASE_URL}/mcp`;
   const hasFullKey = Boolean(apiKey);
   const keyDisplay = hasFullKey ? apiKey : "<generate_a_new_ktrace_sk_key>";
+  const claudeCodeCommands = [
+    `claude mcp add --transport http ktrace ${mcpEndpoint} --header "x-api-key: ${keyDisplay}"`,
+    "claude mcp list",
+    "claude mcp get ktrace",
+  ].join("\n");
 
   return (
-    <div className="flex flex-col gap-0">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-2 rounded-xl px-1 py-2 text-left transition hover:bg-[rgba(58,66,32,0.04)]"
-      >
-        <ChevronDown
-          className={[
-            "size-4 text-[#9e8e76] transition-transform",
-            expanded ? "" : "-rotate-90",
-          ].join(" ")}
-        />
-        <Terminal className="size-4 text-[#7a6e56]" />
-        <span className="text-[13px] font-semibold text-[#18180e]">Advanced / Developer Setup</span>
-        <span className="text-[11px] text-[#9e8e76]">API key + manual config</span>
-      </button>
+    <div className="flex flex-col gap-5">
+      <div className="flex items-start gap-3 rounded-2xl border border-[rgba(90,80,50,0.12)] bg-[rgba(58,66,32,0.04)] px-4 py-3">
+        <Terminal className="mt-0.5 size-4 shrink-0 text-[#7a6e56]" />
+        <p className="text-[12px] leading-relaxed text-[#7a6e56]">
+          Use a normal HTTP MCP connection. Below is the shortest path using <strong>Claude Code</strong>.
+        </p>
+      </div>
 
-      {expanded && (
-        <div className="flex flex-col gap-5 pl-6 pt-3">
-          {/* Key section */}
-          {(state === "idle" || state === "generating") && (
-            <div className="flex flex-col gap-4">
-              {state === "generating" ? (
-                <div className="flex items-center gap-2 text-[12px] text-[#7a6e56]">
-                  <Loader2 className="size-3.5 animate-spin" /> Generating key...
-                </div>
-              ) : (
-                <>
-                  <div className="flex items-start gap-3 rounded-2xl border border-[rgba(90,80,50,0.12)] bg-[rgba(58,66,32,0.04)] px-4 py-3">
-                    <KeyRound className="mt-0.5 size-4 shrink-0 text-[#7a6e56]" />
-                    <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-                      For developers and non-Claude MCP clients. Your API key starts with{" "}
-                      <code className="font-mono">ktrace_sk_</code> and is shown{" "}
-                      <strong>once</strong>.
-                    </p>
-                  </div>
-                  <PrimaryBtn onClick={generate}>
-                    <KeyRound className="size-3.5" />
-                    Generate API Key
-                  </PrimaryBtn>
-                </>
-              )}
+      {(state === "idle" || state === "generating") && (
+        <div className="flex flex-col gap-4">
+          {state === "generating" ? (
+            <div className="flex items-center gap-2 text-[12px] text-[#7a6e56]">
+              <Loader2 className="size-3.5 animate-spin" /> Generating key...
             </div>
+          ) : (
+            <>
+              <div className="flex items-start gap-3 rounded-2xl border border-[rgba(90,80,50,0.12)] bg-[rgba(58,66,32,0.04)] px-4 py-3">
+                <KeyRound className="mt-0.5 size-4 shrink-0 text-[#7a6e56]" />
+                <p className="text-[12px] leading-relaxed text-[#7a6e56]">
+                  Generate an account-scoped MCP API key. It starts with <code className="font-mono">ktrace_sk_</code> and is shown <strong>once</strong>.
+                </p>
+              </div>
+              <PrimaryBtn onClick={generate}>
+                <KeyRound className="size-3.5" />
+                Generate API Key
+              </PrimaryBtn>
+            </>
           )}
-
-          {state === "done" && (
-            <div className="flex flex-col gap-5">
-              {/* Key reveal */}
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#9e8e76]">
-                    {apiKey ? "Your API Key (shown once)" : "Active Key"}
-                  </span>
-                  {apiKey && (
-                    <button
-                      type="button"
-                      onClick={() => setRevealed((v) => !v)}
-                      className="flex items-center gap-1 text-[11px] text-[#9e8e76] transition hover:text-[#3a4220]"
-                    >
-                      {revealed ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-                      {revealed ? "Hide" : "Reveal"}
-                    </button>
-                  )}
-                </div>
-                <MonoField
-                  value={
-                    apiKey
-                      ? revealed
-                        ? apiKey
-                        : "ktrace_sk_****************"
-                      : (keyMeta?.maskedPreview ?? "No key generated yet")
-                  }
-                  copyValue={apiKey || null}
-                  hideCopyWhenUnavailable={!apiKey}
-                />
-                {apiKey && (
-                  <p className="text-[11px] text-[#b43c28]">
-                    Copy this key now - it will not be shown again.
-                  </p>
-                )}
-                {!apiKey && keyMeta && (
-                  <div className="flex flex-col gap-1">
-                    <p className="text-[11px] text-[#9e8e76]">
-                      Key ID: <code className="font-mono">{keyMeta.keyId}</code> - Role:{" "}
-                      {keyMeta.role} - Created {new Date(keyMeta.createdAt).toLocaleDateString()}
-                    </p>
-                    <p className="text-[11px] text-[#b43c28]">
-                      This is only a masked preview. The full secret cannot be recovered. Revoke or
-                      generate a new key before copying it into your config.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Config instructions */}
-              <div className="flex flex-col gap-4">
-                <div className="flex items-center gap-2 border-t border-[rgba(90,80,50,0.1)] pt-4">
-                  <Terminal className="size-4 text-[#7a6e56]" />
-                  <span className="text-[13px] font-semibold text-[#18180e]">
-                    Claude Desktop Config (manual)
-                  </span>
-                </div>
-
-                <div className="flex gap-3">
-                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[rgba(58,66,32,0.1)] text-[10px] font-bold text-[#3a4220]">
-                    1
-                  </span>
-                  <div className="flex w-full flex-col gap-1.5">
-                    <p className="text-[12px] font-medium text-[#18180e]">
-                      Open your Claude Desktop config file
-                    </p>
-                    <div className="flex flex-col gap-1">
-                      <MonoField value="%LOCALAPPDATA%\Claude\claude_desktop_config.json" />
-                      <p className="text-[10px] text-[#9e8e76]">
-                        Windows:{" "}
-                        <code className="font-mono">
-                          C:\Users\YourUser\AppData\Local\Claude\claude_desktop_config.json
-                        </code>
-                        . macOS:{" "}
-                        <code className="font-mono">
-                          ~/Library/Application Support/Claude/claude_desktop_config.json
-                        </code>
-                        . Create the file if it does not exist.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[rgba(58,66,32,0.1)] text-[10px] font-bold text-[#3a4220]">
-                    2
-                  </span>
-                  <div className="flex w-full flex-col gap-1.5">
-                    <p className="text-[12px] font-medium text-[#18180e]">
-                      Add the ktrace block inside{" "}
-                      <code className="font-mono text-[11px]">mcpServers</code>
-                    </p>
-                    <p className="text-[11px] text-[#9e8e76]">
-                      Windows native Claude Desktop works best with{" "}
-                      <code className="font-mono">cmd /c npx</code>.
-                    </p>
-                    {!hasFullKey && (
-                      <p className="text-[11px] text-[#b43c28]">
-                        The config below uses a placeholder because this page only has a masked key
-                        preview. Generate or rotate a key to get the full secret.
-                      </p>
-                    )}
-                    <CodeBlock
-                      lang="json"
-                      code={JSON.stringify(
-                        {
-                          mcpServers: {
-                            ktrace: {
-                              command: "cmd",
-                              args: [
-                                "/c",
-                                "npx",
-                                "-y",
-                                "@modelcontextprotocol/server-fetch",
-                                mcpEndpoint,
-                              ],
-                              env: { MCP_API_KEY: keyDisplay },
-                            },
-                          },
-                        },
-                        null,
-                        2
-                      )}
-                    />
-                    <p className="text-[10px] text-[#9e8e76]">
-                      On macOS or Linux, use{" "}
-                      <code className="font-mono">&quot;command&quot;: &quot;npx&quot;</code> instead.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[rgba(58,66,32,0.1)] text-[10px] font-bold text-[#3a4220]">
-                    3
-                  </span>
-                  <div className="flex flex-col gap-1">
-                    <p className="text-[12px] font-medium text-[#18180e]">
-                      Fully quit and reopen Claude Desktop
-                    </p>
-                    <p className="text-[11px] text-[#9e8e76]">
-                      The ktrace tools will appear in the tool picker.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex flex-wrap items-center gap-3">
-                <GhostBtn onClick={revoke} disabled={revoking} loading={revoking}>
-                  Revoke Key
-                </GhostBtn>
-              </div>
-            </div>
-          )}
-
-          {error && <ErrorBanner msg={error} />}
         </div>
       )}
+
+      {state === "done" && (
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#9e8e76]">
+                {apiKey ? "Your API Key (shown once)" : "Active Key"}
+              </span>
+              {apiKey && (
+                <button
+                  type="button"
+                  onClick={() => setRevealed((v) => !v)}
+                  className="flex items-center gap-1 text-[11px] text-[#9e8e76] transition hover:text-[#3a4220]"
+                >
+                  {revealed ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+                  {revealed ? "Hide" : "Reveal"}
+                </button>
+              )}
+            </div>
+            <MonoField
+              value={
+                apiKey
+                  ? revealed
+                    ? apiKey
+                    : "ktrace_sk_****************"
+                  : (keyMeta?.maskedPreview ?? "No key generated yet")
+              }
+              copyValue={apiKey || null}
+              hideCopyWhenUnavailable={!apiKey}
+            />
+            {apiKey && (
+              <p className="text-[11px] text-[#b43c28]">
+                Copy this key now - it will not be shown again.
+              </p>
+            )}
+            {!apiKey && keyMeta && (
+              <div className="flex flex-col gap-1">
+                <p className="text-[11px] text-[#9e8e76]">
+                  Key ID: <code className="font-mono">{keyMeta.keyId}</code> - Role: {keyMeta.role} - Created {new Date(keyMeta.createdAt).toLocaleDateString()}
+                </p>
+                <p className="text-[11px] text-[#b43c28]">
+                  This is only a masked preview. The full secret cannot be recovered. Revoke or generate a new key before using these commands.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-4 border-t border-[rgba(90,80,50,0.1)] pt-4">
+            <div className="flex items-center gap-2">
+              <Terminal className="size-4 text-[#7a6e56]" />
+              <span className="text-[13px] font-semibold text-[#18180e]">Claude Code Example</span>
+            </div>
+            {!hasFullKey && (
+              <p className="text-[11px] text-[#b43c28]">
+                The commands below use a placeholder because only a masked key is available right now. Generate or rotate a key to get the full secret.
+              </p>
+            )}
+            <CodeBlock lang="bash" code={claudeCodeCommands} />
+            <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
+              <p className="text-[12px] font-medium text-[#18180e]">What to run next</p>
+              <ol className="flex flex-col gap-2 text-[11px] text-[#7a6e56]">
+                <li>1. Add your local KTrace backend as an HTTP MCP server in Claude Code.</li>
+                <li>2. Check that Claude Code lists the `ktrace` server.</li>
+                <li>3. Inspect the saved entry to confirm the endpoint and header were stored correctly.</li>
+              </ol>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <GhostBtn onClick={revoke} disabled={revoking} loading={revoking}>
+              Revoke Key
+            </GhostBtn>
+          </div>
+        </div>
+      )}
+
+      {error && <ErrorBanner msg={error} />}
     </div>
   );
 }
 
 function ConnectStep4({
-  address,
-  runtime,
+  address: _address,
+  runtime: _runtime,
+  sessionValid: _sessionValid,
+  onOpenSessionStep: _onOpenSessionStep,
 }: {
   address: string;
   runtime: SessionRuntime;
+  sessionValid: boolean;
+  onOpenSessionStep?: () => void;
 }) {
-  const [advancedExpanded, setAdvancedExpanded] = useState(false);
-  const [cliCopied, setCliCopied] = useState(false);
-  const isLocalMode = KTRACE_SETUP_MODE === "local";
-
-  function copyCliInstall() {
-    void navigator.clipboard.writeText("npm install -g @kite-trace/ktrace").then(() => {
-      setCliCopied(true);
-      setTimeout(() => setCliCopied(false), 2000);
-    });
-  }
-
   return (
     <Card>
       <CardHeader>
           <div className="flex items-center gap-3">
             <StepBadge n={4} active done={false} />
             <div>
-              <h2 className="text-[15px] font-semibold text-[#18180e]">Choose Your Access Method</h2>
+              <h2 className="text-[15px] font-semibold text-[#18180e]">Connect via MCP</h2>
               <p className="mt-0.5 text-[12px] text-[#9e8e76]">
-                {isLocalMode
-                  ? "Your wallet and session are ready. For local validation, use the CLI or a local MCP client."
-                  : "Your wallet and session are ready. Pick how you want to use KTrace."}
+                Your wallet and session are ready. Generate an API key, then add KTrace as a normal HTTP MCP server.
               </p>
             </div>
           </div>
         </CardHeader>
         <CardBody>
-        <div className="flex flex-col gap-5">
-
-          {/* ── 1. KTrace CLI ─────────────────────────────────────── */}
-          <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
-            <div className="flex items-center gap-2">
-              <Terminal className="size-4 text-[#3a4220]" />
-              <span className="text-[13px] font-semibold text-[#18180e]">Use KTrace CLI</span>
-            </div>
-            <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-              Run intelligence queries and manage jobs directly from your terminal. Your session is already active.
-            </p>
-            <div className="rounded-xl border border-[rgba(90,80,50,0.14)] bg-[#0e0e0a] px-4 py-3 font-mono text-[11px] text-[#c8c09a]">
-              <span className="text-[#7a9a40]">$</span> npm install -g @kite-trace/ktrace<br />
-              <span className="text-[#7a9a40]">$</span> ktrace buy request --capability smart_money_signal<br />
-              <span className="text-[#7a9a40]">$</span> ktrace artifact receipt &lt;job-id&gt;
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={copyCliInstall}
-                className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[rgba(58,66,32,0.22)] bg-[rgba(58,66,32,0.06)] px-3.5 text-[11px] font-medium text-[#3a4220] transition hover:bg-[rgba(58,66,32,0.1)]"
-              >
-                {cliCopied ? <Check className="size-3" /> : <Copy className="size-3" />}
-                {cliCopied ? "Copied!" : "Copy install command"}
-                </button>
-                <a
-                  href="/docs/cli"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[rgba(58,66,32,0.22)] px-3.5 text-[11px] font-medium text-[#3a4220] transition hover:bg-[rgba(58,66,32,0.07)]"
-                >
-                  <ExternalLink className="size-3" /> CLI Docs
-                </a>
-              </div>
-            </div>
-
-          {isLocalMode ? (
-            <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
-              <div className="flex items-center gap-2">
-                <Zap className="size-4 text-[#3a4220]" />
-                <span className="text-[13px] font-semibold text-[#18180e]">Use MCP Inspector</span>
-              </div>
-              <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-                Validate your local KTrace MCP server over streamable HTTP. This is the primary Step 4 flow in local development.
-              </p>
-              <LocalInspectorPanel address={address} runtime={runtime} />
-            </div>
-          ) : null}
-
-          {isLocalMode ? (
-            <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
-              <div className="flex items-center gap-2">
-                <Link2 className="size-4 text-[#3a4220]" />
-                <span className="text-[13px] font-semibold text-[#18180e]">Connect Another Agent</span>
-              </div>
-              <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-                Use the same local MCP endpoint with any compatible streamable HTTP client. Your session credentials stay the same.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <a
-                  href="/mcp"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[rgba(58,66,32,0.22)] bg-[rgba(58,66,32,0.06)] px-3.5 text-[11px] font-medium text-[#3a4220] transition hover:bg-[rgba(58,66,32,0.1)]"
-                >
-                  <Zap className="size-3" /> MCP Guide
-                </a>
-                <a
-                  href="/authority"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[rgba(58,66,32,0.22)] px-3.5 text-[11px] font-medium text-[#3a4220] transition hover:bg-[rgba(58,66,32,0.07)]"
-                >
-                  <ShieldCheck className="size-3" /> Manage Authority
-                </a>
-              </div>
-            </div>
-          ) : null}
-
-          {/* ── 2. Connect Claude ─────────────────────────────────── */}
-          <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
-            <div className="flex items-center gap-2">
-              <Zap className="size-4 text-[#3a4220]" />
-              <span className="text-[13px] font-semibold text-[#18180e]">Connect Claude</span>
-            </div>
-            <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-              {isLocalMode
-                ? "Claude Remote MCP will be enabled once KTrace is available behind a public HTTPS endpoint."
-                : "Connect Claude Desktop or Claude.ai to your KTrace session using wallet-first authentication."}
-            </p>
-            {isLocalMode ? (
-              <LocalClaudeComingSoonPanel />
-            ) : (
-              <ClaudeConnectorPanel address={address} runtime={runtime} />
-            )}
-
-              {/* Advanced / Developer Setup — collapsed by default */}
-              <div className="border-t border-[rgba(90,80,50,0.1)] pt-3">
-                <button
-                  onClick={() => setAdvancedExpanded((v) => !v)}
-                className="flex w-full items-center gap-1.5 text-[11px] font-medium text-[#9e8e76] hover:text-[#3a4220] transition"
-              >
-                <ChevronDown
-                  className={["size-3.5 transition-transform", advancedExpanded ? "rotate-180" : ""].join(" ")}
-                />
-                Advanced / Developer Setup
-              </button>
-              {advancedExpanded && (
-                <div className="mt-3">
-                  <DeveloperSetupPanel />
-                </div>
-              )}
-              </div>
-            </div>
-
-          {!isLocalMode ? (
-            <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
-              <div className="flex items-center gap-2">
-                <Link2 className="size-4 text-[#3a4220]" />
-                <span className="text-[13px] font-semibold text-[#18180e]">Connect Another Agent</span>
-              </div>
-              <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-                Use the KTrace MCP endpoint with any compatible agent client. Your session credentials are the same.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <a
-                  href="/mcp"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[rgba(58,66,32,0.22)] bg-[rgba(58,66,32,0.06)] px-3.5 text-[11px] font-medium text-[#3a4220] transition hover:bg-[rgba(58,66,32,0.1)]"
-                >
-                  <Zap className="size-3" /> MCP Guide
-                </a>
-                <a
-                  href="/authority"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[rgba(58,66,32,0.22)] px-3.5 text-[11px] font-medium text-[#3a4220] transition hover:bg-[rgba(58,66,32,0.07)]"
-                >
-                  <ShieldCheck className="size-3" /> Manage Authority
-                </a>
-              </div>
-            </div>
-          ) : null}
-
-          </div>
+          <DeveloperSetupPanel />
         </CardBody>
       </Card>
   );
@@ -3024,11 +2818,13 @@ function ConnectStep4({
 function RegisterIdentityStep({
   address,
   runtime,
+  reviewMode = false,
   onRuntimeUpdate,
   onDone,
 }: {
   address: string;
   runtime: SessionRuntime;
+  reviewMode?: boolean;
   onRuntimeUpdate: (r: SessionRuntime) => void;
   onDone: () => void;
 }) {
@@ -3046,12 +2842,28 @@ function RegisterIdentityStep({
   const registryAddress = runtime.identityRegistry || DEFAULT_IDENTITY_REGISTRY;
   const aaWallet = runtime.aaWallet || "";
 
-  // Check existing identity on mount
   useEffect(() => {
+    if (!hasRuntimeIdentity(runtime)) return;
+    setExistingAgentId(runtime.agentId || "");
+    setAgentId(runtime.agentId || "");
+    setRegisterTxHash(runtime.identityRegisterTxHash || "");
+    setWalletTxHash(runtime.identityBindTxHash || "");
+    setState("done");
+  }, [
+    runtime.agentId,
+    runtime.agentWallet,
+    runtime.identityBindTxHash,
+    runtime.identityRegisterTxHash,
+    runtime.identityRegistry,
+  ]);
+
+  // Check existing identity on mount during forward onboarding only
+  useEffect(() => {
+    if (reviewMode) return;
     if (!registryAddress || !isAddress(registryAddress)) return;
     checkExistingIdentity();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryAddress]);
+  }, [registryAddress, reviewMode]);
 
   async function checkExistingIdentity() {
     setState("checking");
@@ -3112,6 +2924,10 @@ function RegisterIdentityStep({
       }
       const registry = new Contract(registryAddress, IDENTITY_REGISTRY_ABI, signer);
 
+      let resolvedAgentId = existingAgentId || agentId;
+      let resolvedRegisterTxHash = registerTxHash;
+      let resolvedWalletTxHash = walletTxHash;
+
       // Step 1: Register (mint agent identity)
       if (!existingAgentId) {
         setState("registering");
@@ -3134,43 +2950,54 @@ function RegisterIdentityStep({
         if (!newAgentId) throw new Error("Could not extract agentId from transaction receipt.");
         setAgentId(newAgentId);
         setExistingAgentId(newAgentId);
+        resolvedAgentId = newAgentId;
+        resolvedRegisterTxHash = tx.hash;
       }
 
       // Step 2: Set agent wallet to AA wallet
-      const effectiveAgentId = existingAgentId || agentId;
-      if (effectiveAgentId && aaWallet) {
+      if (resolvedAgentId && aaWallet) {
         // Check if wallet already set correctly
-        const currentWallet = await registry.getAgentWallet(BigInt(effectiveAgentId)).catch(() => "");
+        const currentWallet = await registry.getAgentWallet(BigInt(resolvedAgentId)).catch(() => "");
         if (normalizeAccountAddress(currentWallet) !== normalizeAccountAddress(aaWallet)) {
           setState("settingWallet");
           const metaFee = walletFee ? BigInt(walletFee) : BigInt(0);
-          const walletTx = await registry.setAgentWallet(BigInt(effectiveAgentId), aaWallet, { value: metaFee });
+          const walletTx = await registry.setAgentWallet(BigInt(resolvedAgentId), aaWallet, { value: metaFee });
           setWalletTxHash(walletTx.hash);
           await walletTx.wait();
+          resolvedWalletTxHash = walletTx.hash;
         }
       }
 
       // Update runtime with identity info
       const updatedRuntime = {
         ...runtime,
-        agentId: effectiveAgentId,
+        agentId: resolvedAgentId,
         identityRegistry: registryAddress,
         agentWallet: aaWallet,
+        identityRegisterTxHash: resolvedRegisterTxHash,
+        identityBindTxHash: resolvedWalletTxHash,
       };
       onRuntimeUpdate(updatedRuntime);
 
       // Sync with backend
-      await fetch(`${LOCAL_BACKEND_BASE_URL}/api/session/runtime/sync`, {
+      const syncRes = await fetch("/api/setup/runtime/identity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           ownerEoa: address,
-          agentId: effectiveAgentId,
+          aaWallet,
+          agentId: resolvedAgentId,
           identityRegistry: registryAddress,
           agentWallet: aaWallet,
+          identityRegisterTxHash: resolvedRegisterTxHash,
+          identityBindTxHash: resolvedWalletTxHash,
         }),
-      }).catch(() => {});
+      });
+      const syncJson = (await syncRes.json().catch(() => ({}))) as Record<string, unknown>;
+      if (syncRes.ok && syncJson.ok) {
+        onRuntimeUpdate(parseRuntime(syncJson));
+      }
 
       setState("done");
     } catch (err) {
@@ -3184,11 +3011,11 @@ function RegisterIdentityStep({
 
   // Auto-advance if already done on mount check
   useEffect(() => {
-    if (isDone && effectiveAgentId) {
+    if (!reviewMode && isDone && effectiveAgentId) {
       const t = setTimeout(() => onDone(), 600);
       return () => clearTimeout(t);
     }
-  }, [isDone, effectiveAgentId, onDone]);
+  }, [effectiveAgentId, isDone, onDone, reviewMode]);
 
   return (
     <div className="rounded-2xl border border-[rgba(90,80,50,0.12)] bg-white p-6 shadow-sm">
@@ -3368,18 +3195,22 @@ function ProgressBar({ step }: { step: Step }) {
 
 export default function SetupWizardClient({ capabilities }: Props) {
   const [step, setStep] = useState<Step>(0);
+  const [manualStep, setManualStep] = useState<Step | null>(null);
   const [address, setAddress] = useState("");
   const [runtime, setRuntime] = useState<SessionRuntime>({});
   const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
+  const [sessionStepCompleted, setSessionStepCompleted] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [detectError, setDetectError] = useState("");
   const [switchingWallet, setSwitchingWallet] = useState(false);
 
   const resetWizardState = useCallback(() => {
     setStep(0);
+    setManualStep(null);
     setAddress("");
     setRuntime({});
     setAccountStatus(null);
+    setSessionStepCompleted(false);
     setDetecting(false);
     setDetectError("");
   }, []);
@@ -3388,6 +3219,7 @@ export default function SetupWizardClient({ capabilities }: Props) {
   const detectAndRoute = useCallback(async (addr: string) => {
     setDetecting(true);
     setDetectError("");
+    setManualStep(null);
     const eth = getEthereum();
     try {
       const rt = await fetchSetupRuntime(addr);
@@ -3404,24 +3236,15 @@ export default function SetupWizardClient({ capabilities }: Props) {
       const sessionValid = hasAuthorizedSessionRuntime(rt);
       const status: AccountStatus = { userType, sessionValid, aaBalance, eoaBalance, aaTokenBalance, eoaTokenBalance };
       setAccountStatus(status);
+      setSessionStepCompleted(false);
       const isRuntimeReady =
         !rt.aaDeployed || rt.accountCapabilities?.sessionGenericExecute === true;
       const isDefaultFactoryRuntime = rt.isDefaultFactoryRuntime === true;
 
       // Routing logic
-      if (
-        userType === "returning" &&
-        sessionValid &&
-        aaBalance > 0 &&
-        aaTokenBalance > 0 &&
-        isRuntimeReady &&
-        isDefaultFactoryRuntime
-      ) {
-        // Perfect returning user - jump straight to Connect
+      if (hasRuntimeIdentity(rt) && aaBalance > 0 && aaTokenBalance > 0 && isRuntimeReady && isDefaultFactoryRuntime) {
+        // Identity + funds ready: go straight to MCP setup. Session renew is optional.
         setStep(4);
-      } else if (sessionValid && hasRuntimeIdentity(rt) && aaBalance > 0 && aaTokenBalance > 0 && isRuntimeReady && isDefaultFactoryRuntime) {
-        // Has identity + funds but session expired - Authorize
-        setStep(3);
       } else if (aaBalance > 0 && aaTokenBalance > 0 && isRuntimeReady && isDefaultFactoryRuntime) {
         // Has funds - Register Identity
         setStep(2);
@@ -3439,6 +3262,11 @@ export default function SetupWizardClient({ capabilities }: Props) {
   function onWalletDone(addr: string) {
     setAddress(addr);
     void detectAndRoute(addr);
+  }
+
+  function openStep(target: Step) {
+    setManualStep(target);
+    setStep(target);
   }
 
   async function switchWallet() {
@@ -3527,25 +3355,26 @@ export default function SetupWizardClient({ capabilities }: Props) {
             <CheckCircle2 className="size-4 shrink-0 text-[#3a4220]" />
             <div>
               <p className="text-[13px] font-semibold text-[#3a4220]">Welcome back</p>
-              <p className="text-[11px] text-[#7a6e56]">
-                AA wallet and funds detected - skipped straight to{" "}
-                {step === 4 ? "access setup" : step === 3 ? "session renewal" : "identity registration"}.
-              </p>
+                <p className="text-[11px] text-[#7a6e56]">
+                  AA wallet and funds detected - skipped straight to{" "}
+                  {step === 4 ? "MCP setup" : step === 3 ? "session renewal" : "identity registration"}.
+                </p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
         <div className="flex flex-col gap-4">
           {/* 鈹€鈹€ Step 0 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
           {step === 0 && <ConnectStep onDone={onWalletDone} />}
 
-          {step > 0 && (
-            <DoneRow
-              n={1}
-              title="Wallet Connected"
-              sub={address}
-            />
-          )}
+            {step > 0 && (
+              <DoneRow
+                n={1}
+                title="Wallet Connected"
+                sub={address}
+                onClick={() => setStep(0)}
+              />
+            )}
 
           {/* Detection in-progress */}
           {detecting && (
@@ -3569,8 +3398,12 @@ export default function SetupWizardClient({ capabilities }: Props) {
               address={address}
               runtime={runtime}
               eoaBalance={accountStatus?.eoaBalance ?? 0}
+              reviewMode={manualStep === 1}
               onRuntimeUpdate={setRuntime}
-              onDone={() => setStep(2)}
+              onDone={() => {
+                setManualStep(null);
+                setStep(2);
+              }}
             />
           )}
 
@@ -3583,6 +3416,7 @@ export default function SetupWizardClient({ capabilities }: Props) {
                   : "AA Wallet Funded"
               }
               sub={runtime.aaWallet ?? runtime.payerAaWallet ?? ""}
+              onClick={() => openStep(1)}
             />
           )}
 
@@ -3591,45 +3425,75 @@ export default function SetupWizardClient({ capabilities }: Props) {
             <RegisterIdentityStep
               address={address}
               runtime={runtime}
+              reviewMode={manualStep === 2}
               onRuntimeUpdate={setRuntime}
-              onDone={() => setStep(3)}
+              onDone={() => {
+                setManualStep(null);
+                setStep(4);
+              }}
             />
           )}
 
-          {step > 2 && (
-            <DoneRow
-              n={3}
-              title={`Agent Identity #${runtime.agentId || "?"}`}
-              sub={runtime.identityRegistry ? `Registry ${shorten(runtime.identityRegistry, 10, 6)}` : ""}
-            />
-          )}
+            {step > 2 && (
+              <DoneRow
+                n={3}
+                title={`Agent Identity #${runtime.agentId || "?"}`}
+                sub={[
+                  runtime.identityRegisterTxHash ? `Register Tx ${runtime.identityRegisterTxHash}` : "",
+                  runtime.identityBindTxHash ? `Bind Tx ${runtime.identityBindTxHash}` : "",
+                ].filter(Boolean).join("\n")}
+                onClick={() => openStep(2)}
+              />
+            )}
 
           {/* 鈹€鈹€ Step 3 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
-          {step === 3 && (
-            <AuthorizeStep
-              address={address}
-              runtime={runtime}
-              availableCaps={capabilities}
-              mode={authorizeMode}
-              onRuntimeUpdate={setRuntime}
-              onDone={() => setStep(4)}
-            />
-          )}
+            {step === 3 && (
+              <AuthorizeStep
+                address={address}
+                runtime={runtime}
+                availableCaps={capabilities}
+                mode={authorizeMode}
+                onRuntimeUpdate={setRuntime}
+                onDone={() => {
+                  setManualStep(null);
+                  setSessionStepCompleted(true);
+                  setStep(4);
+                }}
+              />
+            )}
 
-          {step > 3 && (
-            <DoneRow
-              n={4}
-              title={
-                authorizeMode === "renew"
-                  ? "Session Key Renewed"
-                  : "Session Authorized"
-              }
-              sub="Authority recorded on Kite Testnet"
-            />
-          )}
+            {step > 2 && (
+              <DoneRow
+                n={4}
+                title={
+                  sessionStepCompleted
+                    ? authorizeMode === "renew"
+                      ? "Session Key Renewed"
+                      : "Session Authorized"
+                    : accountStatus?.sessionValid
+                      ? "Session Ready"
+                      : "Session Key (Optional)"
+                }
+                sub={
+                  sessionStepCompleted
+                    ? "Authority recorded on Kite Testnet"
+                    : accountStatus?.sessionValid
+                      ? "Authorized session already available."
+                      : "Click to expand this step and renew or authorize a fresh session key."
+                }
+                onClick={() => openStep(3)}
+              />
+            )}
 
           {/* 鈹€鈹€ Step 4 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
-          {step === 4 && <ConnectStep4 address={address} runtime={runtime} />}
+          {step === 4 && (
+            <ConnectStep4
+              address={address}
+              runtime={runtime}
+              sessionValid={Boolean(accountStatus?.sessionValid)}
+              onOpenSessionStep={() => openStep(3)}
+            />
+          )}
         </div>
 
         {/* Footer links */}

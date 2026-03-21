@@ -3,7 +3,6 @@ import {
   buildBtcTradingPlanDeliveryStandard,
   normalizeBtcTradingPlanEvidence
 } from '../lib/deliverySchemas/btcTradingPlanV1.js';
-import { registerReceiptEvidenceDemoRoutes } from './receiptEvidenceDemoRoutes.js';
 import { registerReceiptEvidenceEvidenceRoutes } from './receiptEvidenceEvidenceRoutes.js';
 import { registerReceiptEvidenceReceiptRoutes } from './receiptEvidenceReceiptRoutes.js';
 
@@ -932,7 +931,6 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     }
   };
 
-  registerReceiptEvidenceDemoRoutes(routeContext);
   registerReceiptEvidenceEvidenceRoutes(routeContext);
   registerReceiptEvidenceReceiptRoutes(routeContext);
 }

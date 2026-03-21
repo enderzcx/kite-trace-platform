@@ -26,15 +26,10 @@ export function applyNodeEnvProxyPreference() {
   );
   if (hasProxyEnv) {
     process.env.NODE_USE_ENV_PROXY = '1';
-    const noProxy = String(process.env.NO_PROXY || '').trim();
-    const rpcHost = extractHost(process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/');
-    // Only bypass proxy for RPC (ethers FetchRequest incompatible with proxy).
-    // Bundler must go through proxy for better connectivity.
-    const noProxyEntries = noProxy.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-    const extraHosts = [rpcHost].filter(Boolean).filter((h) => !noProxyEntries.includes(h.toLowerCase()));
-    if (extraHosts.length > 0) {
-      process.env.NO_PROXY = [noProxy, ...extraHosts].filter(Boolean).join(',');
-    }
+    // On Node.js v22+, ethers v6 FetchRequest uses native fetch (undici), which
+    // respects NODE_USE_ENV_PROXY. Both RPC and bundler benefit from routing through
+    // the proxy (proxy is ~4x faster than direct for kite-testnet RPC).
+    // Do NOT add RPC to NO_PROXY — let it go through the proxy too.
     return true;
   }
   return false;

@@ -13,7 +13,6 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     MERCHANT_ADDRESS,
     POLICY_DAILY_LIMIT_DEFAULT,
     POLICY_MAX_PER_TX_DEFAULT,
-    ROUTER_WALLET_KEY_NORMALIZED,
     SETTLEMENT_TOKEN,
     ERC8183_ESCROW_ADDRESS,
     backendSigner,

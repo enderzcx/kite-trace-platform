@@ -106,6 +106,7 @@ import { createAgent001ConversationGateHelpers } from './routes/agent001Conversa
 import { createRuntimeTaskEnvelopeHelpers } from './routes/runtimeTaskEnvelopeHelpers.js';
 import { createServiceNetworkHelpers } from './routes/serviceNetworkHelpers.js';
 import { registerMcpRoutes } from './mcp/mcpServer.js';
+import { registerX402DiscoveryRoutes } from './routes/x402DiscoveryRoutes.js';
 import { createRuntimeConfig } from './runtime/config.js';
 import {
   applyRuntimeServerMiddleware,
@@ -645,7 +646,6 @@ const sessionOwnerPrivateKeyByAddress = (() => {
     pairs.set(normalizeAddress(derivedAddress), normalized);
   }
   for (const normalized of [
-    ROUTER_WALLET_KEY_NORMALIZED,
     normalizePrivateKey(BACKEND_SIGNER_PRIVATE_KEY),
     ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED,
     ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED,
@@ -2123,6 +2123,11 @@ const routeRegistrations = [
     name: 'mcpRoutes',
     register: registerMcpRoutes,
     requiredKeys: ['PACKAGE_VERSION', 'PORT', 'authConfigured', 'extractApiKey', 'getInternalAgentApiKey', 'resolveAuthRequest']
+  },
+  {
+    name: 'x402DiscoveryRoutes',
+    register: registerX402DiscoveryRoutes,
+    requiredKeys: ['ensureServiceCatalog']
   }
 ];
 
@@ -2160,5 +2165,4 @@ const { startServer, shutdownServer } = createRuntimeServerLifecycle({
 });
 
 export { shutdownServer, startServer };
-
 
