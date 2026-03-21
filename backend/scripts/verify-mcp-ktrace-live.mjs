@@ -14,6 +14,15 @@ import {
   resolveExecutorAddress,
   resolveValidatorAddress
 } from './demoBtcJobHelpers.js';
+import {
+  envFlag,
+  extractAaWalletFromReason,
+  findConnectorGrantRecord,
+  findX402RequestRecord,
+  formatExpiry,
+  loadWalletBalanceSummary,
+  selectConsumerRuntimeContext
+} from './mcpRuntimeContextHelpers.mjs';
 
 loadEnv({ path: path.resolve(process.cwd(), '.env') });
 
@@ -57,8 +66,11 @@ const PROOF_TOKEN_SOURCE_KEY = normalizePrivateKey(process.env.ERC8183_PROOF_TOK
 const LEGACY_REQUESTER_OWNER = normalizeAddress(process.env.ERC8183_REQUESTER_ADDRESS || '');
 const LEGACY_REQUESTER_OWNER_KEY = normalizePrivateKey(process.env.ERC8183_REQUESTER_PRIVATE_KEY || '');
 const REQUEST_TIMEOUT_MS = Math.max(30_000, Number(process.env.KITE_RPC_TIMEOUT_MS || 120_000));
-const TARGET_NATIVE_BALANCE = normalizeText(process.env.MCP_LIVE_REQUIRED_AA_NATIVE || '0.02');
+const USE_MANAGED_CONSUMER = envFlag(process.env.MCP_LIVE_USE_MANAGED_CONSUMER || '');
+const TARGET_NATIVE_BALANCE = normalizeText(process.env.MCP_LIVE_REQUIRED_AA_NATIVE || (USE_MANAGED_CONSUMER ? '0.02' : '0.009'));
 const TARGET_TOKEN_BALANCE = normalizeText(process.env.MCP_LIVE_REQUIRED_AA_TOKEN || '0.005');
+const PAID_TOOL_TIMEOUT_MS = Math.max(45_000, Number(process.env.MCP_LIVE_PAID_TOOL_TIMEOUT_MS || 90_000) || 90_000);
+const FRESH_PROBE_TIMEOUT_MS = Math.max(15_000, Number(process.env.MCP_LIVE_FRESH_PROBE_TIMEOUT_MS || 25_000) || 25_000);
 const TOKEN_ABI = [
   'function balanceOf(address account) view returns (uint256)',
   'function decimals() view returns (uint8)',
@@ -475,7 +487,7 @@ function sortPaidCapabilities(capabilities = []) {
   });
 }
 
-async function postJsonRpcToPath(baseUrl, pathname, body, { timeoutMs = 120000 } = {}) {
+async function postJsonRpcToPath(baseUrl, pathname, body, { timeoutMs = 120000, headers = {} } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -483,7 +495,8 @@ async function postJsonRpcToPath(baseUrl, pathname, body, { timeoutMs = 120000 }
       method: 'POST',
       headers: {
         accept: 'application/json, text/event-stream',
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        ...headers
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -504,7 +517,7 @@ async function postJsonRpcToPath(baseUrl, pathname, body, { timeoutMs = 120000 }
   }
 }
 
-async function callTool(baseUrl, connectPath, name, args, { timeoutMs = 120000 } = {}) {
+async function callTool(baseUrl, connectPath, name, args, { timeoutMs = 120000, apiKey = '' } = {}) {
   const response = await postJsonRpcToPath(
     baseUrl,
     connectPath,
@@ -517,20 +530,52 @@ async function callTool(baseUrl, connectPath, name, args, { timeoutMs = 120000 }
         arguments: args
       }
     },
-    { timeoutMs }
+    {
+      timeoutMs,
+      headers: apiKey ? { 'x-api-key': apiKey } : {}
+    }
   );
   assert(response.status === 200, `${name} transport failed with status ${response.status}`);
   assert(response.payload?.result?.isError !== true, normalizeText(response.payload?.result?.content?.[0]?.text || response.payload?.result?.structuredContent?.reason || `${name} returned MCP tool error`));
   return response.payload?.result || {};
 }
 
-async function listTools(baseUrl, connectPath) {
-  const response = await postJsonRpcToPath(baseUrl, connectPath, {
-    jsonrpc: '2.0',
-    id: `tools_list_${Date.now()}`,
-    method: 'tools/list',
-    params: {}
-  });
+async function callToolAllowError(baseUrl, connectPath, name, args, { timeoutMs = 120000, apiKey = '' } = {}) {
+  const response = await postJsonRpcToPath(
+    baseUrl,
+    connectPath,
+    {
+      jsonrpc: '2.0',
+      id: `${name}_${Date.now()}`,
+      method: 'tools/call',
+      params: {
+        name,
+        arguments: args
+      }
+    },
+    {
+      timeoutMs,
+      headers: apiKey ? { 'x-api-key': apiKey } : {}
+    }
+  );
+  assert(response.status === 200, `${name} transport failed with status ${response.status}`);
+  return response.payload?.result || {};
+}
+
+async function listTools(baseUrl, connectPath, { apiKey = '' } = {}) {
+  const response = await postJsonRpcToPath(
+    baseUrl,
+    connectPath,
+    {
+      jsonrpc: '2.0',
+      id: `tools_list_${Date.now()}`,
+      method: 'tools/list',
+      params: {}
+    },
+    {
+      headers: apiKey ? { 'x-api-key': apiKey } : {}
+    }
+  );
   assert(response.status === 200, `tools/list failed with status ${response.status}`);
   return Array.isArray(response.payload?.result?.tools) ? response.payload.result.tools : [];
 }
@@ -573,25 +618,30 @@ try {
   started = true;
 
   const baseUrl = `http://127.0.0.1:${process.env.PORT}`;
-  let runtime = {};
-  try {
-    const runtimePayload = await loadSessionRuntimeAt(baseUrl, apiKey);
-    runtime = runtimePayload?.runtime && typeof runtimePayload.runtime === 'object' ? runtimePayload.runtime : {};
-  } catch {
-    runtime = readLocalSessionRuntimeFallback();
-  }
-  const managedRuntimeFallback = pickManagedConsumerRuntimeFallback();
-  if (
-    normalizeText(process.env.MCP_LIVE_USE_MANAGED_CONSUMER || '1') !== '0' &&
-    normalizeText(managedRuntimeFallback?.owner || '') &&
-    normalizeText(managedRuntimeFallback?.aaWallet || '') &&
-    normalizeText(runtime?.source || '') === 'self_serve_wallet'
-  ) {
-    runtime = managedRuntimeFallback;
-  }
-
-  const ownerEoa = normalizeText(runtime?.owner || '');
-  const aaWallet = normalizeText(runtime?.aaWallet || '');
+  const runtimeContext = selectConsumerRuntimeContext({
+    cwd: process.cwd(),
+    env: process.env,
+    envPrefix: 'MCP_LIVE',
+    fallbackAgentId: '1',
+    fallbackIdentityRegistry: normalizeText(process.env.ERC8004_IDENTITY_REGISTRY || '0x60BF18964FCB1B2E987732B0477E51594B3659B1'),
+    preferManagedConsumer: USE_MANAGED_CONSUMER
+  });
+  const runtime = runtimeContext.runtime || {};
+  const ownerEoa = normalizeText(runtimeContext.ownerEoa || runtime?.owner || '');
+  const aaWallet = normalizeText(runtimeContext.aaWallet || runtime?.aaWallet || '');
+  const consumerAgentId = normalizeText(
+    process.env.MCP_LIVE_AGENT_ID ||
+      runtimeContext.agentId ||
+      runtime?.authorizedAgentId ||
+      runtime?.authorizationPayload?.agentId ||
+      ''
+  );
+  const consumerIdentityRegistry = normalizeAddress(
+    process.env.MCP_LIVE_IDENTITY_REGISTRY ||
+      runtimeContext.identityRegistry ||
+      runtime?.authorizationPayload?.identityRegistry ||
+      ''
+  );
   const executor = resolveManagedRoleAaWallet(
     process.env.ERC8183_EXECUTOR_ADDRESS || '',
     resolveExecutorAddress()
@@ -605,15 +655,48 @@ try {
   const traceId = `mcp_ktrace_live_${Date.now()}`;
   const clientId = `ktrace-live-proof-${Date.now()}`;
 
-  console.log(`[mcp-live] base=${baseUrl} owner=${ownerEoa} aa=${aaWallet} executor=${executor} validator=${validator}`);
-
   assert(apiKey, 'Missing internal agent API key for MCP live verifier.');
   assert(ownerEoa, 'Session runtime ownerEoa is missing.');
   assert(aaWallet, 'Session runtime aaWallet is missing.');
+  assert(consumerAgentId, 'Session runtime consumer agentId is missing.');
+  assert(consumerIdentityRegistry, 'Session runtime consumer identityRegistry is missing.');
   assert(executor, 'Missing executor AA address for MCP live verifier.');
   assert(validator, 'Missing validator AA address for MCP live verifier.');
   assert(normalizeText(runtime?.sessionId || ''), 'Session runtime sessionId is missing.');
   assert(normalizeText(runtime?.sessionAddress || ''), 'Session runtime sessionAddress is missing.');
+
+  const preflightBalances = await loadWalletBalanceSummary({
+    provider: createProvider(),
+    tokenAddress: TOKEN_ADDRESS,
+    wallet: aaWallet
+  });
+  console.log(
+    JSON.stringify(
+      {
+        event: 'mcp_live_preflight',
+        baseUrl,
+        useManagedConsumer: USE_MANAGED_CONSUMER,
+        runtimeSelection: runtimeContext.selection,
+        currentOwner: normalizeText(runtimeContext.currentOwner || ''),
+        ownerEoa,
+        aaWallet,
+        sessionId: normalizeText(runtime?.sessionId || ''),
+        sessionAddress: normalizeText(runtime?.sessionAddress || ''),
+        runtimeSource: normalizeText(runtime?.source || ''),
+        authorizationMode: normalizeText(runtime?.authorizationMode || ''),
+        authorityId: normalizeText(runtime?.authorityId || ''),
+        authorityStatus: normalizeText(runtime?.authorityStatus || ''),
+        sessionExpiresAt: formatExpiry(runtime?.expiresAt || 0),
+        authorityExpiresAt: formatExpiry(runtime?.authorityExpiresAt || 0),
+        authorizationExpiresAt: formatExpiry(runtime?.authorizationExpiresAt || 0),
+        balances: preflightBalances,
+        executor,
+        validator
+      },
+      null,
+      2
+    )
+  );
 
   const balancePrep = await ensureManagedConsumerBalances(aaWallet);
   console.log(
@@ -624,6 +707,15 @@ try {
     baseUrl,
     `/api/connector/agent/status?owner=${encodeURIComponent(ownerEoa)}&client=${encodeURIComponent(client)}&clientId=${encodeURIComponent(clientId)}`,
     { apiKey }
+  );
+  const statusRuntime = statusBefore?.setup?.runtime || {};
+  assert(
+    normalizeAddress(statusRuntime?.owner || '') === normalizeAddress(ownerEoa),
+    `connector status resolved owner ${normalizeText(statusRuntime?.owner || '') || '-'} instead of ${ownerEoa}`
+  );
+  assert(
+    normalizeAddress(statusRuntime?.aaWallet || '') === normalizeAddress(aaWallet),
+    `connector status resolved aaWallet ${normalizeText(statusRuntime?.aaWallet || '') || '-'} instead of ${aaWallet}`
   );
 
   await requestJsonAt(baseUrl, '/api/session/policy', {
@@ -645,7 +737,18 @@ try {
     body: {
       ownerEoa,
       client,
-      clientId
+      clientId,
+      agentId: consumerAgentId,
+      identityRegistry: consumerIdentityRegistry,
+      allowedBuiltinTools: [
+        'artifact_receipt',
+        'artifact_evidence',
+        'flow_history',
+        'flow_show',
+        'job_create',
+        'job_show',
+        'job_audit'
+      ]
     }
   });
 
@@ -656,24 +759,45 @@ try {
   console.log('[mcp-live] connector bootstrap ok');
 
   const connectPath = `/mcp/connect/${encodeURIComponent(token)}`;
+  const internalMcpPath = '/mcp';
   const tools = await listTools(baseUrl, connectPath);
-  console.log(`[mcp-live] tools listed: ${tools.length}`);
+  const internalTools = await listTools(baseUrl, internalMcpPath, { apiKey });
+  const connectorGrant = findConnectorGrantRecord({
+    cwd: process.cwd(),
+    ownerEoa,
+    client,
+    clientId,
+    agentId: consumerAgentId,
+    identityRegistry: consumerIdentityRegistry
+  });
+  assert(connectorGrant, 'Connector grant was not persisted after tools/list.');
+  assert(
+    normalizeAddress(connectorGrant?.aaWallet || '') === normalizeAddress(aaWallet),
+    `connector grant bound aaWallet ${normalizeText(connectorGrant?.aaWallet || '') || '-'} instead of ${aaWallet}`
+  );
+  console.log(`[mcp-live] connector tools listed: ${tools.length}`);
+  console.log(`[mcp-live] internal tools listed: ${internalTools.length}`);
   const toolNames = new Set(tools.map((tool) => normalizeText(tool?.name)));
+  const internalToolNames = new Set(internalTools.map((tool) => normalizeText(tool?.name)));
   for (const requiredTool of [
   'ktrace__flow_history',
   'ktrace__flow_show',
   'ktrace__artifact_receipt',
   'ktrace__artifact_evidence',
   'ktrace__job_create',
-  'ktrace__job_prepare_funding',
-  'ktrace__job_fund',
-  'ktrace__job_accept',
-  'ktrace__job_submit',
-  'ktrace__job_validate',
   'ktrace__job_show',
   'ktrace__job_audit'
   ]) {
     assert(toolNames.has(requiredTool), `Required MCP tool missing: ${requiredTool}`);
+  }
+  for (const requiredTool of [
+    'ktrace__job_prepare_funding',
+    'ktrace__job_fund',
+    'ktrace__job_accept',
+    'ktrace__job_submit',
+    'ktrace__job_validate'
+  ]) {
+    assert(internalToolNames.has(requiredTool), `Required internal MCP tool missing: ${requiredTool}`);
   }
 
   const capabilities = await loadCapabilitiesAt(baseUrl, apiKey);
@@ -687,13 +811,17 @@ try {
   let paidCall = null;
   let paidError = null;
   let paidSource = 'fresh';
-  const maxFreshPaidAttempts = Math.max(1, Number(process.env.MCP_LIVE_MAX_PAID_ATTEMPTS || 6) || 6);
+  const maxFreshPaidAttempts = Math.max(1, Number(process.env.MCP_LIVE_MAX_PAID_ATTEMPTS || 1) || 1);
+  console.log(`[mcp-live] fresh paid probe: maxAttempts=${maxFreshPaidAttempts} probeTimeout=${FRESH_PROBE_TIMEOUT_MS}ms fullTimeout=${PAID_TOOL_TIMEOUT_MS}ms`);
   for (const candidate of paidCandidates.slice(0, maxFreshPaidAttempts)) {
     const candidateToolName = normalizeToolName(candidate?.capabilityId || candidate?.id || candidate?.serviceId || '');
     if (!toolNames.has(candidateToolName)) continue;
     console.log(`[mcp-live] trying paid tool: ${candidateToolName}`);
+    const candidateTraceId = `${traceId}_${normalizeText(candidate?.capabilityId || candidate?.id || candidate?.serviceId || '')}`;
+    // Use shorter probe timeout for first attempt; fallback happens immediately if it fails.
+    const effectiveTimeout = FRESH_PROBE_TIMEOUT_MS;
     try {
-      paidCall = await callTool(
+      const candidateCall = await callToolAllowError(
         baseUrl,
         connectPath,
         candidateToolName,
@@ -701,11 +829,36 @@ try {
           ...(candidate?.exampleInput && typeof candidate.exampleInput === 'object' ? candidate.exampleInput : {}),
           payer: aaWallet,
           _meta: {
-            traceId: `${traceId}_${normalizeText(candidate?.capabilityId || candidate?.id || candidate?.serviceId || '')}`
+            traceId: candidateTraceId
           }
         },
-        { timeoutMs: 45000 }
+        { timeoutMs: effectiveTimeout }
       );
+      if (candidateCall?.isError === true) {
+        const structured = candidateCall?.structuredContent && typeof candidateCall.structuredContent === 'object'
+          ? candidateCall.structuredContent
+          : {};
+        const requestId = normalizeText(structured?.requestId || '');
+        const traceIdForError = normalizeText(structured?.traceId || candidateTraceId);
+        const reason = normalizeText(candidateCall?.content?.[0]?.text || structured?.reason || structured?.error || 'unknown_error');
+        const x402Request = findX402RequestRecord({
+          cwd: process.cwd(),
+          requestId,
+          traceId: traceIdForError
+        });
+        const observedPayer = normalizeAddress(x402Request?.payer || '');
+        const routedAaWallet = observedPayer || extractAaWalletFromReason(reason);
+        const failureLabel =
+          routedAaWallet && normalizeAddress(routedAaWallet) !== normalizeAddress(aaWallet)
+            ? `runtime_routing_bug via ${routedAaWallet}`
+            : 'tool_error';
+        paidError = new Error(reason || 'unknown_error');
+        console.warn(
+          `[mcp-live] paid tool failed: ${candidateToolName} :: ${failureLabel} :: requestId=${requestId || '-'} traceId=${traceIdForError || '-'} observedPayer=${observedPayer || '-'} reason=${reason || '-'}`
+        );
+        continue;
+      }
+      paidCall = candidateCall;
       paidCapability = candidate;
       paidToolName = candidateToolName;
       break;
@@ -784,20 +937,20 @@ try {
   assert(jobId, 'job_create did not return jobId.');
   console.log(`[mcp-live] job created: ${jobId}`);
 
-  await callTool(baseUrl, connectPath, 'ktrace__job_prepare_funding', {
+  await callTool(baseUrl, internalMcpPath, 'ktrace__job_prepare_funding', {
     jobId
-  }, { timeoutMs: 180000 });
+  }, { timeoutMs: 180000, apiKey });
   console.log('[mcp-live] job funding prepared');
 
-  await callTool(baseUrl, connectPath, 'ktrace__job_fund', {
+  await callTool(baseUrl, internalMcpPath, 'ktrace__job_fund', {
     jobId
-  }, { timeoutMs: 360000 });
+  }, { timeoutMs: 360000, apiKey });
   await pollJobState(baseUrl, connectPath, jobId, 'funded');
   console.log('[mcp-live] job funded');
 
-  await callTool(baseUrl, connectPath, 'ktrace__job_accept', {
+  await callTool(baseUrl, internalMcpPath, 'ktrace__job_accept', {
     jobId
-  });
+  }, { apiKey });
   await pollJobState(baseUrl, connectPath, jobId, 'accepted');
   console.log('[mcp-live] job accepted');
 
@@ -810,7 +963,7 @@ try {
     paidCapability
   );
 
-  await callTool(baseUrl, connectPath, 'ktrace__job_submit', {
+  await callTool(baseUrl, internalMcpPath, 'ktrace__job_submit', {
     jobId,
     delivery,
     primaryTraceId: delivery.evidence.primaryTraceId,
@@ -820,16 +973,16 @@ try {
     receiptRefs: delivery.evidence.receiptRefs,
     dataSourceTraceIds: delivery.evidence.dataSourceTraceIds,
     summary: delivery.analysis.summary
-  }, { timeoutMs: 180000 });
+  }, { timeoutMs: 180000, apiKey });
   await pollJobState(baseUrl, connectPath, jobId, 'submitted');
   console.log('[mcp-live] job submitted');
 
-  await callTool(baseUrl, connectPath, 'ktrace__job_validate', {
+  await callTool(baseUrl, internalMcpPath, 'ktrace__job_validate', {
     jobId,
     approved: true,
     summary: 'Validator approved the MCP live proof delivery.',
     validatorAddress: validator
-  }, { timeoutMs: 180000 });
+  }, { timeoutMs: 180000, apiKey });
   const finalJob = await pollJobState(baseUrl, connectPath, jobId, 'completed');
   console.log('[mcp-live] job validated/completed');
 
@@ -858,7 +1011,10 @@ try {
           clientId,
           statusBefore: normalizeText(statusBefore?.connector?.state || ''),
           connectorState: normalizeText(statusAfter?.connector?.state || ''),
+          connectorGrantId: normalizeText(connectorGrant?.grantId || ''),
+          connectorGrantAaWallet: normalizeText(connectorGrant?.aaWallet || ''),
           paidSource,
+          freshPaidSuccess: paidSource === 'fresh',
           paidToolName,
           paidTraceId: paidStructured.traceId,
           requestId: paidStructured.requestId,

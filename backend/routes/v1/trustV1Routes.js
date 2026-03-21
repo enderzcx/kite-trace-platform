@@ -235,6 +235,7 @@ export function registerTrustV1Routes(app, deps) {
         referenceId: normalizeText(body.referenceId || source?.referenceId || ''),
         traceId: normalizeText(body.traceId || source?.traceId || ''),
         publicationRef: normalizeText(body.publicationRef || ''),
+        detailsURI: normalizeText(body.detailsURI || ''),
         anchorTxHash: normalizeText(body.anchorTxHash || ''),
         summary:
           normalizeText(body.summary) ||

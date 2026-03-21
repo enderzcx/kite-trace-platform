@@ -1087,16 +1087,23 @@ export function registerJobMutationContinuation(ctx = {}) {
         escrow,
         escrow?.configured ? 'accepted' : 'not_configured'
       );
-      const anchor = await anchorJobLifecycle(next, 'accepted', {
-        referenceId: normalizeText(next?.escrowAcceptTxHash || next?.jobId),
-        paymentTxHash: normalizeText(next?.escrowAcceptTxHash || next?.paymentTxHash)
-      });
-      next = {
-        ...next,
-        anchorRegistry: normalizeText(anchor?.registryAddress || next.anchorRegistry),
-        acceptAnchorId: normalizeText(anchor?.anchorId || next.acceptAnchorId),
-        acceptAnchorTxHash: normalizeText(anchor?.anchorTxHash || next.acceptAnchorTxHash)
-      };
+      try {
+        const anchor = await anchorJobLifecycle(next, 'accepted', {
+          referenceId: normalizeText(next?.escrowAcceptTxHash || next?.jobId),
+          paymentTxHash: normalizeText(next?.escrowAcceptTxHash || next?.paymentTxHash)
+        });
+        next = {
+          ...next,
+          anchorRegistry: normalizeText(anchor?.registryAddress || next.anchorRegistry),
+          acceptAnchorId: normalizeText(anchor?.anchorId || next.acceptAnchorId),
+          acceptAnchorTxHash: normalizeText(anchor?.anchorTxHash || next.acceptAnchorTxHash)
+        };
+      } catch (anchorError) {
+        logger.warn('accept_anchor_skipped', {
+          jobId: normalizeText(next?.jobId),
+          error: normalizeText(anchorError?.message || 'accept anchor failed')
+        });
+      }
     } catch (error) {
       const mapped = mapJobLaneExecutionError(error, 'job_accept_failed', 'job accept failed');
       return sendJobRouteError(
@@ -1686,12 +1693,19 @@ export function registerJobMutationContinuation(ctx = {}) {
       );
       const trust = appendJobTrustSignals(next, { outcome: next.state, evaluator: next.evaluator, evaluatorRef: next.evaluatorRef });
       next = { ...next, validationId: trust.validationId || next.validationId };
-      const anchor = await anchorJobLifecycle(next, approved ? 'completed' : 'rejected', {
-        referenceId: normalizeText(next?.resultRef || next?.jobId),
-        validationId: normalizeText(next?.validationId),
-        paymentTxHash: normalizeText(next?.escrowValidateTxHash || next?.paymentTxHash)
-      });
-      next = { ...next, anchorRegistry: normalizeText(anchor?.registryAddress || next.anchorRegistry), outcomeAnchorId: normalizeText(anchor?.anchorId || next.outcomeAnchorId), outcomeAnchorTxHash: normalizeText(anchor?.anchorTxHash || next.outcomeAnchorTxHash) };
+      try {
+        const anchor = await anchorJobLifecycle(next, approved ? 'completed' : 'rejected', {
+          referenceId: normalizeText(next?.resultRef || next?.jobId),
+          validationId: normalizeText(next?.validationId),
+          paymentTxHash: normalizeText(next?.escrowValidateTxHash || next?.paymentTxHash)
+        });
+        next = { ...next, anchorRegistry: normalizeText(anchor?.registryAddress || next.anchorRegistry), outcomeAnchorId: normalizeText(anchor?.anchorId || next.outcomeAnchorId), outcomeAnchorTxHash: normalizeText(anchor?.anchorTxHash || next.outcomeAnchorTxHash) };
+      } catch (anchorError) {
+        logger.warn('validate_anchor_skipped', {
+          jobId: normalizeText(next?.jobId),
+          error: normalizeText(anchorError?.message || 'validate anchor failed')
+        });
+      }
     } catch (error) {
       const mapped = mapJobLaneExecutionError(error, 'job_validate_failed', 'job validate failed');
       return sendJobRouteError(

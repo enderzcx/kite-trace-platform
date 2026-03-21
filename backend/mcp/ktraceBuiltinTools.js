@@ -46,6 +46,11 @@ function recordMatchesVisibleAddresses(record = {}, requestContext = {}) {
   pushCandidate(record?.authority?.payer);
   pushCandidate(record?.authorityPublic?.payer);
   pushCandidate(record?.payment?.payer);
+  pushCandidate(record?.summary?.requester);
+  pushCandidate(record?.summary?.requesterAddress);
+  pushCandidate(record?.summary?.requesterRuntimeAddress);
+  pushCandidate(record?.contractPrimitives?.roleEnforcement?.requesterAddress);
+  pushCandidate(record?.contractPrimitives?.roleEnforcement?.roleRuntimeSummary?.requesterRuntimeAddress);
   return Array.from(candidates).some((value) => visible.has(value));
 }
 

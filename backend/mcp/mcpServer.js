@@ -256,7 +256,15 @@ function createFetchLoopbackJson({ PORT, getInternalAgentApiKey }) {
       init.body = JSON.stringify(body);
     }
 
-    const response = await fetch(`http://127.0.0.1:${PORT}${pathname}`, init);
+    const loopbackTimeoutMs = Math.max(30_000, Number(process.env.MCP_LOOPBACK_TIMEOUT_MS || 85_000));
+    const loopbackController = new AbortController();
+    const loopbackTimer = setTimeout(() => loopbackController.abort(), loopbackTimeoutMs);
+    let response;
+    try {
+      response = await fetch(`http://127.0.0.1:${PORT}${pathname}`, { ...init, signal: loopbackController.signal });
+    } finally {
+      clearTimeout(loopbackTimer);
+    }
     const rawText = await response.text();
     let payload = {};
     try {

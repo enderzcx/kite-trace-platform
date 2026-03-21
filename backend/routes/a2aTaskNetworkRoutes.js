@@ -283,7 +283,8 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
       targetAgentId = '',
       taskType = '',
       traceId = '',
-      summary = ''
+      summary = '',
+      responseHash = ''
     } = {}
   ) {
     if (normalizeText(reqItem?.status || '').toLowerCase() !== 'paid') return null;
@@ -298,7 +299,8 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
       traceId: normalizeText(reqItem?.a2a?.traceId || traceId || ''),
       paymentRequestId: normalizeText(reqItem?.requestId || ''),
       summary: normalizeText(summary || reqItem?.result?.summary || 'A2A paid invoke completed successfully.'),
-      evaluator: normalizeText(targetAgentId || reqItem?.a2a?.targetAgentId || '')
+      evaluator: normalizeText(targetAgentId || reqItem?.a2a?.targetAgentId || ''),
+      responseHash: normalizeText(responseHash || '')
     });
   }
 
@@ -558,11 +560,17 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
       quote
     };
     writeX402Requests(requests);
+    const responseHash = normalizeText(
+      typeof buildResponseHash === 'function'
+        ? buildResponseHash(reqItem.requestId, reqItem.action || 'btc-price-feed', reqItem.result || {})?.responseHash || ''
+        : ''
+    );
     const trust = await appendA2ATrustArtifacts(reqItem, {
       targetAgentId,
       taskType: 'btc-price-feed',
       traceId: reqItem?.a2a?.traceId || traceId,
-      summary: reqItem?.result?.summary || quoteSummary
+      summary: reqItem?.result?.summary || quoteSummary,
+      responseHash
     });
   
     const receipt = buildA2AReceipt(reqItem, null, {

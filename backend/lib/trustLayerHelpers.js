@@ -32,6 +32,22 @@ function resolveProviderTrustSubject(service = {}, providers = []) {
   };
 }
 
+function buildTrustPublicationRef(signalId = '', responseHash = '') {
+  const base = `ktrace://trust/reputation/${encodeURIComponent(normalizeText(signalId || ''))}`;
+  const hash = normalizeText(responseHash || '');
+  return hash ? `${base}?responseHash=${encodeURIComponent(hash)}` : base;
+}
+
+function buildPublicEvidenceDetailsUri(traceId = '', responseHash = '') {
+  const normalizedTraceId = normalizeText(traceId || '');
+  if (!normalizedTraceId) return '';
+  const baseUrl = normalizeText(process.env.BACKEND_PUBLIC_URL || process.env.KTRACE_PUBLIC_URL || '').replace(/\/+$/, '');
+  const path = `/api/public/evidence/${encodeURIComponent(normalizedTraceId)}`;
+  const hash = normalizeText(responseHash || '');
+  const query = hash ? `?responseHash=${encodeURIComponent(hash)}` : '';
+  return `${baseUrl || ''}${path}${query}`;
+}
+
 export function createTrustLayerHelpers({
   appendReputationSignal,
   appendTrustPublication,
@@ -39,11 +55,16 @@ export function createTrustLayerHelpers({
   ensureNetworkAgents,
   publishTrustPublicationOnChain
 } = {}) {
-  async function publishSignalRecord(signal = {}, subject = {}) {
+  async function publishSignalRecord(signal = {}, subject = {}, options = {}) {
     if (typeof appendTrustPublication !== 'function') return null;
     const now = new Date().toISOString();
     const publicationId = typeof createTraceId === 'function' ? createTraceId('pub') : `pub_${Date.now()}`;
-    const fallbackPublicationRef = `ktrace://trust/reputation/${encodeURIComponent(normalizeText(signal?.signalId || ''))}`;
+    const responseHash = normalizeText(options?.responseHash || '');
+    const fallbackPublicationRef = buildTrustPublicationRef(signal?.signalId || '', responseHash);
+    const detailsURI = normalizeText(
+      options?.detailsURI ||
+      buildPublicEvidenceDetailsUri(signal?.traceId || '', responseHash)
+    );
     const draftRecord = {
       publicationId,
       publicationType: 'reputation',
@@ -54,6 +75,7 @@ export function createTrustLayerHelpers({
       referenceId: normalizeText(signal?.referenceId || ''),
       traceId: normalizeText(signal?.traceId || ''),
       publicationRef: fallbackPublicationRef,
+      detailsURI,
       anchorTxHash: '',
       summary: buildTrustSummary(subject, signal?.summary || 'Prepared reputation publication.'),
       createdAt: now,
@@ -68,7 +90,8 @@ export function createTrustLayerHelpers({
               agentId: draftRecord.agentId,
               referenceId: draftRecord.referenceId,
               traceId: draftRecord.traceId,
-              publicationRef: draftRecord.publicationRef
+              publicationRef: draftRecord.publicationRef,
+              detailsURI: draftRecord.detailsURI
             })
           : { configured: false, published: false, registryAddress: '' };
       const status = anchorResult?.published
@@ -115,7 +138,10 @@ export function createTrustLayerHelpers({
       evaluator: normalizeText(input?.evaluator || ''),
       createdAt: normalizeText(input?.createdAt || new Date().toISOString())
     });
-    const publication = await publishSignalRecord(signal, subject);
+    const publication = await publishSignalRecord(signal, subject, {
+      responseHash: normalizeText(input?.responseHash || ''),
+      detailsURI: normalizeText(input?.detailsURI || '')
+    });
     return {
       signal,
       publication
@@ -131,7 +157,9 @@ export function createTrustLayerHelpers({
     traceId = '',
     paymentRequestId = '',
     summary = '',
-    evaluator = ''
+    evaluator = '',
+    responseHash = '',
+    detailsURI = ''
   } = {}) {
     const providers = typeof ensureNetworkAgents === 'function' ? ensureNetworkAgents() : [];
     const providerSubject = resolveProviderTrustSubject(service, providers);
@@ -146,6 +174,8 @@ export function createTrustLayerHelpers({
       paymentRequestId,
       summary,
       evaluator,
+      responseHash,
+      detailsURI,
       createdAt
     });
     if (consumerArtifact) artifacts.push({ subject: 'consumer', ...consumerArtifact });
@@ -158,6 +188,8 @@ export function createTrustLayerHelpers({
       paymentRequestId,
       summary,
       evaluator,
+      responseHash,
+      detailsURI,
       createdAt
     });
     if (providerArtifact) artifacts.push({ subject: 'provider', ...providerArtifact });

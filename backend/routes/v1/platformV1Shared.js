@@ -635,6 +635,7 @@ export function createPlatformV1Shared(deps) {
       referenceId: normalizeText(record?.referenceId),
       traceId: normalizeText(record?.traceId),
       publicationRef: normalizeText(record?.publicationRef),
+      detailsURI: normalizeText(record?.detailsURI),
       anchorTxHash: normalizeText(record?.anchorTxHash),
       summary: normalizeText(record?.summary),
       createdAt: normalizeText(record?.createdAt),

@@ -687,6 +687,7 @@ export async function createConsumerAuthorityHarness(options = {}) {
     buildAuthoritySnapshot: consumerAuthorityHelpers.buildAuthoritySnapshot,
     buildPolicySnapshotHash: consumerAuthorityHelpers.buildPolicySnapshotHash,
     buildPaymentRequiredResponse,
+    buildResponseHash: paymentHelpers.buildResponseHash,
     buildServiceStatus: () => ({}),
     broadcastEvent: () => null,
     computeServiceReputation: () => ({}),

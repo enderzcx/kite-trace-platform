@@ -731,6 +731,16 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       purchase,
       invocation
     });
+    const action = String(reqItem?.action || workflow?.type || '').trim().toLowerCase();
+    const resultPayload =
+      workflow?.result && typeof workflow.result === 'object'
+        ? workflow.result
+        : reqItem?.result && typeof reqItem.result === 'object'
+          ? reqItem.result
+          : {};
+    const requestId = String(reqItem?.requestId || workflow?.requestId || '').trim();
+    const { responseHash } = buildResponseHash(requestId, action, resultPayload);
+    const signatureBundle = await signResponseHash(responseHash);
 
     const evidenceSchemaVersion = 'kiteclaw-evidence-v1.1.0';
     const digestInput = {
@@ -853,6 +863,15 @@ export function registerReceiptEvidenceRoutes(app, deps) {
             approvalPolicy: jobAudit.approvalPolicy
           }
         : null,
+      apiResult: {
+        summary: String(resultPayload?.summary || '').trim(),
+        payload: resultPayload,
+        responseHash,
+        responseSignature: signatureBundle.signature,
+        signer: signatureBundle.signer,
+        signatureScheme: signatureBundle.scheme,
+        signatureAvailable: signatureBundle.available
+      },
       deadline: jobAudit?.deadline || null,
       contractPrimitives: jobAudit?.contractPrimitives || null,
       deliveryStandard: jobAudit?.deliveryStandard || null
@@ -925,6 +944,17 @@ export function registerReceiptEvidenceRoutes(app, deps) {
           : null,
       policySnapshotHash: String(authorityEnvelope?.policySnapshotHash || '').trim(),
       intentId: String(authorityEnvelope?.intentId || '').trim(),
+      apiResult:
+        exportPayload?.apiResult && typeof exportPayload.apiResult === 'object'
+          ? {
+              summary: String(exportPayload.apiResult.summary || '').trim(),
+              responseHash: String(exportPayload.apiResult.responseHash || '').trim(),
+              responseSignature: String(exportPayload.apiResult.responseSignature || '').trim(),
+              signer: String(exportPayload.apiResult.signer || '').trim(),
+              signatureScheme: String(exportPayload.apiResult.signatureScheme || '').trim(),
+              signatureAvailable: Boolean(exportPayload.apiResult.signatureAvailable)
+            }
+          : null,
       jobAnchorTxHash,
       anchorContract,
       anchorNetwork: 'kite-testnet',

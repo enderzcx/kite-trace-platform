@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const API_BASE = 'https://ai.6551.io';
-const DEFAULT_TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = Math.max(5_000, Number(process.env.EXTERNAL_FEED_TIMEOUT_MS || 20_000));
 const ONCHAINOS_TIMEOUT_MS = 20000;
 const ONCHAINOS_RETRY_BACKOFF_MS = [400, 1200];
 const PUBLIC_FEED_RETRY_BACKOFF_MS = [300, 1000];

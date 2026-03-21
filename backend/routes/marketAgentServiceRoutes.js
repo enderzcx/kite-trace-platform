@@ -21,6 +21,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     appendTrustPublication,
     appendWorkflowStep,
     beginConsumerIntent,
+    buildResponseHash,
     buildServiceStatus,
     buildAuthorityPublicSummary,
     buildAuthoritySnapshot,
@@ -436,18 +437,24 @@ export function registerMarketAgentServiceRoutes(app, deps) {
   async function postInternalWorkflowWithRetry(pathname = '', headers = {}, body = {}) {
     const targetPath = normalizeText(pathname);
     const maxAttempts = 3;
+    const timeoutMs = Math.max(30_000, Number(process.env.INTERNAL_WORKFLOW_TIMEOUT_MS || 70_000));
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const resp = await fetch(`http://127.0.0.1:${PORT}${targetPath}`, {
           method: 'POST',
           headers,
-          body: JSON.stringify(body)
+          body: JSON.stringify(body),
+          signal: controller.signal
         });
+        clearTimeout(timer);
         const payload = await resp.json().catch(() => ({}));
         return { resp, payload };
       } catch (error) {
+        clearTimeout(timer);
         lastError = error;
         if (attempt >= maxAttempts || !isRetryableInternalFetchError(error)) {
           throw error;
@@ -463,13 +470,22 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     const coin = normalizePerpCoin(symbol);
     const pair = `${coin}USDT`;
     const safeLimit = Math.max(20, Math.min(Number(limit || 200), 1000));
-    const resp = await fetch(
-      `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(pair)}&interval=${encodeURIComponent(interval)}&limit=${safeLimit}`,
-      {
-        method: 'GET',
-        headers: { Accept: 'application/json' }
-      }
-    );
+    const binanceTimeoutMs = Math.max(5_000, Number(process.env.BINANCE_TIMEOUT_MS || 15_000));
+    const binanceController = new AbortController();
+    const binanceTimer = setTimeout(() => binanceController.abort(), binanceTimeoutMs);
+    let resp;
+    try {
+      resp = await fetch(
+        `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(pair)}&interval=${encodeURIComponent(interval)}&limit=${safeLimit}`,
+        {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal: binanceController.signal
+        }
+      );
+    } finally {
+      clearTimeout(binanceTimer);
+    }
     const body = await resp.json().catch(() => []);
     if (!resp.ok) {
       const reason = body?.msg || body?.message || `binance_http_${resp.status}`;
@@ -1336,7 +1352,28 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     let evidenceWorkflow = null;
     let evidenceRequest = null;
     let externalResult = null;
-  
+    let clientAborted = false;
+    req.on('close', () => {
+      if (!res.headersSent) {
+        clientAborted = true;
+        if (invocationPersisted) {
+          const aborted = {
+            ...invocation,
+            state: 'failed',
+            error: 'client_disconnected',
+            updatedAt: new Date().toISOString()
+          };
+          upsertServiceInvocation(aborted);
+        }
+        if (evidenceWorkflow && evidenceWorkflow.state === 'running') {
+          evidenceWorkflow.state = 'failed';
+          evidenceWorkflow.error = 'client_disconnected';
+          evidenceWorkflow.updatedAt = new Date().toISOString();
+          upsertWorkflow(evidenceWorkflow);
+        }
+      }
+    });
+
     try {
       const internalApiKey = getInternalAgentApiKey();
       const headers = { 'Content-Type': 'application/json' };
@@ -1897,6 +1934,18 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       upsertServiceInvocation(next);
       let trust = null;
       if (resp.ok && payload?.ok !== false && ['success', 'completed'].includes(next.state)) {
+        const trustResultPayload =
+          workflow?.result && typeof workflow.result === 'object'
+            ? workflow.result
+            : payload?.receipt?.result && typeof payload.receipt.result === 'object'
+              ? payload.receipt.result
+              : payload?.result && typeof payload.result === 'object'
+                ? payload.result
+                : {};
+        const responseHash =
+          typeof buildResponseHash === 'function'
+            ? normalizeText(buildResponseHash(next.requestId, effectiveAction, trustResultPayload)?.responseHash || '')
+            : '';
         trust = await appendInvokeTrustArtifacts({
           consumerSubject: resolveConsumerTrustSubject(body, next, evidenceRequest),
           service,
@@ -1906,7 +1955,8 @@ export function registerMarketAgentServiceRoutes(app, deps) {
           traceId: next.traceId,
           paymentRequestId: next.requestId,
           summary: normalizeText(next.summary || `${effectiveAction} settled by x402 payment.`),
-          evaluator: normalizeText(sourceAgentId || payer || '')
+          evaluator: normalizeText(sourceAgentId || payer || ''),
+          responseHash
         });
       }
       finalizeConsumerIntent?.(intentId, {
