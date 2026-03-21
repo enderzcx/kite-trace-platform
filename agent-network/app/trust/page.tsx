@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { Github } from "lucide-react";
 import TrustProfileClient from "./TrustProfileClient";
@@ -14,34 +15,34 @@ export default function TrustPage() {
       {/* Navigation */}
       <header className="fixed inset-x-0 top-0 z-50 border-b border-[rgba(90,80,50,0.1)] bg-[#faf7f1]/90 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
-          <a href="/" className="group flex items-center gap-2.5">
+          <Link href="/" className="group flex items-center gap-2.5">
             <span className="flex h-6 w-6 select-none items-center justify-center rounded-md bg-[#3a4220] text-[9px] font-bold leading-none text-[#faf7f1]">
               KT
             </span>
             <span className="text-[13px] font-semibold tracking-tight text-[#18180e] transition-colors group-hover:text-[#3a4220]">
               Kite Trace
             </span>
-          </a>
+          </Link>
 
           <nav className="flex items-center gap-1">
-            <a
+            <Link
               href="/"
               className="rounded-md px-3 py-1.5 text-[13px] text-[#7a6e56] transition hover:bg-[rgba(58,66,32,0.06)] hover:text-[#18180e]"
             >
               Home
-            </a>
-            <a
+            </Link>
+            <Link
               href="/audit"
               className="rounded-md px-3 py-1.5 text-[13px] text-[#7a6e56] transition hover:bg-[rgba(58,66,32,0.06)] hover:text-[#18180e]"
             >
               Audit
-            </a>
-            <a
+            </Link>
+            <Link
               href="/trust"
               className="rounded-md bg-[rgba(58,66,32,0.08)] px-3 py-1.5 text-[13px] font-medium text-[#18180e]"
             >
               Trust
-            </a>
+            </Link>
             <div className="mx-2 h-4 w-px bg-[rgba(90,80,50,0.18)]" />
             <a
               href="https://github.com/enderzcx/kite-trace-platform"

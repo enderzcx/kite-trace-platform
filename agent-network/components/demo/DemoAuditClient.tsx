@@ -60,10 +60,10 @@ function AddrRow({ label, value }: { label: string; value?: string }) {
 
 export default function DemoAuditClient() {
   const [audit, setAudit] = useState<AuditData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(JOB_ID ? null : "not_seeded");
 
   useEffect(() => {
-    if (!JOB_ID) { setError("not_seeded"); return; }
+    if (!JOB_ID) return;
     fetch(`${BACKEND}/api/public/jobs/${JOB_ID}/audit`)
       .then((r) => {
         if (r.status === 404) throw new Error("not_seeded");

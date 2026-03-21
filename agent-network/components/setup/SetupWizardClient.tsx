@@ -561,7 +561,7 @@ function buildRequiredSessionPermissionUpdates(runtime: SessionRuntime) {
       target: getAddress(settlementToken),
       selector: ERC20_APPROVE_SELECTOR,
       enabled: true,
-      maxAmount: 0n,
+      maxAmount: BigInt(0),
     });
     for (const selector of KTRACE_ESCROW_SELECTORS) {
       updates.push({
@@ -569,7 +569,7 @@ function buildRequiredSessionPermissionUpdates(runtime: SessionRuntime) {
         target: getAddress(escrowAddress),
         selector,
         enabled: true,
-        maxAmount: 0n,
+        maxAmount: BigInt(0),
       });
     }
   }
@@ -1530,6 +1530,9 @@ function AuthorizeStep({
       }
 
       if (!effectiveRuntime.sessionId || !effectiveRuntime.sessionAddress) {
+        if (!effectiveRuntime.aaWallet) {
+          throw new Error("AA wallet is missing from the prepared runtime. Re-run step 2 first.");
+        }
         setState("creatingSession");
         const sessionWallet = Wallet.createRandom();
         const sessionId = keccak256(toUtf8Bytes(`${sessionWallet.address}-${Date.now()}`));

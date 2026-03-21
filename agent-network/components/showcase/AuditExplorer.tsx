@@ -500,28 +500,20 @@ function ResultCard({ audit }: { audit: JobAudit }) {
 
 type UIState = "idle" | "loading" | "success" | "error";
 
+function readInitialJobId() {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.search);
+  return (params.get("jobId") || params.get("job") || "").trim();
+}
+
 export default function AuditExplorer() {
-  const [input, setInput] = useState("");
+  const [initialJobId] = useState(() => readInitialJobId());
+  const [input, setInput] = useState(initialJobId);
   const [uiState, setUiState] = useState<UIState>("idle");
   const [audit, setAudit] = useState<JobAudit | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // read ?jobId= or #audit-explorer?jobId= from URL on mount
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const jobId = params.get("jobId") || params.get("job");
-    if (jobId) {
-      setInput(jobId);
-      void run(jobId);
-      // scroll to section
-      setTimeout(() => {
-        document.getElementById("audit-explorer")?.scrollIntoView({ behavior: "smooth" });
-      }, 300);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function run(jobId: string) {
+  const run = async (jobId: string) => {
     const id = (jobId || input).trim();
     if (!id) return;
     setUiState("loading");
@@ -533,7 +525,23 @@ export default function AuditExplorer() {
     } else {
       setUiState("error");
     }
-  }
+  };
+
+  useEffect(() => {
+    if (initialJobId) {
+      const runTimer = window.setTimeout(() => {
+        void run(initialJobId);
+      }, 0);
+      // scroll to section
+      const scrollTimer = window.setTimeout(() => {
+        document.getElementById("audit-explorer")?.scrollIntoView({ behavior: "smooth" });
+      }, 300);
+      return () => {
+        window.clearTimeout(runTimer);
+        window.clearTimeout(scrollTimer);
+      };
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

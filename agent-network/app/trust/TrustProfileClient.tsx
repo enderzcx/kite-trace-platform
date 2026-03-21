@@ -415,25 +415,21 @@ function TeaserCard() {
 
 type UIState = "idle" | "loading" | "success" | "error";
 
+function readInitialAgentId() {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.search);
+  return (params.get("agentId") || params.get("agent") || "").trim();
+}
+
 export default function TrustProfileClient() {
-  const [input, setInput] = useState("");
+  const [initialAgentId] = useState(() => readInitialAgentId());
+  const [input, setInput] = useState(initialAgentId);
   const [uiState, setUiState] = useState<UIState>("idle");
   const [profile, setProfile] = useState<ChainProfile | null>(null);
   const [publications, setPublications] = useState<Publication[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // read ?agentId= from URL on mount
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const agentId = params.get("agentId") || params.get("agent");
-    if (agentId) {
-      setInput(agentId);
-      void run(agentId);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function run(agentId: string) {
+  const run = async (agentId: string) => {
     const id = (agentId || input).trim();
     if (!id) return;
     setUiState("loading");
@@ -450,7 +446,16 @@ export default function TrustProfileClient() {
     } else {
       setUiState("error");
     }
-  }
+  };
+
+  useEffect(() => {
+    if (initialAgentId) {
+      const timer = window.setTimeout(() => {
+        void run(initialAgentId);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
