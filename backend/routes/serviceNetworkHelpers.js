@@ -268,6 +268,9 @@
                       : { vsCurrency: 'usd', ids: 'bitcoin,ethereum', limit: 10 }
                 : { pair: 'BTCUSDT', source: 'hyperliquid' };
     const activeInput = input.active;
+    const audience = String(input.audience || existing?.audience || 'public_product').trim().toLowerCase() || 'public_product';
+    const scopeMode = String(input.scopeMode || existing?.scopeMode || 'scoped').trim().toLowerCase() || 'scoped';
+    const riskLevel = String(input.riskLevel || existing?.riskLevel || 'standard').trim().toLowerCase() || 'standard';
     const active =
       typeof activeInput === 'boolean'
         ? activeInput
@@ -288,6 +291,9 @@
       maxChars: normalizedTask.maxChars || null,
       providerAgentId,
       providerKey,
+      audience: ['public_product', 'trusted_integration', 'internal_ops'].includes(audience) ? audience : 'public_product',
+      scopeMode: ['scoped', 'global'].includes(scopeMode) ? scopeMode : 'scoped',
+      riskLevel: ['low', 'standard', 'high', 'critical'].includes(riskLevel) ? riskLevel : 'standard',
       recipient,
       tokenAddress,
       price: String(Number(priceRaw.toFixed(6))),
@@ -312,8 +318,9 @@
     return [
       {
         id: 'svc_btcusd_minute',
-        name: 'BTCUSD Quote (ATAPI)',
-        description: 'Agent-to-API BTCUSD quote via ERC8004 + x402 payment.',
+        name: 'BTC Price Quote (Primary)',
+        description:
+          'Primary tool for the latest BTC/BTCUSDT price quote via Hyperliquid. Use this for a single BTC price request instead of the generic market-price-feed tool.',
         action: 'btc-price-feed',
         pair: 'BTCUSDT',
         source: 'hyperliquid',
@@ -479,8 +486,9 @@
       },
       {
         id: 'cap-market-price-feed',
-        name: 'Market Price Feed Data Node',
-        description: 'Low-cost CoinGecko market price primitive via x402 payment.',
+        name: 'Market Snapshot Data Node',
+        description:
+          'Generic CoinGecko market snapshot for baskets and ranked watchlists. Not the primary tool for a single BTC price quote; prefer the dedicated BTC price tool instead.',
         action: 'market-price-feed',
         pair: '',
         source: 'coingecko',
@@ -598,10 +606,57 @@
       const expectedPrice = isDataPrimitiveService(service)
         ? resolveCatalogPrice(current, service.price || '0.00005')
         : resolveCatalogPrice(service, unifiedPrice);
-      if (String(current?.price || '').trim() !== expectedPrice) {
+      const shouldReconcileBuiltinMetadata = String(current?.publishedBy || '').trim().toLowerCase() === 'system';
+      const reconciled = shouldReconcileBuiltinMetadata
+        ? {
+            ...current,
+            name: service.name,
+            description: service.description,
+            action: service.action,
+            pair: service.pair,
+            source: service.source,
+            sourceRequested: service.sourceRequested,
+            providerAgentId: service.providerAgentId,
+            providerKey: service.providerKey,
+            recipient: service.recipient,
+            tokenAddress: service.tokenAddress,
+            tags: Array.isArray(service.tags) ? [...service.tags] : [],
+            exampleInput: service.exampleInput
+          }
+        : current;
+      const metadataChanged =
+        JSON.stringify({
+          name: current?.name,
+          description: current?.description,
+          action: current?.action,
+          pair: current?.pair,
+          source: current?.source,
+          sourceRequested: current?.sourceRequested,
+          providerAgentId: current?.providerAgentId,
+          providerKey: current?.providerKey,
+          recipient: current?.recipient,
+          tokenAddress: current?.tokenAddress,
+          tags: current?.tags,
+          exampleInput: current?.exampleInput
+        }) !==
+        JSON.stringify({
+          name: reconciled?.name,
+          description: reconciled?.description,
+          action: reconciled?.action,
+          pair: reconciled?.pair,
+          source: reconciled?.source,
+          sourceRequested: reconciled?.sourceRequested,
+          providerAgentId: reconciled?.providerAgentId,
+          providerKey: reconciled?.providerKey,
+          recipient: reconciled?.recipient,
+          tokenAddress: reconciled?.tokenAddress,
+          tags: reconciled?.tags,
+          exampleInput: reconciled?.exampleInput
+        });
+      if (String(reconciled?.price || '').trim() !== expectedPrice || metadataChanged) {
         changed = true;
         list[index] = {
-          ...current,
+          ...reconciled,
           price: expectedPrice,
           updatedAt: new Date().toISOString()
         };

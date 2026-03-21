@@ -34,6 +34,7 @@ export function registerTrustSignalRoutes(app, deps) {
     return {
       signalId: normalizeText(signal?.signalId),
       agentId: normalizeText(signal?.agentId),
+      identityRegistry: normalizeText(signal?.identityRegistry),
       sourceLane: normalizeText(signal?.sourceLane),
       sourceKind: normalizeText(signal?.sourceKind),
       referenceId: normalizeText(signal?.referenceId),

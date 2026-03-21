@@ -1,4 +1,6 @@
-﻿export function registerA2aTaskNetworkRoutes(app, deps) {
+﻿import { createTrustLayerHelpers } from '../lib/trustLayerHelpers.js';
+
+export function registerA2aTaskNetworkRoutes(app, deps) {
   const {
     aaWallet,
     action,
@@ -12,6 +14,8 @@
     API_KEY_ADMIN,
     API_KEY_AGENT,
     API_KEY_VIEWER,
+    appendReputationSignal,
+    appendTrustPublication,
     appendWorkflowStep,
     assertBackendSigner,
     attempt,
@@ -134,6 +138,7 @@
     policy,
     PORT,
     postSessionPayWithRetry,
+    publishTrustPublicationOnChain,
     price,
     provider,
     qty,
@@ -248,6 +253,54 @@
 
   const buildA2AReceipt =
     typeof deps.buildA2AReceipt === 'function' ? deps.buildA2AReceipt : () => null;
+
+  function normalizeText(value = '') {
+    return String(value ?? '').trim();
+  }
+
+  const { appendInvokeTrustArtifacts } = createTrustLayerHelpers({
+    appendReputationSignal,
+    appendTrustPublication,
+    createTraceId,
+    ensureNetworkAgents,
+    publishTrustPublicationOnChain
+  });
+
+  function resolveA2AConsumerTrustSubject(reqItem = {}) {
+    const identity = reqItem?.identity || {};
+    const agentId = normalizeText(identity.agentId || identity.identityAgentId || '');
+    const identityRegistry = normalizeText(identity.identityRegistry || identity.registry || '');
+    if (!agentId || !identityRegistry) return null;
+    return {
+      agentId,
+      identityRegistry
+    };
+  }
+
+  async function appendA2ATrustArtifacts(
+    reqItem = {},
+    {
+      targetAgentId = '',
+      taskType = '',
+      traceId = '',
+      summary = ''
+    } = {}
+  ) {
+    if (normalizeText(reqItem?.status || '').toLowerCase() !== 'paid') return null;
+    return appendInvokeTrustArtifacts({
+      consumerSubject: resolveA2AConsumerTrustSubject(reqItem),
+      service: {
+        providerAgentId: normalizeText(targetAgentId || reqItem?.a2a?.targetAgentId || '')
+      },
+      sourceLane: 'a2a',
+      sourceKind: `x402-a2a:${normalizeText(taskType || reqItem?.a2a?.taskType || reqItem?.action || 'task')}`,
+      referenceId: normalizeText(reqItem?.requestId || ''),
+      traceId: normalizeText(reqItem?.a2a?.traceId || traceId || ''),
+      paymentRequestId: normalizeText(reqItem?.requestId || ''),
+      summary: normalizeText(summary || reqItem?.result?.summary || 'A2A paid invoke completed successfully.'),
+      evaluator: normalizeText(targetAgentId || reqItem?.a2a?.targetAgentId || '')
+    });
+  }
 
   app.get('/api/a2a/capabilities', (req, res) => {
     res.json({ ok: true, capabilities: buildA2ACapabilities() });
@@ -505,6 +558,12 @@
       quote
     };
     writeX402Requests(requests);
+    const trust = await appendA2ATrustArtifacts(reqItem, {
+      targetAgentId,
+      taskType: 'btc-price-feed',
+      traceId: reqItem?.a2a?.traceId || traceId,
+      summary: reqItem?.result?.summary || quoteSummary
+    });
   
     const receipt = buildA2AReceipt(reqItem, null, {
       traceId: reqItem?.a2a?.traceId || traceId,
@@ -534,7 +593,8 @@
           targetAgentId,
           taskType: 'btc-price-feed'
         },
-        receipt
+        receipt,
+        trust
       }
     };
   }
@@ -795,6 +855,14 @@
       };
     }
     writeX402Requests(requests);
+    const trust = prebindOnly
+      ? null
+      : await appendA2ATrustArtifacts(reqItem, {
+          targetAgentId,
+          taskType: taskAction,
+          traceId: reqItem?.a2a?.traceId || traceId,
+          summary: reqItem?.result?.summary || `${serviceLabel} unlocked by x402 payment`
+        });
   
     const receipt = buildA2AReceipt(reqItem, null, {
       traceId: reqItem?.a2a?.traceId || traceId,
@@ -824,7 +892,8 @@
           targetAgentId,
           taskType: taskAction
         },
-        receipt
+        receipt,
+        trust
       }
     };
   }
@@ -1100,6 +1169,14 @@
       };
     }
     writeX402Requests(requests);
+    const trust = prebindOnly
+      ? null
+      : await appendA2ATrustArtifacts(reqItem, {
+          targetAgentId,
+          taskType: taskAction,
+          traceId: reqItem?.a2a?.traceId || traceId,
+          summary: reqItem?.result?.summary || summaryTail
+        });
   
     const receipt = buildA2AReceipt(reqItem, null, {
       traceId: reqItem?.a2a?.traceId || traceId,
@@ -1129,7 +1206,8 @@
           targetAgentId,
           taskType: taskAction
         },
-        receipt
+        receipt,
+        trust
       }
     };
   }
@@ -1340,7 +1418,23 @@
       taskType: String(reqItem?.a2a?.taskType || 'reactive-stop-orders').trim(),
       traceId: String(reqItem?.a2a?.traceId || traceId).trim()
     };
+    reqItem.result = {
+      summary: 'A2A reactive stop-order task unlocked by x402 payment',
+      orderPlan: {
+        symbol: reqItem?.actionParams?.symbol || '-',
+        takeProfit: reqItem?.actionParams?.takeProfit ?? '-',
+        stopLoss: reqItem?.actionParams?.stopLoss ?? '-',
+        quantity: reqItem?.actionParams?.quantity ?? '-',
+        provider: 'Reactive Contracts'
+      }
+    };
     writeX402Requests(requests);
+    const trust = await appendA2ATrustArtifacts(reqItem, {
+      targetAgentId,
+      taskType: 'reactive-stop-orders',
+      traceId: reqItem?.a2a?.traceId || traceId,
+      summary: reqItem?.result?.summary || 'A2A reactive stop-order task unlocked by x402 payment'
+    });
     const receipt = buildA2AReceipt(reqItem, null, {
       traceId: reqItem?.a2a?.traceId || traceId,
       sourceAgentId,
@@ -1348,7 +1442,7 @@
       capability: 'reactive-stop-orders',
       phase: 'settled',
       state: 'success',
-      summary: 'A2A reactive stop-order task unlocked by x402 payment'
+      summary: reqItem?.result?.summary || 'A2A reactive stop-order task unlocked by x402 payment'
     });
   
     return {
@@ -1363,22 +1457,14 @@
           tokenAddress: reqItem.tokenAddress,
           recipient: reqItem.recipient
         },
-        result: {
-          summary: 'A2A reactive stop-order task unlocked by x402 payment',
-          orderPlan: {
-            symbol: reqItem?.actionParams?.symbol || '-',
-            takeProfit: reqItem?.actionParams?.takeProfit ?? '-',
-            stopLoss: reqItem?.actionParams?.stopLoss ?? '-',
-            quantity: reqItem?.actionParams?.quantity ?? '-',
-            provider: 'Reactive Contracts'
-          }
-        },
+        result: reqItem.result,
         a2a: reqItem.a2a || {
           sourceAgentId,
           targetAgentId,
           taskType: 'reactive-stop-orders'
         },
-        receipt
+        receipt,
+        trust
       }
     };
   }

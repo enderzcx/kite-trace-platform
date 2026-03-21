@@ -190,6 +190,7 @@ const {
   KITE_AA_ACCOUNT_IMPLEMENTATION,
   KITE_MIN_NATIVE_GAS,
   AA_V2_VERSION_TAG,
+  KITE_AA_JOB_LANE_REQUIRED_VERSION,
   KITE_REQUIRE_AA_V2,
   KITE_ALLOW_EOA_RELAY_FALLBACK,
   KITE_ALLOW_BACKEND_USEROP_SIGN,
@@ -647,6 +648,7 @@ claudeConnectorAuthHelpers = createClaudeConnectorAuthHelpers({
   CONNECTOR_INSTALL_CODE_TTL_MS: KTRACE_CONNECTOR_INSTALL_CODE_TTL_MS,
   CONNECTOR_INSTALL_CODE_MAX_ROWS: KTRACE_CONNECTOR_INSTALL_CODE_MAX_ROWS,
   CONNECTOR_GRANT_MAX_ROWS: KTRACE_CONNECTOR_GRANT_MAX_ROWS,
+  DEFAULT_CONNECTOR_IDENTITY_REGISTRY: ERC8004_IDENTITY_REGISTRY,
   createTraceId,
   normalizeAddress,
   readConnectorInstallCodes,
@@ -845,6 +847,236 @@ const ensureAAAccountDeployment = createEnsureAAAccountDeployment({
   BUNDLER_RPC_BACKOFF_POLICY,
   KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS
 });
+const MANAGED_ROLE_ACCOUNT_ABI = [
+  'function version() view returns (string)',
+  'function addSupportedToken(address token) external',
+  'function createSession(bytes32 sessionId, address agent, tuple(uint256 timeWindow,uint160 budget,uint96 initialWindowStartTime,bytes32[] targetProviders)[] rules) external',
+  'function sessionExists(bytes32 sessionId) view returns (bool)',
+  'function getSessionAgent(bytes32 sessionId) view returns (address)'
+];
+
+function parseManagedAaSalt() {
+  const saltRaw = String(process.env.KITECLAW_AA_SALT ?? '0').trim();
+  try {
+    return BigInt(saltRaw || '0');
+  } catch {
+    return 0n;
+  }
+}
+
+function buildManagedSessionRules({ singleLimitHuman = '1', dailyLimitHuman = '5', nowTs = 0 } = {}) {
+  return [
+    {
+      timeWindow: 0n,
+      budget: ethers.parseUnits(String(singleLimitHuman || '1').trim() || '1', 18),
+      initialWindowStartTime: 0,
+      targetProviders: []
+    },
+    {
+      timeWindow: 86400n,
+      budget: ethers.parseUnits(String(dailyLimitHuman || '5').trim() || '5', 18),
+      initialWindowStartTime: Math.max(0, Number(nowTs || 0) - 1),
+      targetProviders: []
+    }
+  ];
+}
+
+async function ensureManagedAaNativeBalance(aaWallet = '') {
+  const normalizedAaWallet = normalizeAddress(aaWallet || '');
+  if (!normalizedAaWallet || !backendSigner?.provider) {
+    return { funded: false, targetWei: 0n, balanceWei: 0n };
+  }
+  let minTargetWei = 0n;
+  let bufferedTargetWei = 0n;
+  try {
+    minTargetWei = ethers.parseEther(String(KITE_MIN_NATIVE_GAS || '0.0001').trim() || '0.0001');
+  } catch {
+    minTargetWei = 0n;
+  }
+  try {
+    bufferedTargetWei = ethers.parseEther('0.001');
+  } catch {
+    bufferedTargetWei = 0n;
+  }
+  const targetWei = bufferedTargetWei > minTargetWei ? bufferedTargetWei : minTargetWei;
+  if (targetWei <= 0n) {
+    return { funded: false, targetWei, balanceWei: 0n };
+  }
+  const balanceWei = await backendSigner.provider.getBalance(normalizedAaWallet);
+  if (balanceWei >= targetWei) {
+    return { funded: false, targetWei, balanceWei };
+  }
+  const transferTx = await backendSigner.sendTransaction({
+    to: normalizedAaWallet,
+    value: targetWei - balanceWei
+  });
+  await transferTx.wait();
+  const nextBalanceWei = await backendSigner.provider.getBalance(normalizedAaWallet);
+  return {
+    funded: true,
+    targetWei,
+    balanceWei: nextBalanceWei,
+    txHash: transferTx.hash
+  };
+}
+
+async function ensureManagedRoleSessionRuntime({
+  ownerAddress = '',
+  roleLabel = 'service'
+} = {}) {
+  const normalizedOwner = normalizeAddress(ownerAddress || '');
+  const ownerKey = resolveSessionOwnerPrivateKey(normalizedOwner);
+  if (!normalizedOwner || !ownerKey) {
+    return null;
+  }
+  const provider = backendSigner?.provider || new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+  const ownerWallet = new ethers.Wallet(ownerKey, provider);
+  const salt = parseManagedAaSalt();
+  const currentRuntime = resolveSessionRuntime({ owner: normalizedOwner, strictOwnerMatch: true });
+  const managedRequiredVersion = String(KITE_AA_JOB_LANE_REQUIRED_VERSION || '').trim();
+  const ensured = await ensureAAAccountDeployment({
+    owner: normalizedOwner,
+    salt,
+    requiredVersion: managedRequiredVersion || undefined
+  });
+  const account = new ethers.Contract(ensured.accountAddress, MANAGED_ROLE_ACCOUNT_ABI, ownerWallet);
+  let accountVersion = '';
+  try {
+    accountVersion = String(await account.version()).trim();
+  } catch {
+    accountVersion = '';
+  }
+
+  const singleLimitHuman = String(POLICY_MAX_PER_TX_DEFAULT || '1').trim() || '1';
+  const dailyLimitHuman = String(POLICY_DAILY_LIMIT_DEFAULT || '5').trim() || '5';
+  const normalizedTokenAddress = normalizeAddress(SETTLEMENT_TOKEN || '');
+  const normalizedGatewayRecipient = normalizeAddress(MERCHANT_ADDRESS || '');
+
+  const canReuse =
+    normalizeAddress(currentRuntime?.aaWallet || '') === normalizeAddress(ensured.accountAddress || '') &&
+    currentRuntime?.sessionPrivateKey &&
+    currentRuntime?.sessionAddress &&
+    currentRuntime?.sessionId;
+  if (canReuse) {
+    try {
+      const [exists, agentAddress] = await Promise.all([
+        account.sessionExists(currentRuntime.sessionId),
+        account.getSessionAgent(currentRuntime.sessionId)
+      ]);
+      if (exists && normalizeAddress(agentAddress || '') === normalizeAddress(currentRuntime.sessionAddress || '')) {
+        const gasStatus = await ensureManagedAaNativeBalance(ensured.accountAddress);
+        return writeSessionRuntime(
+          {
+            ...currentRuntime,
+            aaWallet: ensured.accountAddress,
+            owner: normalizedOwner,
+            tokenAddress: normalizedTokenAddress,
+            gatewayRecipient: normalizedGatewayRecipient,
+            accountFactoryAddress: KITE_AA_FACTORY_ADDRESS,
+            accountImplementationAddress: KITE_AA_ACCOUNT_IMPLEMENTATION,
+            accountVersion: accountVersion || currentRuntime.accountVersion || '',
+            maxPerTx: Number(singleLimitHuman),
+            dailyLimit: Number(dailyLimitHuman),
+            runtimePurpose: currentRuntime.runtimePurpose || 'service',
+            source: currentRuntime.source || `backend-managed-${roleLabel}`,
+            lastNativeTopUpTxHash: String(gasStatus?.txHash || currentRuntime.lastNativeTopUpTxHash || '').trim(),
+            updatedAt: Date.now()
+          },
+          { setCurrent: false }
+        );
+      }
+    } catch {
+      // fall through to create a fresh managed session
+    }
+  }
+
+  if (normalizedTokenAddress) {
+    try {
+      const addSupportedTokenTx = await account.addSupportedToken(normalizedTokenAddress);
+      await addSupportedTokenTx.wait();
+    } catch {
+      // token may already be configured
+    }
+  }
+
+  const latestBlock = await provider.getBlock('latest');
+  const sessionWallet = ethers.Wallet.createRandom();
+  const sessionId = ethers.keccak256(
+    ethers.toUtf8Bytes(`${roleLabel}:${sessionWallet.address}:${Date.now()}:${salt.toString()}`)
+  );
+  const createSessionTx = await account.createSession(
+    sessionId,
+    sessionWallet.address,
+    buildManagedSessionRules({
+      singleLimitHuman,
+      dailyLimitHuman,
+      nowTs: Number(latestBlock?.timestamp || Math.floor(Date.now() / 1000))
+    })
+  );
+  await createSessionTx.wait();
+  const gasStatus = await ensureManagedAaNativeBalance(ensured.accountAddress);
+
+  return writeSessionRuntime(
+    {
+      ...currentRuntime,
+      aaWallet: ensured.accountAddress,
+      owner: normalizedOwner,
+      sessionAddress: sessionWallet.address,
+      sessionPrivateKey: sessionWallet.privateKey,
+      sessionId,
+      sessionTxHash: createSessionTx.hash,
+      tokenAddress: normalizedTokenAddress,
+      gatewayRecipient: normalizedGatewayRecipient,
+      accountFactoryAddress: KITE_AA_FACTORY_ADDRESS,
+      accountImplementationAddress: KITE_AA_ACCOUNT_IMPLEMENTATION,
+      accountVersion: accountVersion || (ensured.deployed ? 'unknown_or_legacy' : ''),
+      maxPerTx: Number(singleLimitHuman),
+      dailyLimit: Number(dailyLimitHuman),
+      runtimePurpose: currentRuntime.runtimePurpose || 'service',
+      source: `backend-managed-${roleLabel}`,
+      lastNativeTopUpTxHash: String(gasStatus?.txHash || '').trim(),
+      updatedAt: Date.now()
+    },
+    { setCurrent: false }
+  );
+}
+
+async function ensureManagedJobLaneRoleRuntimes() {
+  const roles = [
+    { ownerAddress: ERC8183_EXECUTOR_OWNER_ADDRESS, roleLabel: 'erc8183-executor' },
+    { ownerAddress: ERC8183_VALIDATOR_OWNER_ADDRESS, roleLabel: 'erc8183-validator' }
+  ];
+  for (const role of roles) {
+    try {
+      const runtime = await ensureManagedRoleSessionRuntime(role);
+      if (runtime?.aaWallet) {
+        console.log(
+          JSON.stringify({
+            component: 'managed-role-runtime',
+            event: 'ready',
+            role: role.roleLabel,
+            owner: normalizeAddress(role.ownerAddress || ''),
+            aaWallet: normalizeAddress(runtime.aaWallet || ''),
+            accountVersion: String(runtime.accountVersion || '').trim(),
+            sessionId: String(runtime.sessionId || '').trim()
+          })
+        );
+      }
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          component: 'managed-role-runtime',
+          event: 'ensure_failed',
+          role: role.roleLabel,
+          owner: normalizeAddress(role.ownerAddress || ''),
+          error: String(error?.message || error || '')
+        })
+      );
+    }
+  }
+}
+
+await ensureManagedJobLaneRoleRuntimes();
 
 applyRuntimeServerMiddleware(app, {
   adminKey: KTRACE_ADMIN_KEY,
@@ -1204,6 +1436,7 @@ const escrowHelpers = createEscrowHelpers({
   settlementToken: SETTLEMENT_TOKEN,
   resolveSessionRuntime,
   resolveSessionOwnerByAaWallet,
+  resolveSessionOwnerPrivateKey,
   rpcUrl: BACKEND_RPC_URL,
   bundlerUrl: BACKEND_BUNDLER_URL,
   entryPointAddress: BACKEND_ENTRYPOINT_ADDRESS,
@@ -1220,10 +1453,20 @@ const escrowHelpers = createEscrowHelpers({
   escrowUserOpWaitTimeoutMs: KTRACE_ESCROW_USEROP_WAIT_TIMEOUT_MS,
   escrowUserOpPollIntervalMs: KTRACE_ESCROW_USEROP_POLL_INTERVAL_MS,
   aaVersionTag: AA_V2_VERSION_TAG,
+  jobLaneRequiredAaVersionTag: KITE_AA_JOB_LANE_REQUIRED_VERSION,
   requireAaV2: KITE_REQUIRE_AA_V2,
   kiteMinNativeGas: KITE_MIN_NATIVE_GAS
 });
-const { lockEscrowFunds, acceptEscrowJob, submitEscrowResult, validateEscrowJob, expireEscrowJob, getEscrowJob } = escrowHelpers;
+const {
+  preflightJobLaneCapability,
+  prepareEscrowFunding,
+  lockEscrowFunds,
+  acceptEscrowJob,
+  submitEscrowResult,
+  validateEscrowJob,
+  expireEscrowJob,
+  getEscrowJob
+} = escrowHelpers;
 
 const {
   buildServiceStatus,
@@ -1686,6 +1929,7 @@ const routeDeps = Object.freeze({
   KITE_AGENT2_AA_ADDRESS,
   KITE_REQUIRE_AA_V2,
   AA_V2_VERSION_TAG,
+  KITE_AA_JOB_LANE_REQUIRED_VERSION,
   KITE_MIN_NATIVE_GAS,
   KITE_BUNDLER_RPC_TIMEOUT_MS,
   KITE_BUNDLER_RPC_RETRIES,
@@ -1702,6 +1946,7 @@ const routeDeps = Object.freeze({
   ERC8004_AGENT_ID,
   ERC8004_IDENTITY_REGISTRY,
   ERC8183_DEFAULT_JOB_TIMEOUT_SEC,
+  ERC8183_ESCROW_ADDRESS,
   ERC8183_REQUESTER_AA_ADDRESS,
   ERC8183_REQUESTER_OWNER_ADDRESS,
   ERC8183_EXECUTOR_AA_ADDRESS,
@@ -1960,6 +2205,8 @@ const routeDeps = Object.freeze({
   issueIdentityChallenge,
   listNetworkAuditEventsByTraceId,
   lockEscrowFunds,
+  preflightJobLaneCapability,
+  prepareEscrowFunding,
   logPolicyFailure,
   mapServiceReceipt,
   markSessionPayFailure,
@@ -2032,6 +2279,13 @@ const routeDeps = Object.freeze({
   resolveClaudeConnectorToken: claudeConnectorAuthHelpers.resolveConnectorToken,
   claimClaudeConnectorInstallCode: claudeConnectorAuthHelpers.claimInstallCode,
   touchClaudeConnectorGrantUsage: claudeConnectorAuthHelpers.touchGrantUsage,
+  issueAgentConnectorCredential:
+    claudeConnectorAuthHelpers.issueSessionConnector || claudeConnectorAuthHelpers.issueInstallCode,
+  revokeAgentConnectorGrant: claudeConnectorAuthHelpers.revokeGrant,
+  resolveAgentConnectorToken:
+    claudeConnectorAuthHelpers.resolveAgentConnectorToken || claudeConnectorAuthHelpers.resolveConnectorToken,
+  claimAgentConnectorInstallCode: claudeConnectorAuthHelpers.claimInstallCode,
+  touchAgentConnectorGrantUsage: claudeConnectorAuthHelpers.touchGrantUsage,
   buildClaudeConnectorInstallCodePublicRecord: claudeConnectorAuthHelpers.buildInstallCodePublicRecord,
   buildClaudeConnectorGrantPublicRecord: claudeConnectorAuthHelpers.buildGrantPublicRecord,
   waitMs,
@@ -2048,7 +2302,16 @@ const routeRegistrations = [
   {
     name: 'workflowA2aRoutes',
     register: registerWorkflowA2aRoutes,
-    requiredKeys: ['buildPaymentRequiredResponse', 'createX402Request', 'requireRole', 'upsertWorkflow']
+    requiredKeys: [
+      'appendReputationSignal',
+      'appendTrustPublication',
+      'buildPaymentRequiredResponse',
+      'createX402Request',
+      'ensureNetworkAgents',
+      'publishTrustPublicationOnChain',
+      'requireRole',
+      'upsertWorkflow'
+    ]
   },
   {
     name: 'xmtpNetworkRoutes',
@@ -2058,7 +2321,16 @@ const routeRegistrations = [
   {
     name: 'marketAgentServiceRoutes',
     register: registerMarketAgentServiceRoutes,
-    requiredKeys: ['createX402Request', 'ensureServiceCatalog', 'requireRole', 'upsertServiceInvocation']
+    requiredKeys: [
+      'appendReputationSignal',
+      'appendTrustPublication',
+      'createX402Request',
+      'ensureNetworkAgents',
+      'ensureServiceCatalog',
+      'publishTrustPublicationOnChain',
+      'requireRole',
+      'upsertServiceInvocation'
+    ]
   },
   {
     name: 'dataFeedRoutes',

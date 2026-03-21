@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import { KTRACE_BUILTIN_TOOLS } from './ktraceBuiltinTools.js';
 
 function normalizeText(value = '') {
   return String(value ?? '').trim();
@@ -13,6 +14,58 @@ function normalizeToolName(capabilityId = '') {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')}`;
+}
+
+function normalizeAudience(value = '', fallback = 'public_product') {
+  const normalized = normalizeText(value).toLowerCase();
+  if (['public_product', 'trusted_integration', 'internal_ops'].includes(normalized)) return normalized;
+  if (normalized === 'public') return 'public_product';
+  if (normalized === 'trusted') return 'trusted_integration';
+  if (normalized === 'internal') return 'internal_ops';
+  return fallback;
+}
+
+function normalizeScopeMode(value = '', fallback = 'scoped') {
+  const normalized = normalizeText(value).toLowerCase();
+  if (['scoped', 'global'].includes(normalized)) return normalized;
+  if (normalized === 'owner-scoped') return 'scoped';
+  return fallback;
+}
+
+function normalizeRiskLevel(value = '', fallback = 'standard') {
+  const normalized = normalizeText(value).toLowerCase();
+  if (['low', 'standard', 'high', 'critical'].includes(normalized)) return normalized;
+  return fallback;
+}
+
+function inferTitleOverride(capability = {}) {
+  const capabilityId = normalizeText(capability?.capabilityId || capability?.id || capability?.serviceId || '').toLowerCase();
+  if (capabilityId === 'svc_btcusd_minute') {
+    return 'BTC Price Quote (Primary)';
+  }
+  if (capabilityId === 'cap-market-price-feed') {
+    return 'Market Snapshot (Secondary)';
+  }
+  return normalizeText(capability?.name || capabilityId);
+}
+
+function inferDescriptionOverride(capability = {}) {
+  const capabilityId = normalizeText(capability?.capabilityId || capability?.id || capability?.serviceId || '').toLowerCase();
+  const baseDescription = normalizeText(capability?.description || capabilityId);
+  if (capabilityId === 'svc_btcusd_minute') {
+    return `${baseDescription} Prefer this tool for current BTC/BTCUSDT price requests.`;
+  }
+  if (capabilityId === 'cap-market-price-feed') {
+    return `${baseDescription} Use this for multi-asset snapshots, not for the primary single-BTC quote path.`;
+  }
+  return baseDescription;
+}
+
+function inferToolPriority(capability = {}) {
+  const capabilityId = normalizeText(capability?.capabilityId || capability?.id || capability?.serviceId || '').toLowerCase();
+  if (capabilityId === 'svc_btcusd_minute') return 100;
+  if (capabilityId === 'cap-market-price-feed') return 10;
+  return 50;
 }
 
 function inferReadOnlyHint(action = '') {
@@ -84,8 +137,8 @@ function buildToolDefinition(capability = {}) {
 
   return {
     name: normalizeToolName(capabilityId),
-    title: normalizeText(capability?.name || capabilityId),
-    description: normalizeText(capability?.description || capabilityId),
+    title: inferTitleOverride(capability),
+    description: inferDescriptionOverride(capability),
     annotations: {
       readOnlyHint: inferReadOnlyHint(capability?.action),
       destructiveHint: normalizeText(capability?.action || '').toLowerCase() === 'hyperliquid-order-testnet',
@@ -96,13 +149,29 @@ function buildToolDefinition(capability = {}) {
     serviceId: capabilityId,
     action: normalizeText(capability?.action || ''),
     providerId: normalizeText(capability?.providerId || ''),
+    audience: normalizeAudience(capability?.audience, 'public_product'),
+    scopeMode: normalizeScopeMode(capability?.scopeMode, 'scoped'),
+    riskLevel: normalizeRiskLevel(capability?.riskLevel, 'standard'),
     rawCapability: capability,
     inputSchema: buildToolInputSchema(capability)
   };
 }
 
+function shouldExposeCapabilityTool(tool = {}, { authSource = '' } = {}) {
+  if (normalizeText(authSource) !== 'connector-grant') return true;
+  return normalizeAudience(tool?.audience, 'public_product') === 'public_product';
+}
+
+function shouldExposeBuiltinTool(tool = {}, { authSource = '', allowedBuiltinTools = [] } = {}) {
+  if (normalizeText(authSource) !== 'connector-grant') return true;
+  const audience = normalizeAudience(tool?.audience, 'public_product');
+  const allowed = new Set((Array.isArray(allowedBuiltinTools) ? allowedBuiltinTools : []).map((item) => normalizeText(item).toLowerCase()));
+  if (!allowed.has(normalizeText(tool?.builtinId || '').toLowerCase())) return false;
+  return audience === 'public_product' || audience === 'trusted_integration';
+}
+
 export function createMcpToolsAdapter({ fetchLoopbackJson }) {
-  async function listTools({ traceId = '', apiKey = '' } = {}) {
+  async function listTools({ traceId = '', apiKey = '', authSource = '', allowedBuiltinTools = [] } = {}) {
     const { payload } = await fetchLoopbackJson({
       pathname: '/api/v1/capabilities?limit=500',
       apiKey,
@@ -110,10 +179,21 @@ export function createMcpToolsAdapter({ fetchLoopbackJson }) {
     });
 
     const items = Array.isArray(payload?.items) ? payload.items : [];
-    return items
+    const capabilityTools = items
       .filter((item) => item?.active !== false)
       .map((item) => buildToolDefinition(item))
-      .filter(Boolean);
+      .filter((tool) => shouldExposeCapabilityTool(tool, { authSource }))
+      .filter(Boolean)
+      .sort((left, right) => {
+        const priorityDiff = inferToolPriority(right?.rawCapability) - inferToolPriority(left?.rawCapability);
+        if (priorityDiff !== 0) return priorityDiff;
+        return normalizeText(left?.title).localeCompare(normalizeText(right?.title));
+      });
+
+    const builtinTools = KTRACE_BUILTIN_TOOLS
+      .map((tool) => ({ ...tool }))
+      .filter((tool) => shouldExposeBuiltinTool(tool, { authSource, allowedBuiltinTools }));
+    return [...builtinTools, ...capabilityTools];
   }
 
   return {

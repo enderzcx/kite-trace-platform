@@ -49,7 +49,7 @@ async function main() {
   }
   if (String(targetVersion || '').trim() !== String(REQUIRED_VERSION || '').trim()) {
     throw new Error(
-      `Target implementation is not the expected V2. required=${REQUIRED_VERSION}, actual=${String(targetVersion || '').trim() || 'unknown'}`
+      `Target implementation does not match the required AA version. required=${REQUIRED_VERSION}, actual=${String(targetVersion || '').trim() || 'unknown'}`
     );
   }
 
@@ -62,7 +62,7 @@ async function main() {
   console.log('[aa-set-factory-implementation] targetVersion:', targetVersion);
 
   if (ethers.getAddress(currentImplementation) === ethers.getAddress(TARGET_IMPLEMENTATION)) {
-    console.log('[aa-set-factory-implementation] Factory already points to the expected V2 implementation.');
+    console.log('[aa-set-factory-implementation] Factory already points to the required AA implementation.');
     return;
   }
 
@@ -78,7 +78,7 @@ async function main() {
     );
   }
 
-  console.log('[aa-set-factory-implementation] Factory now defaults to V2.');
+  console.log('[aa-set-factory-implementation] Factory implementation updated successfully.');
 }
 
 main().catch((error) => {

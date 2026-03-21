@@ -82,6 +82,14 @@ export function createConsumerAuthorityHelpers({
       aliases.add(normalized);
       if (normalized.startsWith('cap-') && normalized.length > 4) aliases.add(normalized.slice(4));
       else aliases.add(`cap-${normalized}`);
+      const hyphenated = normalized.replace(/_/g, '-');
+      const underscored = normalized.replace(/-/g, '_');
+      aliases.add(hyphenated);
+      aliases.add(underscored);
+      if (hyphenated.startsWith('cap-') && hyphenated.length > 4) aliases.add(hyphenated.slice(4));
+      else aliases.add(`cap-${hyphenated}`);
+      if (underscored.startsWith('cap_') && underscored.length > 4) aliases.add(underscored.slice(4));
+      else aliases.add(`cap_${underscored}`);
     }
     if (['technical-analysis-feed', 'risk-score-feed', 'volatility-snapshot'].includes(normalized)) {
       aliases.add('technical-analysis-feed');

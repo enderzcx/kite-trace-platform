@@ -3,6 +3,7 @@ import express from 'express';
 import { ethers } from 'ethers';
 
 import { createAuthHelpers } from '../lib/auth.js';
+import { createClaudeConnectorAuthHelpers } from '../lib/claudeConnectorAuth.js';
 import { createOnboardingSetupHelpers } from '../lib/onboardingSetupHelpers.js';
 import { registerMcpRoutes } from '../mcp/mcpServer.js';
 import { registerCoreIdentitySessionRoutes } from '../routes/coreIdentitySessionRoutes.js';
@@ -121,7 +122,10 @@ const sessionWallet = ethers.Wallet.createRandom();
 const state = {
   onboardingChallenges: [],
   accountApiKeys: [],
+  connectorInstallCodes: [],
+  connectorGrants: [],
   runtime: {},
+  authority: null,
   services: [
     {
       id: 'svc-price',
@@ -146,6 +150,23 @@ const onboardingHelpers = createOnboardingSetupHelpers({
   readAccountApiKeys: () => state.accountApiKeys,
   writeAccountApiKeys: (rows = []) => {
     state.accountApiKeys = Array.isArray(rows) ? rows : [];
+  }
+});
+
+const connectorHelpers = createClaudeConnectorAuthHelpers({
+  CONNECTOR_INSTALL_CODE_TTL_MS: 15 * 60 * 1000,
+  CONNECTOR_GRANT_TTL_MS: 24 * 60 * 60 * 1000,
+  CONNECTOR_INSTALL_CODE_MAX_ROWS: 100,
+  CONNECTOR_GRANT_MAX_ROWS: 100,
+  createTraceId,
+  normalizeAddress,
+  readConnectorInstallCodes: () => state.connectorInstallCodes,
+  writeConnectorInstallCodes: (rows = []) => {
+    state.connectorInstallCodes = Array.isArray(rows) ? rows : [];
+  },
+  readConnectorGrants: () => state.connectorGrants,
+  writeConnectorGrants: (rows = []) => {
+    state.connectorGrants = Array.isArray(rows) ? rows : [];
   }
 });
 
@@ -192,6 +213,21 @@ function writeSessionRuntime(next = {}) {
   };
   return {
     ...state.runtime
+  };
+}
+
+function materializeAuthority() {
+  if (!state.authority) {
+    return { ok: false, statusCode: 404, code: 'authority_not_found', reason: 'not configured' };
+  }
+  return {
+    ok: true,
+    authority: {
+      ...state.authority
+    },
+    runtime: {
+      ...state.runtime
+    }
   };
 }
 
@@ -251,13 +287,17 @@ registerCoreIdentitySessionRoutes({
     ensureAAAccountDeployment: async () => null,
     buildAccountApiKeyPublicRecord: onboardingHelpers.buildAccountApiKeyPublicRecord,
     clearOnboardingAuthCookie: onboardingHelpers.clearOnboardingAuthCookie,
+    findActiveClaudeConnectorGrant: connectorHelpers.findActiveGrantByOwner,
     findActiveAccountApiKey: onboardingHelpers.findActiveAccountApiKey,
+    findPendingClaudeConnectorInstallCode: connectorHelpers.findPendingInstallCodeByOwner,
     generateAccountApiKey: onboardingHelpers.generateAccountApiKey,
+    issueClaudeConnectorInstallCode: connectorHelpers.issueInstallCode,
     issueOnboardingAuthChallenge: onboardingHelpers.issueOnboardingAuthChallenge,
     maskSecret: (value = '') => (normalizeText(value) ? '***' : ''),
     readRecords: () => [],
     readSessionRuntime: () => ({ ...state.runtime }),
     requireRole,
+    revokeClaudeConnectorGrant: connectorHelpers.revokeGrant,
     revokeAccountApiKey: onboardingHelpers.revokeAccountApiKey,
     sessionPayConfigSnapshot: () => ({}),
     sessionPayMetrics: {
@@ -276,7 +316,7 @@ registerCoreIdentitySessionRoutes({
       recentFailures: []
     },
     sessionRuntimePath: 'memory://session-runtime',
-    materializeAuthority: () => ({ ok: false, statusCode: 404, code: 'authority_not_found', reason: 'not configured' }),
+    materializeAuthority,
     revokeConsumerAuthorityPolicy: () => ({ ok: false, statusCode: 404, code: 'authority_not_found', reason: 'not configured' }),
     resolveSessionRuntime,
     validateConsumerAuthority: () => ({ ok: false, statusCode: 404, code: 'authority_not_found', reason: 'not configured' }),
@@ -331,6 +371,8 @@ registerCoreIdentitySessionRoutes({
         authorizedBy: userEoa,
         authorizedAt: Date.now(),
         authorizationMode: 'backend_managed_session',
+        authorizationSignature: normalizeText(body.userSignature || ''),
+        authorizationPayload: payload,
         authorizationPayloadHash: `0x${'c'.repeat(64)}`,
         authorizationNonce: normalizeText(payload.nonce || ''),
         authorizationExpiresAt: Number(payload.expiresAt || 0),
@@ -339,6 +381,18 @@ registerCoreIdentitySessionRoutes({
         authorizationAudience: normalizeText(payload.audience || ''),
         allowedCapabilities: Array.isArray(payload.allowedCapabilities) ? payload.allowedCapabilities : []
       });
+      state.authority = {
+        authorityId: 'setup-harness-authority',
+        status: 'active',
+        owner: userEoa,
+        aaWallet: runtime.aaWallet,
+        sessionId: runtime.sessionId,
+        allowedCapabilities: Array.isArray(payload.allowedCapabilities) ? payload.allowedCapabilities : [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        revokedAt: 0
+      };
       return {
         ensured: {
           created: false,
@@ -453,8 +507,11 @@ registerMcpRoutes(app, {
   PORT: String(port),
   authConfigured,
   extractApiKey,
+  resolveClaudeConnectorToken: connectorHelpers.resolveConnectorToken,
   resolveAuthRequest,
   resolveRoleByApiKey,
+  claimClaudeConnectorInstallCode: connectorHelpers.claimInstallCode,
+  touchClaudeConnectorGrantUsage: connectorHelpers.touchGrantUsage,
   getInternalAgentApiKey: () => 'setup-agent-key'
 });
 
@@ -634,39 +691,42 @@ try {
     'session authorize did not bind authorizedBy to onboarding owner'
   );
 
-  const generateResponse = await fetch(`${host}/api/account/api-key/generate`, {
+  const connectorBootstrapResponse = await fetch(`${host}/api/connector/agent/bootstrap`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       Cookie: onboardingCookie
     },
-    body: JSON.stringify({})
+    body: JSON.stringify({
+      client: 'claude',
+      clientId: 'setup-harness'
+    })
   });
-  const generatePayload = await parseJson(generateResponse);
-  assert(generateResponse.ok, 'account api key generate failed');
-  const apiKey = normalizeText(generatePayload?.apiKey?.key || '');
-  assert(apiKey.startsWith('ktrace_sk_'), 'generated api key format mismatch');
+  const connectorBootstrapPayload = await parseJson(connectorBootstrapResponse);
+  assert(connectorBootstrapResponse.ok, 'session-first connector bootstrap failed');
+  const connectorUrl = normalizeText(connectorBootstrapPayload?.connector?.connectorUrl || '');
+  const connectorToken = decodeURIComponent(connectorUrl.split('/mcp/connect/')[1] || '');
+  assert(connectorToken.startsWith('ktrace_cc_'), 'connector bootstrap did not issue a connector token');
 
-  const accountKeyResponse = await fetch(`${host}/api/account/api-key`, {
+  const connectorStatusResponse = await fetch(`${host}/api/connector/agent/status?client=claude&clientId=setup-harness`, {
     headers: {
       Accept: 'application/json',
       Cookie: onboardingCookie
     }
   });
-  const accountKeyPayload = await parseJson(accountKeyResponse);
-  assert(accountKeyResponse.ok, 'account api key metadata lookup failed');
+  const connectorStatusPayload = await parseJson(connectorStatusResponse);
+  assert(connectorStatusResponse.ok, 'connector status lookup failed');
   assert(
-    normalizeText(accountKeyPayload?.apiKey?.prefix || '') === normalizeText(generatePayload?.apiKey?.prefix || ''),
-    'account api key metadata prefix mismatch'
+    normalizeText(connectorStatusPayload?.connector?.state || '') === 'install_code_issued',
+    'connector status mismatch after bootstrap'
   );
 
-  const toolsListResponse = await fetch(`${host}/mcp`, {
+  const toolsListResponse = await fetch(`${host}/mcp/connect/${encodeURIComponent(connectorToken)}`, {
     method: 'POST',
     headers: {
       Accept: 'application/json, text/event-stream',
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -676,29 +736,31 @@ try {
     })
   });
   const toolsListText = await toolsListResponse.text();
-  assert(toolsListResponse.ok, 'account api key could not reach MCP tools/list');
+  assert(toolsListResponse.ok, 'connector token could not reach MCP tools/list');
   assert(
     toolsListText.includes('ktrace__svc_price'),
     'MCP tools/list did not expose setup harness capability'
   );
 
-  const revokeResponse = await fetch(`${host}/api/account/api-key/revoke`, {
+  const revokeResponse = await fetch(`${host}/api/connector/agent/revoke`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       Cookie: onboardingCookie
     },
-    body: JSON.stringify({})
+    body: JSON.stringify({
+      client: 'claude',
+      clientId: 'setup-harness'
+    })
   });
-  assert(revokeResponse.ok, 'account api key revoke failed');
+  assert(revokeResponse.ok, 'connector revoke failed');
 
-  const revokedMcpResponse = await fetch(`${host}/mcp`, {
+  const revokedMcpResponse = await fetch(`${host}/mcp/connect/${encodeURIComponent(connectorToken)}`, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -708,10 +770,10 @@ try {
     })
   });
   const revokedMcpPayload = await parseJson(revokedMcpResponse);
-  assert(revokedMcpResponse.status === 401, 'revoked account api key did not return 401');
+  assert(revokedMcpResponse.status === 401, 'revoked connector token did not return 401');
   assert(
-    normalizeText(revokedMcpPayload?.error?.message || '') === 'Missing or invalid API key.',
-    'revoked account api key failure shape changed'
+    normalizeText(revokedMcpPayload?.error?.message || '') === 'Missing or invalid connector token.',
+    'revoked connector token failure shape changed'
   );
 
   console.log(
@@ -720,8 +782,12 @@ try {
         ok: true,
         summary: {
           ownerEoa: ownerWallet.address,
-          aaWallet: ensurePayload?.aaWallet || '',
-          apiKeyPrefix: generatePayload?.apiKey?.prefix || '',
+          aaWallet:
+            finalizePayload?.runtime?.aaWallet ||
+            preparePayload?.bootstrap?.aaWallet ||
+            connectorBootstrapPayload?.connector?.aaWallet ||
+            '',
+          connectorInstallCodeId: connectorBootstrapPayload?.connector?.installCodeId || '',
           mcpTool: 'ktrace__svc_price'
         }
       },

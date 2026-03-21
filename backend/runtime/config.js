@@ -8,9 +8,16 @@ import {
   toBoundedIntEnv
 } from '../lib/env.js';
 import {
+  DEFAULT_KITE_AA_JOB_LANE_REQUIRED_VERSION,
+  DEFAULT_KITE_AA_REQUIRED_VERSION,
   DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION,
   DEFAULT_KITE_AA_FACTORY_ADDRESS
 } from '../lib/aaConfig.js';
+import {
+  applyNodeEnvProxyPreference,
+  getEnvProxyDiagnostics,
+  shouldUseEnvProxy
+} from '../lib/envProxy.js';
 import {
   deriveAddressFromPrivateKey,
   normalizeAddress,
@@ -49,6 +56,7 @@ function parseApprovalRules(raw = '') {
 }
 
 export function createRuntimeConfig() {
+  applyNodeEnvProxyPreference();
   const PORT = String(process.env.PORT || 3001).trim() || '3001';
   const PACKAGE_VERSION = (() => {
     try {
@@ -143,9 +151,17 @@ export function createRuntimeConfig() {
         process.env.KITE_AA_EXPECTED_IMPLEMENTATION ||
         DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION
     ) || DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION;
+  const KITE_USE_ENV_PROXY = shouldUseEnvProxy();
+  const NODE_USE_ENV_PROXY_ENABLED = /^(1|true|yes|on)$/i.test(
+    String(process.env.NODE_USE_ENV_PROXY || '').trim()
+  );
+  const PROXY_TRANSPORT_DIAGNOSTICS = getEnvProxyDiagnostics();
   const KITE_MIN_NATIVE_GAS = String(process.env.KITE_MIN_NATIVE_GAS || '0.0001').trim();
   const AA_V2_VERSION_TAG = String(
-    process.env.KITE_AA_REQUIRED_VERSION || 'GokiteAccountV2-session-userop'
+    process.env.KITE_AA_REQUIRED_VERSION || DEFAULT_KITE_AA_REQUIRED_VERSION
+  ).trim();
+  const KITE_AA_JOB_LANE_REQUIRED_VERSION = String(
+    process.env.KITE_AA_JOB_LANE_REQUIRED_VERSION || DEFAULT_KITE_AA_JOB_LANE_REQUIRED_VERSION
   ).trim();
   const KITE_REQUIRE_AA_V2 = !/^(0|false|no|off)$/i.test(
     String(process.env.KITE_REQUIRE_AA_V2 || '1').trim()
@@ -609,8 +625,12 @@ export function createRuntimeConfig() {
     BACKEND_ENTRYPOINT_ADDRESS,
     KITE_AA_FACTORY_ADDRESS,
     KITE_AA_ACCOUNT_IMPLEMENTATION,
+    KITE_USE_ENV_PROXY,
+    NODE_USE_ENV_PROXY_ENABLED,
+    PROXY_TRANSPORT_DIAGNOSTICS,
     KITE_MIN_NATIVE_GAS,
     AA_V2_VERSION_TAG,
+    KITE_AA_JOB_LANE_REQUIRED_VERSION,
     KITE_REQUIRE_AA_V2,
     KITE_ALLOW_EOA_RELAY_FALLBACK,
     KITE_ALLOW_BACKEND_USEROP_SIGN,

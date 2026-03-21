@@ -9,6 +9,9 @@ import {
   DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION,
   DEFAULT_KITE_AA_FACTORY_ADDRESS
 } from './aaConfig.js';
+import { applyNodeEnvProxyPreference, getEnvProxyDiagnostics } from './envProxy.js';
+
+applyNodeEnvProxyPreference();
 
 const NETWORKS = {
   kite_testnet: {
@@ -64,6 +67,7 @@ export class GokiteAASDK {
       backoffJitterMs,
       receiptPollIntervalMs: toBoundedInt(config.bundlerReceiptPollIntervalMs, 1_000, 800, 15_000)
     };
+    this.proxyDiagnostics = getEnvProxyDiagnostics();
     const providerRpcTimeoutMs = toBoundedInt(
       config.rpcTimeoutMs,
       Math.max(60_000, this.bundlerRpcConfig.timeoutMs * 4),
@@ -99,6 +103,7 @@ export class GokiteAASDK {
     
     this.accountAbi = [
       'function execute(address dest, uint256 value, bytes calldata func) external',
+      'function executeWithSession(bytes32 sessionId, address target, uint256 value, bytes data, bytes32 actionId, bytes authz) external',
       'function executeBatch(address[] calldata dest, uint256[] calldata value, bytes[] calldata func) external',
       'function getNonce() view returns (uint256)',
       'function executeTransferWithAuthorizationAndProvider(bytes32 sessionId, tuple(address from,address to,address token,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce) auth, bytes signature, bytes32 serviceProvider, bytes metadata) external',
@@ -500,6 +505,29 @@ export class GokiteAASDK {
         metadata || '0x'
       ]
     );
+    return this.sendRawCallDataUserOperationAndWait(callData, signFunction, gasOverrides);
+  }
+
+  async sendSessionGenericExecute(
+    {
+      sessionId,
+      target,
+      value = 0n,
+      data = '0x',
+      actionId = ethers.ZeroHash,
+      authz = '0x'
+    },
+    signFunction,
+    gasOverrides = {}
+  ) {
+    const callData = this.account.interface.encodeFunctionData('executeWithSession', [
+      sessionId,
+      target,
+      value,
+      data,
+      actionId,
+      authz
+    ]);
     return this.sendRawCallDataUserOperationAndWait(callData, signFunction, gasOverrides);
   }
 

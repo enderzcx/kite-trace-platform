@@ -1,10 +1,27 @@
 # Session Pay Reliability Runbook
 
-Last updated: 2026-03-01 (Asia/Shanghai)
+Last updated: 2026-03-20 (Asia/Shanghai)
 
 ## Goal
 - Reduce bundler transport flakiness impact on `/api/session/pay`.
 - Make failure categories observable and actionable.
+- Keep payment-session capability separate from job-lane generic execution capability.
+
+## Capability Boundary
+
+- Current V2 account line, `GokiteAccountV2-session-userop`, is treated as:
+  - `accountCapabilities.sessionPayment = true`
+  - `accountCapabilities.sessionGenericExecute = false`
+- `/api/session/pay` remains on `executeTransferWithAuthorizationAndProvider(...)`
+- ERC-8183 job-lane mutations must not reuse payment-only capability
+- If a runtime is V2/payment-only, job-lane APIs should fail with `aa_session_execute_not_supported` instead of waiting on bundler receipts
+
+Runtime/API payloads now expose:
+
+- `accountVersionTag`
+- `accountCapabilities.sessionPayment`
+- `accountCapabilities.sessionGenericExecute`
+- `requiredForJobLane`
 
 ## Runtime Knobs
 - `KITE_SESSION_PAY_RETRIES` (default: `3`)

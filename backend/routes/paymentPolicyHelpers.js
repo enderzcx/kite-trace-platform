@@ -463,6 +463,9 @@ export function createPaymentPolicyHelpers(deps = {}) {
       text.includes('eth_estimateuseroperationgas') ||
       text.includes('execution reverted') ||
       text.includes('timeout waiting for useroperation') ||
+      text.includes('useroperation timed out') ||
+      text.includes('receipt not found') ||
+      text.includes('bundler') ||
       text.includes('aa24') ||
       text.includes('sig_validation_failed')
     );

@@ -14,6 +14,7 @@ export type TraceAnchor = {
     txHash?: string;
     registryAddress?: string;
     anchoredAt?: string;
+    payloadHash?: string;
   };
 };
 
@@ -53,7 +54,7 @@ export type JobAudit = {
     escrow?: { present?: boolean; enforcementMode?: string; contractAddress?: string; tokenAddress?: string };
     conditionalPayment?: { present?: boolean; enforcementMode?: string };
     deadline?: { present?: boolean; enforcementMode?: string };
-    roleEnforcement?: { present?: boolean; enforcementMode?: string };
+    roleEnforcement?: { present?: boolean; enforcementMode?: string; executionMode?: string; aaMethod?: string };
     staking?: { present?: boolean; enforcementMode?: string };
     slashing?: { present?: boolean; enforcementMode?: string };
   };
@@ -790,6 +791,22 @@ export default function JobAuditView({
               </div>
             ))}
           </div>
+          {(primitives.roleEnforcement?.executionMode || primitives.roleEnforcement?.aaMethod) && (
+            <div className="mt-3 flex flex-wrap gap-4 rounded-2xl border border-[rgba(90,80,50,0.1)] bg-[#faf7f1] px-4 py-3">
+              {primitives.roleEnforcement?.executionMode && (
+                <div className="flex items-center gap-2 text-[11px] text-[#7a6e56]">
+                  <span className="font-medium text-[#2f351a]">Execution mode:</span>
+                  <code className="font-mono">{primitives.roleEnforcement.executionMode}</code>
+                </div>
+              )}
+              {primitives.roleEnforcement?.aaMethod && (
+                <div className="flex items-center gap-2 text-[11px] text-[#7a6e56]">
+                  <span className="font-medium text-[#2f351a]">AA method:</span>
+                  <code className="font-mono">{primitives.roleEnforcement.aaMethod}</code>
+                </div>
+              )}
+            </div>
+          )}
         </Section>
 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-[rgba(90,80,50,0.14)] bg-[#f2ebe0] px-6 py-4">

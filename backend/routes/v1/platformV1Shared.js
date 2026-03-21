@@ -160,9 +160,14 @@ export function createPlatformV1Shared(deps) {
     return normalizeLower(fallback) || 'approved';
   }
 
-  function buildProviderTrustAggregate(providerId = '') {
-    const normalizedProviderId = normalizeText(providerId);
-    if (!normalizedProviderId) {
+  function buildProviderTrustAggregate(providerInput = '') {
+    const provider =
+      providerInput && typeof providerInput === 'object'
+        ? providerInput
+        : ensureNetworkAgents().find((item) => normalizeText(item?.id) === normalizeText(providerInput)) || null;
+    const normalizedProviderId = normalizeText(provider?.id || providerInput);
+    const normalizedTrustAgentId = normalizeText(provider?.identityAgentId || normalizedProviderId);
+    if (!normalizedTrustAgentId) {
       return {
         reputationCount: 0,
         validationCount: 0,
@@ -172,11 +177,11 @@ export function createPlatformV1Shared(deps) {
       };
     }
     const reputationItems = readReputationSignals()
-      .filter((item) => normalizeText(item?.agentId) === normalizedProviderId);
+      .filter((item) => normalizeText(item?.agentId) === normalizedTrustAgentId);
     const validationItems = readValidationRecords()
-      .filter((item) => normalizeText(item?.agentId) === normalizedProviderId);
+      .filter((item) => normalizeText(item?.agentId) === normalizedTrustAgentId);
     const publicationItems = readTrustPublications()
-      .filter((item) => normalizeText(item?.agentId) === normalizedProviderId);
+      .filter((item) => normalizeText(item?.agentId) === normalizedTrustAgentId);
     const reputationAggregate = buildTrustReputationAggregate(reputationItems.map((item) => buildTrustReputationView(item)));
     return {
       reputationCount: reputationAggregate.count,
@@ -215,7 +220,7 @@ export function createPlatformV1Shared(deps) {
 
   function buildProviderDiscoveryScore(provider = {}) {
     const verification = buildProviderVerificationView(provider);
-    const trust = buildProviderTrustAggregate(provider?.id);
+    const trust = buildProviderTrustAggregate(provider);
     const onboarding = buildProviderOnboardingView(provider);
     let score = 0;
     if (provider?.active !== false) score += 5;
@@ -356,7 +361,7 @@ export function createPlatformV1Shared(deps) {
   function buildProviderView(provider = {}) {
     const capabilities = Array.isArray(provider?.capabilities) ? provider.capabilities : [];
     const verification = buildProviderVerificationView(provider);
-    const trust = buildProviderTrustAggregate(provider?.id);
+    const trust = buildProviderTrustAggregate(provider);
     const onboarding = buildProviderOnboardingView(provider);
     return {
       schemaVersion: 'v1',
@@ -392,13 +397,16 @@ export function createPlatformV1Shared(deps) {
   function buildCapabilityView(service = {}, provider = null) {
     const linkedProvider = provider && typeof provider === 'object' ? provider : null;
     const providerVerification = linkedProvider ? buildProviderVerificationView(linkedProvider) : null;
-    const providerTrust = linkedProvider ? buildProviderTrustAggregate(linkedProvider?.id) : null;
+    const providerTrust = linkedProvider ? buildProviderTrustAggregate(linkedProvider) : null;
     return {
       schemaVersion: 'v1',
       kind: 'capability',
       capabilityId: normalizeText(service?.id),
       providerId: normalizeText(service?.providerAgentId),
       action: normalizeText(service?.action),
+      audience: normalizeText(service?.audience || 'public_product') || 'public_product',
+      scopeMode: normalizeText(service?.scopeMode || 'scoped') || 'scoped',
+      riskLevel: normalizeText(service?.riskLevel || 'standard') || 'standard',
       name: normalizeText(service?.name),
       description: normalizeText(service?.description),
       laneType: normalizeLower(service?.action) === 'hyperliquid-order-testnet' ? 'job-or-buy' : 'buy',
@@ -581,6 +589,7 @@ export function createPlatformV1Shared(deps) {
       kind: 'trust-reputation-signal',
       signalId: normalizeText(signal?.signalId),
       agentId: normalizeText(signal?.agentId),
+      identityRegistry: normalizeText(signal?.identityRegistry),
       sourceLane: normalizeText(signal?.sourceLane),
       sourceKind: normalizeText(signal?.sourceKind),
       referenceId: normalizeText(signal?.referenceId),

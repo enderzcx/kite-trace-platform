@@ -1,6 +1,6 @@
 # ERC-8183 Live Verification Runbook
 
-Updated: 2026-03-18
+Updated: 2026-03-20
 
 ## Scope
 
@@ -12,12 +12,20 @@ Goal:
 - verify one real escrow-backed job can progress onchain
 - record exact tx hashes and failure points before approval work begins
 - keep AA-runtime funding requirements explicit once deadline / stake / slash enforcement is enabled
+- separate payment-session compatibility from job-lane session-generic compatibility
 
 AA-native update:
 
 - requester / executor / validator should now be treated as AA addresses
 - `npm run erc8183:approve:escrow` now prepares allowance through AA runtimes, not owner EOAs
 - a fresh live rerun should replace any older signer-based demo artifact
+
+AA capability update:
+
+- V2 runtime (`GokiteAccountV2-session-userop`) remains valid for payment/session-pay only
+- V2 must not be used for session-signed ERC-8183 generic execution
+- job-lane `fund / accept / submit / validate` now preflight runtime capability and should return `aa_session_execute_not_supported` on V2 instead of hanging on a missing bundler receipt
+- V3 rollout should move these mutations onto a dedicated session-aware entrypoint such as `executeWithSession(...)`
 
 ## Environment
 

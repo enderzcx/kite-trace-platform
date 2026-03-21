@@ -238,10 +238,20 @@ export function createAuthHelpers({
         ...options
       });
       if (!resolved.ok) {
+        const isForbidden = Number(resolved.status || 0) === 403;
+        const overrideStatus = Number(
+          isForbidden ? options.forbiddenStatus || 0 : options.unauthorizedStatus || 0
+        );
+        const overrideCode = normalizeText(
+          isForbidden ? options.forbiddenCode || '' : options.unauthorizedCode || ''
+        );
+        const overrideMessage = normalizeText(
+          isForbidden ? options.forbiddenMessage || '' : options.unauthorizedMessage || ''
+        );
         return sendErrorResponse(req, res, {
-          status: resolved.status || 401,
-          code: resolved.code || 'unauthorized',
-          message: resolved.message || 'Missing or invalid API key.',
+          status: overrideStatus || resolved.status || 401,
+          code: overrideCode || resolved.code || 'unauthorized',
+          message: overrideMessage || resolved.message || 'Missing or invalid API key.',
           ...(resolved.detail ? { detail: resolved.detail } : {})
         });
       }

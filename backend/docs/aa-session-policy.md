@@ -1,6 +1,6 @@
 # AA Session Policy
 
-Updated: 2026-03-18
+Updated: 2026-03-20
 Status: active
 
 ## Scope
@@ -30,6 +30,10 @@ Normal AA execution should verify:
 - session exists on-chain
 - session agent matches the synced session key
 - AA wallet has enough native gas
+- runtime capability metadata is present:
+  - `accountVersionTag`
+  - `accountCapabilities.sessionPayment`
+  - `accountCapabilities.sessionGenericExecute`
 
 Where relevant, authority checks should also pass before submission.
 
@@ -45,11 +49,22 @@ Canonical AA role model:
 
 The backend normal path must not send job lifecycle transactions with owner EOA signers.
 
+Capability rule for job-lane mutations:
+
+- `GokiteAccountV2-session-userop` is treated as payment-capable only
+- V2 may continue to power `/api/session/pay` and x402 settlement
+- V2 must fail fast for ERC-8183 `fund / accept / submit / validate` with `aa_session_execute_not_supported`
+- session-scoped job-lane execution requires a V3-capable account that exposes a dedicated session-generic entrypoint such as `executeWithSession(...)`
+- backend must not fall back to session-signed generic `execute(...)` for job-lane mutations
+
 ## Operational Notes
 
 - owner EOA may still be used for setup, authorization, revoke, and recovery
 - legacy signer-based records may remain readable
 - new execution should emit AA-native audit metadata
+- once V3 is deployed, job-lane records should emit:
+  - `executionMode = aa-session-generic`
+  - `aaMethod = executeWithSession`
 
 ## Reference
 

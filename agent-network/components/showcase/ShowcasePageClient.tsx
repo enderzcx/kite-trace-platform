@@ -80,6 +80,12 @@ export default function ShowcasePageClient({
             >
               Live Demo
             </a>
+            <a
+              href="/trust"
+              className="rounded-md px-3 py-1.5 text-[13px] text-[#7a6e56] transition hover:text-[#18180e] hover:bg-[rgba(58,66,32,0.06)]"
+            >
+              Trust
+            </a>
             <div className="mx-2 h-4 w-px bg-[rgba(90,80,50,0.18)]" />
             <a
               href="https://github.com/enderzcx/kite-trace-platform"
@@ -142,6 +148,9 @@ export default function ShowcasePageClient({
             </a>
             <a href="/authority" className="transition hover:text-[#3a4220]">
               Authority
+            </a>
+            <a href="/trust" className="transition hover:text-[#3a4220]">
+              Trust
             </a>
             <a
               href="https://github.com/enderzcx/kite-trace-platform"

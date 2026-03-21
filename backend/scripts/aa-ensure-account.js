@@ -114,9 +114,7 @@ async function main() {
     console.log('AA account already deployed. No action needed.');
     return;
   }
-  throw new Error(
-    `Generic AA deployment via createAccount has been removed from KTrace. Provision the V2 AA wallet at ${accountAddress} first, then rerun this check.`
-  );
+  throw new Error(`AA account not deployed yet at ${accountAddress}. Run the onboarding/provision path first, then rerun this check.`);
 }
 
 main().catch((error) => {

@@ -363,7 +363,7 @@ export default function ApprovalsInboxClient() {
         if (!quiet) setLoading(false);
       }
     },
-    [backendUrl, filter] // eslint-disable-line react-hooks/exhaustive-deps
+    [backendUrl, filter]
   );
 
   // Initial fetch + filter re-fetch

@@ -392,6 +392,74 @@ function ResultCard({ audit }: { audit: JobAudit }) {
               ) : null}
             </div>
           ) : null}
+
+          {/* on-chain integrity proof */}
+          {audit.traceAnchor ? (
+            <div className="rounded-2xl border border-[rgba(90,80,50,0.1)] bg-[#faf7f1] px-4 py-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#9e8e76]">
+                  On-chain Integrity Proof
+                </p>
+                {audit.traceAnchor.anchor?.txHash ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.22em]"
+                    style={{ borderColor: "rgba(58,66,32,0.22)", background: "rgba(58,66,32,0.09)", color: "#3a4220" }}
+                  >
+                    <CheckCircle2 className="size-3 shrink-0" />
+                    On-chain Verified
+                  </span>
+                ) : audit.traceAnchor.anchorRequired ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.22em]"
+                    style={{ borderColor: "rgba(138,96,32,0.22)", background: "rgba(138,96,32,0.08)", color: "#8a6020" }}
+                  >
+                    <Clock3 className="size-3 shrink-0" />
+                    Pending Anchor
+                  </span>
+                ) : (
+                  <span
+                    className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.22em]"
+                    style={{ borderColor: "rgba(90,80,50,0.16)", background: "#f7f2ea", color: "#7a6e56" }}
+                  >
+                    Off-chain Only
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5 text-[11px]">
+                {audit.traceAnchor.anchor?.payloadHash ? (
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[#9e8e76]">payloadHash</span>
+                    <span className="text-[#18180e]" style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}>
+                      {shorten(audit.traceAnchor.anchor.payloadHash, 10, 8)}
+                    </span>
+                  </div>
+                ) : null}
+                {audit.traceAnchor.anchor?.txHash ? (
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[#9e8e76]">anchorTxHash</span>
+                    <a
+                      href={`https://testnet.kitescan.ai/tx/${audit.traceAnchor.anchor.txHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[#3a4220] transition hover:underline"
+                      style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
+                    >
+                      {shorten(audit.traceAnchor.anchor.txHash, 10, 8)}
+                      <ExternalLink className="size-3 opacity-60" />
+                    </a>
+                  </div>
+                ) : null}
+                {audit.traceAnchor.anchor?.anchorId ? (
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[#9e8e76]">anchorId</span>
+                    <span className="text-[#18180e]" style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}>
+                      #{audit.traceAnchor.anchor.anchorId}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -432,28 +500,20 @@ function ResultCard({ audit }: { audit: JobAudit }) {
 
 type UIState = "idle" | "loading" | "success" | "error";
 
+function readInitialJobId() {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.search);
+  return (params.get("jobId") || params.get("job") || "").trim();
+}
+
 export default function AuditExplorer() {
-  const [input, setInput] = useState("");
+  const [initialJobId] = useState(() => readInitialJobId());
+  const [input, setInput] = useState(initialJobId);
   const [uiState, setUiState] = useState<UIState>("idle");
   const [audit, setAudit] = useState<JobAudit | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // read ?jobId= or #audit-explorer?jobId= from URL on mount
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const jobId = params.get("jobId") || params.get("job");
-    if (jobId) {
-      setInput(jobId);
-      void run(jobId);
-      // scroll to section
-      setTimeout(() => {
-        document.getElementById("audit-explorer")?.scrollIntoView({ behavior: "smooth" });
-      }, 300);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function run(jobId: string) {
+  const run = async (jobId: string) => {
     const id = (jobId || input).trim();
     if (!id) return;
     setUiState("loading");
@@ -465,7 +525,23 @@ export default function AuditExplorer() {
     } else {
       setUiState("error");
     }
-  }
+  };
+
+  useEffect(() => {
+    if (initialJobId) {
+      const runTimer = window.setTimeout(() => {
+        void run(initialJobId);
+      }, 0);
+      // scroll to section
+      const scrollTimer = window.setTimeout(() => {
+        document.getElementById("audit-explorer")?.scrollIntoView({ behavior: "smooth" });
+      }, 300);
+      return () => {
+        window.clearTimeout(runTimer);
+        window.clearTimeout(scrollTimer);
+      };
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

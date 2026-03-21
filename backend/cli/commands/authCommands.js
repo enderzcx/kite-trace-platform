@@ -13,7 +13,6 @@ export function createAuthCommandHandlers({
   normalizeWalletAddress,
   createCliError,
   createEnvelope,
-  maskApiKey,
   ensureUsableSession,
   normalizeSessionGrantAddress,
   readCurrentIdentityProfile,
@@ -228,9 +227,7 @@ export function createAuthCommandHandlers({
           configPath,
           walletAddress: wallet,
           baseUrl: runtime.baseUrl,
-          chain: runtime.chain,
-          apiKeyConfigured: runtime.apiKeyConfigured,
-          apiKeyMasked: maskApiKey(runtime.apiKey)
+          chain: runtime.chain
         },
         auth: {
           role: String(auth.role || '').trim(),

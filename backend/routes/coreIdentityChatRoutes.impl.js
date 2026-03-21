@@ -2,6 +2,7 @@ import { registerCoreIdentityAgentChatRoutes } from './coreIdentityAgentChatRout
 import { registerCoreIdentityApprovalRoutes } from './coreIdentityApprovalRoutes.js';
 import { registerCoreIdentityIdentityRoutes } from './coreIdentityIdentityRoutes.js';
 import { registerCoreIdentitySessionRoutes } from './coreIdentitySessionRoutes.js';
+import { deriveAaAccountCapabilities } from '../lib/aaConfig.js';
 
 export function registerCoreIdentityChatRoutes(app, deps) {
   const {
@@ -14,6 +15,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     POLICY_MAX_PER_TX_DEFAULT,
     ROUTER_WALLET_KEY_NORMALIZED,
     SETTLEMENT_TOKEN,
+    ERC8183_ESCROW_ADDRESS,
     backendSigner,
     createTraceId,
     crypto,
@@ -32,6 +34,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     KITE_AGENT2_ID,
     KITE_REQUIRE_AA_V2,
     AA_V2_VERSION_TAG,
+    KITE_AA_JOB_LANE_REQUIRED_VERSION,
     maskSecret,
     normalizeAddress,
     normalizeReactiveParams,
@@ -78,6 +81,24 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     'function owner() view returns (address)',
     'function version() view returns (string)'
   ];
+  const ACTIVE_ACCOUNT_FACTORY_ADDRESS = normalizeAddress(KITE_AA_FACTORY_ADDRESS || '');
+  const ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS = normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || '');
+  const KNOWN_BAD_FACTORY_ADDRESSES = new Set(
+    String(process.env.KITE_AA_KNOWN_BAD_FACTORIES || '0x7112E8A6D6fC03fCab33E4FE3f8207F1eA9Be243')
+      .split(',')
+      .map((item) => normalizeAddress(item || ''))
+      .filter(Boolean)
+  );
+
+  function createBackendRpcProvider() {
+    const rpcRequest = new ethers.FetchRequest(BACKEND_RPC_URL);
+    rpcRequest.timeout = Math.max(
+      60_000,
+      Number(process.env.KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 4,
+      15_000
+    );
+    return new ethers.JsonRpcProvider(rpcRequest);
+  }
 
   function normalizeSessionGrantText(value = '', fallback = '') {
     const text = String(value ?? '').trim();
@@ -200,7 +221,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     for (const message of messages) {
       let recoveredAddress = '';
       try {
-        recoveredAddress = normalizeAddress(ethers.verifyMessage(message, normalizedSignature));
+        recoveredAddress = normalizeSessionGrantAddress(ethers.verifyMessage(message, normalizedSignature));
       } catch {
         recoveredAddress = '';
       }
@@ -223,17 +244,185 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     return ethers.keccak256(ethers.toUtf8Bytes(buildSessionGrantMessage(payload)));
   }
 
-  function buildSessionRuntimePayload(runtime = {}) {
+  function deriveRuntimeHealth(runtime = {}) {
     const runtimeFactoryAddress = normalizeAddress(runtime.accountFactoryAddress || '');
-    const activeFactoryAddress = normalizeAddress(KITE_AA_FACTORY_ADDRESS || '');
-    const activeImplementationAddress = normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || '');
+    if (runtimeFactoryAddress && ACTIVE_ACCOUNT_FACTORY_ADDRESS && runtimeFactoryAddress === ACTIVE_ACCOUNT_FACTORY_ADDRESS) {
+      return 'active_default';
+    }
+    if (runtimeFactoryAddress && KNOWN_BAD_FACTORY_ADDRESSES.has(runtimeFactoryAddress)) {
+      return 'known_bad_factory';
+    }
+    if (runtimeFactoryAddress || normalizeAddress(runtime.aaWallet || '')) {
+      return 'historical_non_default';
+    }
+    return '';
+  }
+
+  function clearSessionAuthorizationState(runtime = {}) {
     return {
       ...runtime,
-      activeAccountFactoryAddress: activeFactoryAddress,
-      activeAccountImplementationAddress: activeImplementationAddress,
-      isDefaultFactoryRuntime: Boolean(
-        runtimeFactoryAddress && activeFactoryAddress && runtimeFactoryAddress === activeFactoryAddress
+      sessionAddress: '',
+      sessionPrivateKey: '',
+      sessionId: '',
+      sessionTxHash: '',
+      expiresAt: 0,
+      authorizationPayload: null,
+      authorizationPayloadHash: '',
+      authorizationSignature: '',
+      authorizationNonce: '',
+      authorizationExpiresAt: 0,
+      authorizedBy: '',
+      authorizedAt: 0,
+      authorizationMode: '',
+      authorizedAgentId: '',
+      authorizedAgentWallet: '',
+      authorizationAudience: '',
+      allowedCapabilities: [],
+      allowedProviders: [],
+      allowedRecipients: [],
+      totalLimit: 0,
+      authorityId: '',
+      consumerAgentLabel: '',
+      authorityExpiresAt: 0,
+      authorityStatus: '',
+      authorityRevokedAt: 0,
+      authorityRevocationReason: '',
+      authorityCreatedAt: 0,
+      authorityUpdatedAt: 0
+    };
+  }
+
+  function shouldResetRuntimeState(currentRuntime = {}, nextRuntime = {}) {
+    const currentAaWallet = normalizeAddress(currentRuntime.aaWallet || '');
+    const nextAaWallet = normalizeAddress(nextRuntime.aaWallet || currentAaWallet || '');
+    const currentFactoryAddress = normalizeAddress(currentRuntime.accountFactoryAddress || '');
+    const nextFactoryAddress = normalizeAddress(
+      nextRuntime.accountFactoryAddress || currentFactoryAddress || ACTIVE_ACCOUNT_FACTORY_ADDRESS || ''
+    );
+    return Boolean(
+      (currentAaWallet && nextAaWallet && currentAaWallet !== nextAaWallet) ||
+        (currentFactoryAddress && nextFactoryAddress && currentFactoryAddress !== nextFactoryAddress) ||
+        deriveRuntimeHealth(currentRuntime) === 'known_bad_factory'
+    );
+  }
+
+  function buildSessionRuntimeBase(currentRuntime = {}, overrides = {}) {
+    const runtimeVersionSnapshot = deriveAaAccountCapabilities({
+      accountVersion: String(overrides.accountVersion ?? currentRuntime.accountVersion ?? '').trim(),
+      accountVersionTag: String(
+        overrides.accountVersionTag ??
+          overrides.accountVersion ??
+          currentRuntime.accountVersionTag ??
+          currentRuntime.accountVersion ??
+          ''
+      ).trim(),
+      accountCapabilities:
+        overrides.accountCapabilities ??
+        currentRuntime.accountCapabilities ??
+        {},
+      requiredForJobLane:
+        overrides.requiredForJobLane ??
+        currentRuntime.requiredForJobLane ??
+        ''
+    });
+    const previewRuntime = {
+      owner: normalizeAddress(overrides.owner || currentRuntime.owner || ''),
+      aaWallet: normalizeAddress(overrides.aaWallet || currentRuntime.aaWallet || ''),
+      tokenAddress: normalizeAddress(overrides.tokenAddress || currentRuntime.tokenAddress || ''),
+      gatewayRecipient: normalizeAddress(
+        overrides.gatewayRecipient || currentRuntime.gatewayRecipient || ''
       ),
+      accountFactoryAddress: normalizeAddress(
+        overrides.accountFactoryAddress ||
+          currentRuntime.accountFactoryAddress ||
+          ACTIVE_ACCOUNT_FACTORY_ADDRESS ||
+          ''
+      ),
+      accountImplementationAddress: normalizeAddress(
+        overrides.accountImplementationAddress ||
+          currentRuntime.accountImplementationAddress ||
+          ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS ||
+          ''
+      ),
+      maxPerTx: Number(
+        overrides.maxPerTx ?? currentRuntime.maxPerTx ?? 0
+      ),
+      dailyLimit: Number(
+        overrides.dailyLimit ?? currentRuntime.dailyLimit ?? 0
+      ),
+      accountVersion: String(
+        overrides.accountVersion ?? currentRuntime.accountVersion ?? ''
+      ).trim(),
+      accountVersionTag: runtimeVersionSnapshot.accountVersionTag,
+      accountCapabilities: runtimeVersionSnapshot.accountCapabilities,
+      requiredForJobLane: runtimeVersionSnapshot.requiredForJobLane,
+      runtimePurpose:
+        normalizeSessionGrantText(
+          overrides.runtimePurpose,
+          currentRuntime.runtimePurpose || 'consumer'
+        ) || 'consumer',
+      source: normalizeSessionGrantText(
+        overrides.source,
+        currentRuntime.source || ''
+      ),
+      updatedAt: Number(overrides.updatedAt || Date.now())
+    };
+    const baseRuntime = shouldResetRuntimeState(currentRuntime, previewRuntime)
+      ? clearSessionAuthorizationState(currentRuntime)
+      : { ...currentRuntime };
+    const nextRuntime = {
+      ...baseRuntime,
+      ...previewRuntime,
+      ...Object.fromEntries(
+        Object.entries(overrides).filter(([key]) =>
+          ![
+            'owner',
+            'aaWallet',
+            'tokenAddress',
+            'gatewayRecipient',
+            'accountFactoryAddress',
+            'accountImplementationAddress',
+            'maxPerTx',
+            'dailyLimit',
+            'accountVersion',
+            'accountVersionTag',
+            'accountCapabilities',
+            'requiredForJobLane',
+            'runtimePurpose',
+            'source',
+            'updatedAt'
+          ].includes(key)
+        )
+      )
+    };
+    nextRuntime.runtimeHealth = deriveRuntimeHealth(nextRuntime);
+    return nextRuntime;
+  }
+
+  function buildSessionRuntimePayload(runtime = {}) {
+    const runtimeFactoryAddress = normalizeAddress(runtime.accountFactoryAddress || '');
+    const runtimeHealth = deriveRuntimeHealth(runtime);
+    const runtimeVersionSnapshot = deriveAaAccountCapabilities({
+      accountVersion: runtime.accountVersion,
+      accountVersionTag: runtime.accountVersionTag,
+      accountCapabilities: runtime.accountCapabilities,
+      requiredForJobLane: runtime.requiredForJobLane
+    });
+    return {
+      ...runtime,
+      accountVersionTag: runtimeVersionSnapshot.accountVersionTag || String(runtime.accountVersion || '').trim(),
+      accountCapabilities: runtimeVersionSnapshot.accountCapabilities,
+      requiredForJobLane: runtimeVersionSnapshot.requiredForJobLane,
+      activeAccountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS,
+      activeAccountImplementationAddress: ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS,
+      activeEscrowAddress: normalizeAddress(ERC8183_ESCROW_ADDRESS || ''),
+      activeSettlementTokenAddress: normalizeAddress(runtime.tokenAddress || SETTLEMENT_TOKEN || ''),
+      isDefaultFactoryRuntime: Boolean(
+        runtimeFactoryAddress &&
+          ACTIVE_ACCOUNT_FACTORY_ADDRESS &&
+          runtimeFactoryAddress === ACTIVE_ACCOUNT_FACTORY_ADDRESS
+      ),
+      runtimeHealth,
       sessionPrivateKey: undefined,
       sessionPrivateKeyMasked: maskSecret(runtime.sessionPrivateKey),
       hasSessionPrivateKey: Boolean(runtime.sessionPrivateKey),
@@ -313,7 +502,10 @@ export function registerCoreIdentityChatRoutes(app, deps) {
         ''
     ).trim();
     if (explicit) return explicit.replace(/\/+$/, '');
-    const fallback = String(audience || '').trim() || `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
+    const fallback =
+      String(audience || '').trim() ||
+      String(process.env.BACKEND_PUBLIC_URL || '').trim() ||
+      `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
     try {
       const url = new URL(fallback);
       if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.port && url.port !== '3000') {
@@ -328,7 +520,9 @@ export function registerCoreIdentityChatRoutes(app, deps) {
   function buildApprovalRequestUrl(approvalRequestId = '', approvalToken = '', audience = '') {
     const frontendBaseUrl = resolveApprovalFrontendBaseUrl(audience);
     const backendBaseUrl =
-      String(audience || '').trim() || `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
+      String(audience || '').trim() ||
+      String(process.env.BACKEND_PUBLIC_URL || '').trim() ||
+      `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`;
     try {
       const url = new URL(
         `/approval/${encodeURIComponent(String(approvalRequestId || '').trim())}`,
@@ -924,10 +1118,34 @@ export function registerCoreIdentityChatRoutes(app, deps) {
         sessionId: normalizeSessionGrantText(runtimeInput.sessionId || body?.sessionId || '')
       }) || readSessionRuntime();
 
+    let defaultIdentityProfile = null;
+    const missingIdentityFields =
+      !String(rawPayload.agentId || '').trim() ||
+      !normalizeAddress(rawPayload.agentWallet || '') ||
+      !normalizeAddress(rawPayload.identityRegistry || '');
+    if (missingIdentityFields) {
+      try {
+        defaultIdentityProfile = await readIdentityProfile({});
+      } catch {
+        defaultIdentityProfile = null;
+      }
+    }
+
     const fallbackPayload = {
-      agentId: rawPayload.agentId || (ERC8004_AGENT_ID !== null ? String(ERC8004_AGENT_ID) : ''),
-      agentWallet: rawPayload.agentWallet || backendSigner?.address || '',
-      identityRegistry: rawPayload.identityRegistry || ERC8004_IDENTITY_REGISTRY || '',
+      agentId:
+        rawPayload.agentId ||
+        String(defaultIdentityProfile?.configured?.agentId || defaultIdentityProfile?.agentId || '').trim() ||
+        (ERC8004_AGENT_ID !== null ? String(ERC8004_AGENT_ID) : ''),
+      agentWallet:
+        rawPayload.agentWallet ||
+        normalizeAddress(defaultIdentityProfile?.agentWallet || '') ||
+        backendSigner?.address ||
+        '',
+      identityRegistry:
+        rawPayload.identityRegistry ||
+        normalizeAddress(defaultIdentityProfile?.configured?.registry || defaultIdentityProfile?.registry || '') ||
+        ERC8004_IDENTITY_REGISTRY ||
+        '',
       chainId: rawPayload.chainId || process.env.BACKEND_CHAIN_ID || '',
       payerAaWallet:
         rawPayload.payerAaWallet || runtimeInput.aaWallet || body?.aaWallet || fallbackRuntime?.aaWallet || '',
@@ -940,6 +1158,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
         '',
       audience:
         rawPayload.audience ||
+        String(process.env.BACKEND_PUBLIC_URL || '').trim() ||
         `http://127.0.0.1:${String(PORT || '').trim() || '3001'}`,
       singleLimit: rawPayload.singleLimit || runtimeInput.maxPerTx || fallbackRuntime?.maxPerTx || POLICY_MAX_PER_TX_DEFAULT,
       dailyLimit: rawPayload.dailyLimit || runtimeInput.dailyLimit || fallbackRuntime?.dailyLimit || POLICY_DAILY_LIMIT_DEFAULT,
@@ -1022,41 +1241,55 @@ export function registerCoreIdentityChatRoutes(app, deps) {
         };
         throw error;
       }
+      const runtimeBase = buildSessionRuntimeBase(fallbackRuntime, {
+        owner: normalizeSessionGrantAddress(runtimeInput.owner || body?.owner || fallbackRuntime?.owner || userEoa),
+        aaWallet: normalizeSessionGrantAddress(
+          runtimeInput.aaWallet || body?.aaWallet || payload.payerAaWallet || fallbackRuntime?.aaWallet || ''
+        ),
+        tokenAddress: normalizeSessionGrantAddress(
+          runtimeInput.tokenAddress || payload.tokenAddress || fallbackRuntime?.tokenAddress || ''
+        ),
+        gatewayRecipient: normalizeSessionGrantAddress(
+          runtimeInput.gatewayRecipient || payload.gatewayRecipient || fallbackRuntime?.gatewayRecipient || ''
+        ),
+        accountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS,
+        accountImplementationAddress: ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS,
+        maxPerTx: runtimeInput.maxPerTx || fallbackRuntime?.maxPerTx || payload.singleLimit,
+        dailyLimit: runtimeInput.dailyLimit || fallbackRuntime?.dailyLimit || payload.dailyLimit,
+        source: normalizeSessionGrantText(
+          runtimeInput.source,
+          fallbackRuntime?.source || 'api-v1-session-authorize-external'
+        ),
+        updatedAt: authorizedAt
+      });
       const verifiedRuntime = await verifyExternalSessionRuntime({
         runtime: {
-          ...fallbackRuntime,
+          ...runtimeBase,
           ...runtimeInput,
-          owner: normalizeSessionGrantAddress(runtimeInput.owner || body?.owner || fallbackRuntime?.owner || userEoa),
-          aaWallet: normalizeSessionGrantAddress(runtimeInput.aaWallet || body?.aaWallet || fallbackRuntime?.aaWallet || ''),
+          owner: runtimeBase.owner,
+          aaWallet: runtimeBase.aaWallet,
           sessionAddress: normalizeSessionGrantAddress(
             runtimeInput.sessionAddress ||
               body?.sessionAddress ||
               approvalRequest?.sessionAddress ||
-              fallbackRuntime?.sessionAddress ||
+              runtimeBase.sessionAddress ||
               ''
           ),
-          sessionId: normalizeSessionGrantText(runtimeInput.sessionId || body?.sessionId || fallbackRuntime?.sessionId || ''),
+          sessionId: normalizeSessionGrantText(runtimeInput.sessionId || body?.sessionId || runtimeBase.sessionId || ''),
           sessionTxHash: normalizeSessionGrantText(
-            runtimeInput.sessionTxHash || body?.sessionTxHash || fallbackRuntime?.sessionTxHash || ''
+            runtimeInput.sessionTxHash || body?.sessionTxHash || runtimeBase.sessionTxHash || ''
           ),
-          gatewayRecipient: normalizeSessionGrantAddress(
-            runtimeInput.gatewayRecipient || fallbackRuntime?.gatewayRecipient || payload.gatewayRecipient || ''
-          ),
-          maxPerTx: runtimeInput.maxPerTx || fallbackRuntime?.maxPerTx || payload.singleLimit,
-          dailyLimit: runtimeInput.dailyLimit || fallbackRuntime?.dailyLimit || payload.dailyLimit,
-          tokenAddress: normalizeSessionGrantAddress(
-            runtimeInput.tokenAddress || fallbackRuntime?.tokenAddress || payload.tokenAddress || ''
-          ),
-          source: normalizeSessionGrantText(
-            runtimeInput.source,
-            fallbackRuntime?.source || 'api-v1-session-authorize-external'
-          )
+          gatewayRecipient: runtimeBase.gatewayRecipient,
+          maxPerTx: runtimeBase.maxPerTx,
+          dailyLimit: runtimeBase.dailyLimit,
+          tokenAddress: runtimeBase.tokenAddress,
+          source: runtimeBase.source
         },
         payload,
         userEoa
       });
       nextRuntime = writeSessionRuntime({
-        ...fallbackRuntime,
+        ...runtimeBase,
         ...verifiedRuntime,
         tokenAddress: payload.tokenAddress,
         expiresAt: Number(payload.expiresAt || 0),
@@ -1072,6 +1305,11 @@ export function registerCoreIdentityChatRoutes(app, deps) {
         authorizedAgentWallet: payload.agentWallet,
         authorizationAudience: payload.audience,
         allowedCapabilities: payload.allowedCapabilities,
+        runtimeHealth: deriveRuntimeHealth({
+          ...runtimeBase,
+          ...verifiedRuntime,
+          accountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS
+        }),
         updatedAt: authorizedAt
       });
       ensured = { created: false, reused: true, runtime: nextRuntime };
@@ -1119,6 +1357,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
         authorizedAgentWallet: payload.agentWallet,
         authorizationAudience: payload.audience,
         allowedCapabilities: payload.allowedCapabilities,
+        runtimeHealth: deriveRuntimeHealth(ensured.runtime),
         updatedAt: authorizedAt
       });
       ensured = { ...ensured, runtime: nextRuntime };
@@ -1302,7 +1541,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     payload = {},
     userEoa = ''
   } = {}) {
-    const provider = backendSigner?.provider || new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+    const provider = backendSigner?.provider || createBackendRpcProvider();
     const suppliedOwner = normalizeAddress(runtime.owner || '');
     const sessionPrivateKey = String(runtime.sessionPrivateKey || '').trim();
     const hasSessionPrivateKey = /^0x[0-9a-fA-F]{64}$/.test(sessionPrivateKey);
@@ -1369,7 +1608,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     if (KITE_REQUIRE_AA_V2) {
       if (aaVersion !== AA_V2_VERSION_TAG) {
         throw new Error(
-          `AA must be upgraded to V2 for session-userop payments. required=${AA_V2_VERSION_TAG}, current=${aaVersion || 'unknown_or_legacy'}`
+          `AA version mismatch for session payments. required=${AA_V2_VERSION_TAG}, current=${aaVersion || 'unknown_or_legacy'}`
         );
       }
     }
@@ -1428,7 +1667,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     tokenAddress = '',
     gatewayRecipient = ''
   } = {}) {
-    const provider = backendSigner?.provider || new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+    const provider = backendSigner?.provider || createBackendRpcProvider();
     const requestedOwner = normalizeAddress(owner || '');
     if (!ethers.isAddress(requestedOwner)) {
       throw new Error('A valid owner address is required for self-serve session setup.');
@@ -1450,45 +1689,26 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       accountFactoryAddress: KITE_AA_FACTORY_ADDRESS,
       accountImplementationAddress: KITE_AA_ACCOUNT_IMPLEMENTATION
     });
-    const saltScanLimitRaw = String(process.env.KITECLAW_AA_SALT_SCAN_LIMIT || '8').trim();
-    let saltScanLimit = 8;
-    try {
-      saltScanLimit = Math.max(1, Number.parseInt(saltScanLimitRaw, 10) || 8);
-    } catch {
-      saltScanLimit = 8;
-    }
-    let selectedSalt = salt;
-    let aaWallet = '';
-    let deployed = false;
+    const selectedSalt = salt;
+    const aaWallet = normalizeAddress(await sdk.resolveAccountAddress(requestedOwner, selectedSalt));
+    const currentCode = await provider.getCode(aaWallet);
+    const deployed = Boolean(currentCode && currentCode !== '0x');
     let accountVersion = '';
-    let foundCandidate = false;
-    for (let offset = 0; offset < saltScanLimit; offset += 1) {
-      const candidateSalt = salt + BigInt(offset);
-      const candidateWallet = normalizeAddress(await sdk.resolveAccountAddress(requestedOwner, candidateSalt));
-      const candidateCode = await provider.getCode(candidateWallet);
-      const candidateDeployed = Boolean(candidateCode && candidateCode !== '0x');
-      let candidateVersion = '';
-      if (candidateDeployed) {
-        try {
-          const account = new ethers.Contract(candidateWallet, AA_SESSION_ABI, provider);
-          candidateVersion = String(await withRpcReadRetry(() => account.version())).trim();
-        } catch {
-          candidateVersion = '';
-        }
+    if (deployed) {
+      try {
+        const account = new ethers.Contract(aaWallet, AA_SESSION_ABI, provider);
+        accountVersion = String(await withRpcReadRetry(() => account.version())).trim();
+      } catch {
+        accountVersion = '';
       }
-      if (!candidateDeployed || candidateVersion === AA_V2_VERSION_TAG) {
-        selectedSalt = candidateSalt;
-        aaWallet = candidateWallet;
-        deployed = candidateDeployed;
-        accountVersion = candidateVersion;
-        foundCandidate = true;
-        break;
+      const requiredSelfServeVersion = String(
+        KITE_AA_JOB_LANE_REQUIRED_VERSION || AA_V2_VERSION_TAG || ''
+      ).trim();
+      if (requiredSelfServeVersion && accountVersion !== requiredSelfServeVersion) {
+        throw new Error(
+          `AA version mismatch for self-serve wallet setup. required=${requiredSelfServeVersion}, current=${accountVersion || 'unknown_or_legacy'}`
+        );
       }
-    }
-    if (!foundCandidate) {
-      throw new Error(
-        `No V2-compatible AA slot available for owner ${requestedOwner}. Legacy accounts occupy salts ${salt.toString()}..${(salt + BigInt(Math.max(0, saltScanLimit - 1))).toString()}`
-      );
     }
     const currentRuntime = resolveSessionRuntime({ owner: requestedOwner });
     const normalizedTokenAddress = normalizeAddress(
@@ -1532,6 +1752,21 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       }
     ];
 
+    const preparedRuntime = buildSessionRuntimeBase(currentRuntime, {
+      owner: requestedOwner,
+      aaWallet: aaWallet || currentRuntime.aaWallet || '',
+      tokenAddress: normalizedTokenAddress,
+      gatewayRecipient: normalizedGatewayRecipient,
+      accountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS,
+      accountImplementationAddress: ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS,
+      accountVersion: accountVersion || (deployed ? 'unknown_or_legacy' : ''),
+      maxPerTx: maxPerTx.numeric,
+      dailyLimit: dailyBudget.numeric,
+      runtimePurpose: currentRuntime.runtimePurpose || 'consumer',
+      source: currentRuntime.source || 'self_serve_wallet_prepare',
+      updatedAt: Date.now()
+    });
+
     return {
       owner: requestedOwner,
       aaWallet,
@@ -1549,20 +1784,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       accountVersion: accountVersion || (deployed ? 'unknown_or_legacy' : ''),
       currentBlockTimestamp: nowTs,
       sessionRules: rules,
-      runtime: buildSessionRuntimePayload({
-        ...currentRuntime,
-        owner: requestedOwner,
-        aaWallet: aaWallet || currentRuntime.aaWallet || '',
-        tokenAddress: normalizedTokenAddress,
-        gatewayRecipient: normalizedGatewayRecipient,
-        accountFactoryAddress: normalizeAddress(KITE_AA_FACTORY_ADDRESS || ''),
-        accountImplementationAddress: normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || ''),
-        accountVersion: accountVersion || (deployed ? 'unknown_or_legacy' : currentRuntime.accountVersion || ''),
-        maxPerTx: maxPerTx.numeric,
-        dailyLimit: dailyBudget.numeric,
-        runtimePurpose: currentRuntime.runtimePurpose || 'consumer',
-        source: currentRuntime.source || 'self_serve_wallet_prepare'
-      })
+      runtime: buildSessionRuntimePayload(preparedRuntime)
     };
   }
 
@@ -1590,9 +1812,23 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     }
 
     const fallbackRuntime = resolveSessionRuntime({ owner: prepared.owner });
+    const runtimeBase = buildSessionRuntimeBase(fallbackRuntime, {
+      owner: prepared.owner,
+      aaWallet: prepared.aaWallet,
+      tokenAddress: prepared.tokenAddress,
+      gatewayRecipient: prepared.gatewayRecipient,
+      accountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS,
+      accountImplementationAddress: ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS,
+      accountVersion: prepared.accountVersion || (prepared.deployed ? 'unknown_or_legacy' : ''),
+      maxPerTx: Number(prepared.singleLimit || fallbackRuntime.maxPerTx || 0),
+      dailyLimit: Number(prepared.dailyLimit || fallbackRuntime.dailyLimit || 0),
+      runtimePurpose: normalizeSessionGrantText(runtime.runtimePurpose, fallbackRuntime.runtimePurpose || 'consumer'),
+      source: normalizeSessionGrantText(runtime.source, 'self_serve_wallet'),
+      updatedAt: Date.now()
+    });
     const verifiedRuntime = await verifyExternalSessionRuntime({
       runtime: {
-        ...fallbackRuntime,
+        ...runtimeBase,
         ...runtime,
         owner: prepared.owner,
         aaWallet: prepared.aaWallet,
@@ -1613,16 +1849,21 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     });
 
     const nextRuntime = writeSessionRuntime({
-      ...fallbackRuntime,
+      ...runtimeBase,
       ...verifiedRuntime,
       tokenAddress: prepared.tokenAddress,
       gatewayRecipient: prepared.gatewayRecipient,
-      accountFactoryAddress: normalizeAddress(KITE_AA_FACTORY_ADDRESS || ''),
-      accountImplementationAddress: normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || ''),
+      accountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS,
+      accountImplementationAddress: ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS,
       maxPerTx: Number(prepared.singleLimit || verifiedRuntime.maxPerTx || 0),
       dailyLimit: Number(prepared.dailyLimit || verifiedRuntime.dailyLimit || 0),
       runtimePurpose: normalizeSessionGrantText(runtime.runtimePurpose, verifiedRuntime.runtimePurpose || 'consumer') || 'consumer',
       source: 'self_serve_wallet',
+      runtimeHealth: deriveRuntimeHealth({
+        ...runtimeBase,
+        ...verifiedRuntime,
+        accountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS
+      }),
       updatedAt: Date.now()
     });
 
@@ -1640,7 +1881,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     gatewayRecipient = '',
     forceNewSession = false
   } = {}) {
-    const provider = backendSigner?.provider || new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+    const provider = backendSigner?.provider || createBackendRpcProvider();
     const fallbackRouterOwner = normalizeAddress(XMTP_ROUTER_DERIVED_ADDRESS || '');
     const currentRuntime = resolveSessionRuntime({ owner });
     const requestedOwner = normalizeAddress(owner || currentRuntime.owner || fallbackRouterOwner || '');
@@ -1670,6 +1911,12 @@ export function registerCoreIdentityChatRoutes(app, deps) {
 
     const ensured = await ensureAAAccountDeployment({ owner: requestedOwner, salt });
     const account = new ethers.Contract(ensured.accountAddress, AA_SESSION_ABI, ownerWallet);
+    let aaVersion = '';
+    try {
+      aaVersion = String(await account.version()).trim();
+    } catch {
+      aaVersion = '';
+    }
 
     if (!forceNewSession) {
       const canReuse =
@@ -1679,11 +1926,24 @@ export function registerCoreIdentityChatRoutes(app, deps) {
         currentRuntime.sessionAddress &&
         currentRuntime.sessionId;
       if (canReuse && (await isSessionRuntimeReadyOnchain(currentRuntime, account))) {
+        const refreshedRuntime = writeSessionRuntime(buildSessionRuntimeBase(currentRuntime, {
+          aaWallet: ensured.accountAddress,
+          owner: requestedOwner,
+          tokenAddress: normalizeAddress(tokenAddress || currentRuntime.tokenAddress || SETTLEMENT_TOKEN || ''),
+          gatewayRecipient: normalizeAddress(
+            gatewayRecipient || currentRuntime.gatewayRecipient || MERCHANT_ADDRESS || ''
+          ),
+          accountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS,
+          accountImplementationAddress: ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS,
+          accountVersion: aaVersion || currentRuntime.accountVersion || (ensured.deployed ? 'unknown_or_legacy' : ''),
+          source: currentRuntime.source || 'api-session-runtime-ensure',
+          updatedAt: Date.now()
+        }));
         return {
           created: false,
           reused: true,
           tokenAddress: normalizeAddress(tokenAddress || SETTLEMENT_TOKEN || ''),
-          runtime: currentRuntime
+          runtime: refreshedRuntime
         };
       }
     }
@@ -1754,23 +2014,28 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       throw new Error(`Session not found on-chain after tx: ${sessionId}`);
     }
 
-    const nextRuntime = writeSessionRuntime({
-      ...currentRuntime,
+    const runtimeBase = buildSessionRuntimeBase(currentRuntime, {
       aaWallet: ensured.accountAddress,
       owner: requestedOwner,
       tokenAddress: normalizedTokenAddress,
+      gatewayRecipient: normalizedGatewayRecipient,
+      accountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS,
+      accountImplementationAddress: ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS,
+      accountVersion: aaVersion || (ensured.deployed ? 'unknown_or_legacy' : ''),
+      maxPerTx: maxPerTx.numeric,
+      dailyLimit: dailyBudget.numeric,
+      runtimePurpose: currentRuntime.runtimePurpose || 'consumer',
+      source: 'api-session-runtime-ensure',
+      updatedAt: Date.now()
+    });
+    const nextRuntime = writeSessionRuntime({
+      ...runtimeBase,
       sessionAddress: sessionWallet.address,
       sessionPrivateKey: sessionWallet.privateKey,
       sessionId,
       sessionTxHash: tx.hash,
       expiresAt: 0,
-      maxPerTx: maxPerTx.numeric,
-      dailyLimit: dailyBudget.numeric,
-      gatewayRecipient: normalizedGatewayRecipient,
-      accountFactoryAddress: normalizeAddress(KITE_AA_FACTORY_ADDRESS || ''),
-      accountImplementationAddress: normalizeAddress(KITE_AA_ACCOUNT_IMPLEMENTATION || ''),
-      accountVersion: AA_V2_VERSION_TAG,
-      source: 'api-session-runtime-ensure',
+      runtimeHealth: deriveRuntimeHealth(runtimeBase),
       updatedAt: Date.now()
     });
 
@@ -2046,7 +2311,7 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       };
     }
   
-    const provider = new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+    const provider = createBackendRpcProvider();
     const network = await provider.getNetwork();
     const contract = new ethers.Contract(configured.registry, ERC8004_IDENTITY_ABI, provider);
     const [ownerAddress, tokenURI, agentWallet] = await Promise.all([

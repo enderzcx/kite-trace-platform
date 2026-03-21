@@ -155,6 +155,10 @@ export function createBuyCommandHandlers({
       wallet,
       strategy: runtime.sessionStrategy
     });
+    const payer =
+      normalizeWalletAddress(preflight?.session?.aaWallet || '') ||
+      normalizeWalletAddress(preflight?.session?.owner || '') ||
+      wallet;
     const servicesPayload = await requestJson(runtime, { pathname: '/api/services' });
     const service = selectBuyService(servicesPayload?.items || [], { provider, capability });
     if (!service) {
@@ -179,7 +183,7 @@ export function createBuyCommandHandlers({
       ...input,
       traceId,
       ...(intentId ? { intentId } : {}),
-      ...(wallet ? { payer: wallet } : {})
+      ...(payer ? { payer } : {})
     };
     let invokeResult;
     try {
@@ -300,10 +304,14 @@ export function createBuyCommandHandlers({
       wallet,
       strategy: runtime.sessionStrategy
     });
+    const payer =
+      normalizeWalletAddress(preflight?.session?.aaWallet || '') ||
+      normalizeWalletAddress(preflight?.session?.owner || '') ||
+      wallet;
     const body = {
       traceId,
       ...(intentId ? { intentId } : {}),
-      ...(wallet ? { payer: wallet } : {})
+      ...(payer ? { payer } : {})
     };
     if (options.input) {
       body.input = await readStructuredInput(options.input);
