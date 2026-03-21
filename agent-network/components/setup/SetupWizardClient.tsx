@@ -29,11 +29,12 @@ import {
 
 // 鈹€鈹€鈹€ Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-type Step = 0 | 1 | 2 | 3;
+type Step = 0 | 1 | 2 | 3 | 4;
 // 0 = Connect Wallet
 // 1 = Fund AA Wallet
-// 2 = Authorize Session
-// 3 = Setup Complete / Choose Access Method
+// 2 = Register Agent Identity
+// 3 = Authorize Session
+// 4 = Setup Complete / Choose Access Method
 
 type UserType = "new" | "returning";
 
@@ -149,6 +150,16 @@ const ERC20_ABI = [
   "function decimals() view returns (uint8)",
   "function symbol() view returns (string)",
 ];
+const IDENTITY_REGISTRY_ABI = [
+  "function registerFee() view returns (uint256)",
+  "function register(string tokenURI) payable returns (uint256)",
+  "function setAgentWallet(uint256 agentId, address newWallet) payable",
+  "function metadataUpdateFee() view returns (uint256)",
+  "function ownerOf(uint256 tokenId) view returns (address)",
+  "function getAgentWallet(uint256 agentId) view returns (address)",
+  "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+];
+const DEFAULT_IDENTITY_REGISTRY = process.env.NEXT_PUBLIC_IDENTITY_REGISTRY?.trim() || "";
 const SUGGEST_SETTLEMENT = "0.5";
 const KTRACE_SETUP_MODE = process.env.NEXT_PUBLIC_KTRACE_SETUP_MODE?.trim().toLowerCase() === "remote"
   ? "remote"
@@ -3008,9 +3019,297 @@ function ConnectStep4({
   );
 }
 
+// 鈹€鈹€鈹€ Register Identity Step 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+function RegisterIdentityStep({
+  address,
+  runtime,
+  onRuntimeUpdate,
+  onDone,
+}: {
+  address: string;
+  runtime: SessionRuntime;
+  onRuntimeUpdate: (r: SessionRuntime) => void;
+  onDone: () => void;
+}) {
+  const [state, setState] = useState<
+    "idle" | "checking" | "registering" | "settingWallet" | "done"
+  >("idle");
+  const [error, setError] = useState("");
+  const [registerTxHash, setRegisterTxHash] = useState("");
+  const [walletTxHash, setWalletTxHash] = useState("");
+  const [agentId, setAgentId] = useState("");
+  const [existingAgentId, setExistingAgentId] = useState("");
+  const [registerFee, setRegisterFee] = useState("");
+  const [walletFee, setWalletFee] = useState("");
+
+  const registryAddress = runtime.identityRegistry || DEFAULT_IDENTITY_REGISTRY;
+  const aaWallet = runtime.aaWallet || "";
+
+  // Check existing identity on mount
+  useEffect(() => {
+    if (!registryAddress || !isAddress(registryAddress)) return;
+    checkExistingIdentity();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registryAddress]);
+
+  async function checkExistingIdentity() {
+    setState("checking");
+    setError("");
+    try {
+      // Try fetching current identity from backend
+      const identityProfile = await fetchCurrentIdentity().catch(() => null);
+      if (identityProfile && hasRuntimeIdentity(mergeRuntimeIdentity(runtime, identityProfile))) {
+        const merged = mergeRuntimeIdentity(runtime, identityProfile);
+        setExistingAgentId(merged.agentId || "");
+        // Check if agentWallet matches aaWallet
+        const provider = getBrowserProvider();
+        if (provider && registryAddress) {
+          const registry = new Contract(registryAddress, IDENTITY_REGISTRY_ABI, provider);
+          const onChainWallet = await registry.getAgentWallet(BigInt(merged.agentId || "0")).catch(() => "");
+          if (onChainWallet && normalizeAccountAddress(onChainWallet) === normalizeAccountAddress(aaWallet)) {
+            // All good — identity exists and wallet bound
+            onRuntimeUpdate(merged);
+            setState("done");
+            return;
+          }
+        }
+        // Identity exists but wallet not bound
+        setExistingAgentId(merged.agentId || "");
+        onRuntimeUpdate(merged);
+        setState("idle");
+        return;
+      }
+      // No identity — read fees
+      const provider = getBrowserProvider();
+      if (provider && registryAddress) {
+        const registry = new Contract(registryAddress, IDENTITY_REGISTRY_ABI, provider);
+        const [regFee, metaFee] = await Promise.all([
+          registry.registerFee().catch(() => BigInt(0)),
+          registry.metadataUpdateFee().catch(() => BigInt(0)),
+        ]);
+        setRegisterFee(regFee.toString());
+        setWalletFee(metaFee.toString());
+      }
+      setState("idle");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to check identity.");
+      setState("idle");
+    }
+  }
+
+  async function registerIdentity() {
+    setError("");
+    const eth = getEthereum();
+    if (!eth) { setError("Wallet not available."); return; }
+    try {
+      await ensureKiteTestnet(eth);
+      const provider = getBrowserProvider();
+      if (!provider) throw new Error("Wallet provider unavailable.");
+      const signer = await provider.getSigner();
+      if (!registryAddress || !isAddress(registryAddress)) {
+        throw new Error("Identity registry address not configured.");
+      }
+      const registry = new Contract(registryAddress, IDENTITY_REGISTRY_ABI, signer);
+
+      // Step 1: Register (mint agent identity)
+      if (!existingAgentId) {
+        setState("registering");
+        const tokenURI = JSON.stringify({
+          name: `KTrace Agent ${shorten(address)}`,
+          description: "KTrace MCP Agent Identity",
+          owner: address,
+          aaWallet,
+          createdAt: new Date().toISOString(),
+        });
+        const fee = registerFee ? BigInt(registerFee) : BigInt(0);
+        const tx = await registry.register(tokenURI, { value: fee });
+        setRegisterTxHash(tx.hash);
+        const receipt = await tx.wait();
+        // Extract agentId from Transfer event
+        const transferEvent = receipt.logs.find(
+          (log: { topics: string[] }) => log.topics[0] === keccak256(toUtf8Bytes("Transfer(address,address,uint256)"))
+        );
+        const newAgentId = transferEvent ? BigInt(transferEvent.topics[3]).toString() : "";
+        if (!newAgentId) throw new Error("Could not extract agentId from transaction receipt.");
+        setAgentId(newAgentId);
+        setExistingAgentId(newAgentId);
+      }
+
+      // Step 2: Set agent wallet to AA wallet
+      const effectiveAgentId = existingAgentId || agentId;
+      if (effectiveAgentId && aaWallet) {
+        // Check if wallet already set correctly
+        const currentWallet = await registry.getAgentWallet(BigInt(effectiveAgentId)).catch(() => "");
+        if (normalizeAccountAddress(currentWallet) !== normalizeAccountAddress(aaWallet)) {
+          setState("settingWallet");
+          const metaFee = walletFee ? BigInt(walletFee) : BigInt(0);
+          const walletTx = await registry.setAgentWallet(BigInt(effectiveAgentId), aaWallet, { value: metaFee });
+          setWalletTxHash(walletTx.hash);
+          await walletTx.wait();
+        }
+      }
+
+      // Update runtime with identity info
+      const updatedRuntime = {
+        ...runtime,
+        agentId: effectiveAgentId,
+        identityRegistry: registryAddress,
+        agentWallet: aaWallet,
+      };
+      onRuntimeUpdate(updatedRuntime);
+
+      // Sync with backend
+      await fetch(`${LOCAL_BACKEND_BASE_URL}/api/session/runtime/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          ownerEoa: address,
+          agentId: effectiveAgentId,
+          identityRegistry: registryAddress,
+          agentWallet: aaWallet,
+        }),
+      }).catch(() => {});
+
+      setState("done");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Registration failed.");
+      setState("idle");
+    }
+  }
+
+  const effectiveAgentId = existingAgentId || agentId;
+  const isDone = state === "done";
+
+  // Auto-advance if already done on mount check
+  useEffect(() => {
+    if (isDone && effectiveAgentId) {
+      const t = setTimeout(() => onDone(), 600);
+      return () => clearTimeout(t);
+    }
+  }, [isDone, effectiveAgentId, onDone]);
+
+  return (
+    <div className="rounded-2xl border border-[rgba(90,80,50,0.12)] bg-white p-6 shadow-sm">
+      <div className="mb-4 flex items-center gap-3">
+        <span className="flex size-8 items-center justify-center rounded-xl bg-[rgba(58,66,32,0.08)] text-[#3a4220]">
+          <ShieldCheck className="size-4" />
+        </span>
+        <div>
+          <h2 className="text-[15px] font-semibold text-[#18180e]">
+            Register Agent Identity
+          </h2>
+          <p className="text-[12px] text-[#9e8e76]">
+            Create your on-chain identity on the ERC-8004 registry
+          </p>
+        </div>
+      </div>
+
+      {/* Registry info */}
+      {registryAddress && (
+        <div className="mb-4 rounded-xl bg-[rgba(58,66,32,0.04)] p-4 text-[12px]">
+          <div className="flex items-center justify-between">
+            <span className="text-[#7a6e56]">Registry</span>
+            <span className="font-mono text-[11px] text-[#18180e]">{shorten(registryAddress, 10, 6)}</span>
+          </div>
+          {aaWallet && (
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-[#7a6e56]">Agent Wallet (AA)</span>
+              <span className="font-mono text-[11px] text-[#18180e]">{shorten(aaWallet, 10, 6)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Already registered */}
+      {effectiveAgentId && isDone && (
+        <div className="mb-4 rounded-xl border border-[rgba(58,66,32,0.18)] bg-[rgba(58,66,32,0.06)] p-4">
+          <div className="flex items-center gap-2 text-[13px] font-semibold text-[#3a4220]">
+            <CheckCircle2 className="size-4" />
+            Identity Registered
+          </div>
+          <div className="mt-3 space-y-2 text-[12px]">
+            <div className="flex items-center justify-between">
+              <span className="text-[#7a6e56]">Agent ID</span>
+              <span className="font-mono font-semibold text-[#18180e]">#{effectiveAgentId}</span>
+            </div>
+            {registerTxHash && (
+              <div className="flex items-center justify-between">
+                <span className="text-[#7a6e56]">Register Tx</span>
+                <a
+                  href={`https://testnet.kitescan.ai/tx/${registerTxHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 font-mono text-[11px] text-[#3a4220] hover:underline"
+                >
+                  {shorten(registerTxHash, 10, 6)} <ExternalLink className="size-3" />
+                </a>
+              </div>
+            )}
+            {walletTxHash && (
+              <div className="flex items-center justify-between">
+                <span className="text-[#7a6e56]">Bind Wallet Tx</span>
+                <a
+                  href={`https://testnet.kitescan.ai/tx/${walletTxHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 font-mono text-[11px] text-[#3a4220] hover:underline"
+                >
+                  {shorten(walletTxHash, 10, 6)} <ExternalLink className="size-3" />
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Not yet registered — action */}
+      {!isDone && state !== "checking" && (
+        <>
+          {registerFee && BigInt(registerFee) > BigInt(0) && (
+            <p className="mb-3 text-[11px] text-[#9e8e76]">
+              Registration fee: {(Number(BigInt(registerFee)) / 1e18).toFixed(6)} KITE
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={registerIdentity}
+            disabled={state === "registering" || state === "settingWallet" || !registryAddress}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3a4220] py-3 text-[13px] font-semibold text-[#faf7f1] transition hover:bg-[#4a5530] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {state === "registering" ? (
+              <><Loader2 className="size-4 animate-spin" /> Registering on-chain...</>
+            ) : state === "settingWallet" ? (
+              <><Loader2 className="size-4 animate-spin" /> Binding AA wallet...</>
+            ) : existingAgentId ? (
+              <><Link2 className="size-4" /> Bind AA Wallet to Agent #{existingAgentId}</>
+            ) : (
+              <><ShieldCheck className="size-4" /> Register Agent Identity</>
+            )}
+          </button>
+        </>
+      )}
+
+      {/* Checking spinner */}
+      {state === "checking" && (
+        <div className="flex items-center gap-2 text-[12px] text-[#7a6e56]">
+          <Loader2 className="size-3.5 animate-spin" /> Checking identity...
+        </div>
+      )}
+
+      {error && <ErrorBanner msg={error} />}
+
+      {!registryAddress && (
+        <ErrorBanner msg="Identity registry address not configured. Set NEXT_PUBLIC_IDENTITY_REGISTRY in your environment." />
+      )}
+    </div>
+  );
+}
+
 // 鈹€鈹€鈹€ Progress bar 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-const STEP_LABELS = ["Connect Wallet", "Prepare AA Wallet", "Authorize", "Connect"];
+const STEP_LABELS = ["Connect Wallet", "Prepare AA Wallet", "Register Identity", "Authorize", "Connect"];
 
 function ProgressBar({ step }: { step: Step }) {
   return (
@@ -3119,9 +3418,12 @@ export default function SetupWizardClient({ capabilities }: Props) {
         isDefaultFactoryRuntime
       ) {
         // Perfect returning user - jump straight to Connect
+        setStep(4);
+      } else if (sessionValid && hasRuntimeIdentity(rt) && aaBalance > 0 && aaTokenBalance > 0 && isRuntimeReady && isDefaultFactoryRuntime) {
+        // Has identity + funds but session expired - Authorize
         setStep(3);
       } else if (aaBalance > 0 && aaTokenBalance > 0 && isRuntimeReady && isDefaultFactoryRuntime) {
-        // Has funds (new or returning with expired session) - skip Fund step
+        // Has funds - Register Identity
         setStep(2);
       } else {
         // No AA balance - needs to fund
@@ -3220,14 +3522,14 @@ export default function SetupWizardClient({ capabilities }: Props) {
         </div>
 
         {/* Returning user welcome banner */}
-        {accountStatus?.userType === "returning" && step >= 2 && (
+        {accountStatus?.userType === "returning" && step >= 3 && (
           <div className="mb-4 flex items-center gap-3 rounded-2xl border border-[rgba(58,66,32,0.18)] bg-[rgba(58,66,32,0.07)] px-5 py-3">
             <CheckCircle2 className="size-4 shrink-0 text-[#3a4220]" />
             <div>
               <p className="text-[13px] font-semibold text-[#3a4220]">Welcome back</p>
               <p className="text-[11px] text-[#7a6e56]">
                 AA wallet and funds detected - skipped straight to{" "}
-                {step === 3 ? "access setup" : "session renewal"}.
+                {step === 4 ? "access setup" : step === 3 ? "session renewal" : "identity registration"}.
               </p>
             </div>
           </div>
@@ -3280,17 +3582,15 @@ export default function SetupWizardClient({ capabilities }: Props) {
                   ? `AA Wallet Ready - ${accountStatus.aaBalance.toFixed(4)} KITE + ${accountStatus.aaTokenBalance.toFixed(2)} USDT`
                   : "AA Wallet Funded"
               }
-                sub={runtime.aaWallet ?? runtime.payerAaWallet ?? ""}
-              />
+              sub={runtime.aaWallet ?? runtime.payerAaWallet ?? ""}
+            />
           )}
 
           {/* 鈹€鈹€ Step 2 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
           {step === 2 && (
-            <AuthorizeStep
+            <RegisterIdentityStep
               address={address}
               runtime={runtime}
-              availableCaps={capabilities}
-              mode={authorizeMode}
               onRuntimeUpdate={setRuntime}
               onDone={() => setStep(3)}
             />
@@ -3299,6 +3599,26 @@ export default function SetupWizardClient({ capabilities }: Props) {
           {step > 2 && (
             <DoneRow
               n={3}
+              title={`Agent Identity #${runtime.agentId || "?"}`}
+              sub={runtime.identityRegistry ? `Registry ${shorten(runtime.identityRegistry, 10, 6)}` : ""}
+            />
+          )}
+
+          {/* 鈹€鈹€ Step 3 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
+          {step === 3 && (
+            <AuthorizeStep
+              address={address}
+              runtime={runtime}
+              availableCaps={capabilities}
+              mode={authorizeMode}
+              onRuntimeUpdate={setRuntime}
+              onDone={() => setStep(4)}
+            />
+          )}
+
+          {step > 3 && (
+            <DoneRow
+              n={4}
               title={
                 authorizeMode === "renew"
                   ? "Session Key Renewed"
@@ -3308,8 +3628,8 @@ export default function SetupWizardClient({ capabilities }: Props) {
             />
           )}
 
-          {/* 鈹€鈹€ Step 3 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
-          {step === 3 && <ConnectStep4 address={address} runtime={runtime} />}
+          {/* 鈹€鈹€ Step 4 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
+          {step === 4 && <ConnectStep4 address={address} runtime={runtime} />}
         </div>
 
         {/* Footer links */}
