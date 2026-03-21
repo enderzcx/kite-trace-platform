@@ -1,11 +1,29 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { createRequire } from 'node:module';
+const _require = createRequire(import.meta.url);
+
+let _proxyDispatcher = undefined; // undefined = not yet resolved; null = no proxy available
+function getProxyDispatcher() {
+  if (_proxyDispatcher !== undefined) return _proxyDispatcher;
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || '';
+  if (!proxyUrl) { _proxyDispatcher = null; return null; }
+  try {
+    const { ProxyAgent } = _require('undici');
+    _proxyDispatcher = new ProxyAgent(proxyUrl);
+    return _proxyDispatcher;
+  } catch (_) {
+    _proxyDispatcher = null;
+    return null;
+  }
+}
+
 const API_BASE = 'https://ai.6551.io';
-const DEFAULT_TIMEOUT_MS = Math.max(5_000, Number(process.env.EXTERNAL_FEED_TIMEOUT_MS || 20_000));
-const ONCHAINOS_TIMEOUT_MS = 20000;
-const ONCHAINOS_RETRY_BACKOFF_MS = [400, 1200];
-const PUBLIC_FEED_RETRY_BACKOFF_MS = [300, 1000];
+const DEFAULT_TIMEOUT_MS = Math.max(5_000, Number(process.env.EXTERNAL_FEED_TIMEOUT_MS || 12_000));
+const ONCHAINOS_TIMEOUT_MS = 12_000;
+const ONCHAINOS_RETRY_BACKOFF_MS = [300, 800];
+const PUBLIC_FEED_RETRY_BACKOFF_MS = [200, 600];
 const DAILY_NEWS_CATEGORY_CACHE_TTL_MS = 10 * 60 * 1000;
 const execFileAsync = promisify(execFile);
 
@@ -354,6 +372,11 @@ function filterByCoin(item, coin) {
 async function fetchJsonWithTimeout(url, timeoutMs = DEFAULT_TIMEOUT_MS, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const parentSignal = options?.signal || null;
+  if (parentSignal?.aborted) { clearTimeout(timer); throw new DOMException('The operation was aborted', 'AbortError'); }
+  const combinedSignal = parentSignal
+    ? AbortSignal.any([controller.signal, parentSignal])
+    : controller.signal;
   try {
     const method = normalizeText(options?.method || 'GET').toUpperCase() || 'GET';
     const headers = {
@@ -362,8 +385,10 @@ async function fetchJsonWithTimeout(url, timeoutMs = DEFAULT_TIMEOUT_MS, options
     const init = {
       method,
       headers,
-      signal: controller.signal
+      signal: combinedSignal
     };
+    const dispatcher = getProxyDispatcher();
+    if (dispatcher) init.dispatcher = dispatcher;
     if (options?.jsonBody !== undefined) {
       init.body = JSON.stringify(options.jsonBody);
       if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
@@ -389,11 +414,14 @@ async function fetchJsonWithRetry(
   const delays = Array.isArray(retryBackoffMs) ? retryBackoffMs : [];
   const maxAttempts = Math.max(1, 1 + delays.length);
   let lastError = null;
+  const parentSignal = options?.signal || null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (parentSignal?.aborted) throw new DOMException('The operation was aborted', 'AbortError');
     try {
       return await fetchJsonWithTimeout(url, timeoutMs, options);
     } catch (error) {
       lastError = error;
+      if (parentSignal?.aborted) throw error;
       const reason =
         error?.name === 'AbortError' || error?.code === 'ETIMEDOUT'
           ? 'request_aborted'
@@ -431,11 +459,12 @@ function buildUrl(pathname, query = {}) {
   return url.toString();
 }
 
-async function fetchOpenJson(pathname, { token, method = 'GET', query = {}, body, timeoutMs } = {}) {
+async function fetchOpenJson(pathname, { token, method = 'GET', query = {}, body, timeoutMs, signal } = {}) {
   return fetchJsonWithRetry(buildUrl(pathname, query), toBoundedTimeout(timeoutMs, DEFAULT_TIMEOUT_MS), {
     method,
     headers: buildTokenHeaders(token),
-    jsonBody: body
+    jsonBody: body,
+    signal
   });
 }
 
@@ -1144,7 +1173,7 @@ export async function fetchDailyNewsMemes({ limit = 20, lang = 'en', keyword = '
   return buildSuccess({ memes }, 'daily-news:memes', fetchedAt);
 }
 
-export async function fetchListingAlert({ exchange = 'all', coin, limit = 10 } = {}) {
+export async function fetchListingAlert({ exchange = 'all', coin, limit = 10 } = {}, { signal } = {}) {
   const token = normalizeText(process.env.OPENNEWS_TOKEN);
   if (!token) return buildError('not_configured');
 
@@ -1156,6 +1185,7 @@ export async function fetchListingAlert({ exchange = 'all', coin, limit = 10 } =
       token,
       method: 'POST',
       timeoutMs,
+      signal,
       body: buildNewsSearchBody({
         limit,
         coin,
@@ -1181,7 +1211,7 @@ export async function fetchListingAlert({ exchange = 'all', coin, limit = 10 } =
   }
 }
 
-export async function fetchNewsSignal({ coin, signal, minScore = 50, limit = 10 } = {}) {
+export async function fetchNewsSignal({ coin, signal, minScore = 50, limit = 10 } = {}, { signal: abortSignal } = {}) {
   const token = normalizeText(process.env.OPENNEWS_TOKEN);
   if (!token) return buildError('not_configured');
 
@@ -1194,6 +1224,7 @@ export async function fetchNewsSignal({ coin, signal, minScore = 50, limit = 10 
       token,
       method: 'POST',
       timeoutMs,
+      signal: abortSignal,
       body: buildNewsSearchBody({
         limit,
         coin,
@@ -1218,7 +1249,7 @@ export async function fetchNewsSignal({ coin, signal, minScore = 50, limit = 10 
   }
 }
 
-export async function fetchMemeSentiment({ limit = 20 } = {}) {
+export async function fetchMemeSentiment({ limit = 20 } = {}, { signal } = {}) {
   const token = normalizeText(process.env.OPENNEWS_TOKEN);
   if (!token) return buildError('not_configured');
 
@@ -1229,6 +1260,7 @@ export async function fetchMemeSentiment({ limit = 20 } = {}) {
       token,
       method: 'POST',
       timeoutMs,
+      signal,
       body: buildNewsSearchBody({
         limit,
         engineTypes: { meme: ['twitter'] }
@@ -1244,7 +1276,7 @@ export async function fetchMemeSentiment({ limit = 20 } = {}) {
   }
 }
 
-export async function fetchKolMonitor({ username, includeDeleted = false, limit = 20 } = {}) {
+export async function fetchKolMonitor({ username, includeDeleted = false, limit = 20 } = {}, { signal } = {}) {
   const token = normalizeText(process.env.TWITTER_TOKEN);
   const screenName = normalizeText(username);
   if (!token) return buildError('not_configured');
@@ -1257,6 +1289,7 @@ export async function fetchKolMonitor({ username, includeDeleted = false, limit 
       token,
       method: 'POST',
       timeoutMs,
+      signal,
       body: {
         username: screenName,
         maxResults: toBoundedInt(limit, 20, 1, 100),
@@ -1275,6 +1308,7 @@ export async function fetchKolMonitor({ username, includeDeleted = false, limit 
         token,
         method: 'POST',
         timeoutMs,
+        signal,
         body: {
           username: screenName,
           maxResults: toBoundedInt(limit, 20, 1, 100)
@@ -1303,7 +1337,7 @@ export async function fetchWeatherContext({
   longitude,
   forecastDays = 3,
   timezone = 'auto'
-} = {}) {
+} = {}, { signal } = {}) {
   const lat = toBoundedFloat(latitude, NaN, -90, 90);
   const lon = toBoundedFloat(longitude, NaN, -180, 180);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
@@ -1328,7 +1362,8 @@ export async function fetchWeatherContext({
     url.searchParams.set('forecast_days', String(forecastLength));
     const response = await fetchJsonWithRetry(
       url.toString(),
-      getEnvTimeout(['OPEN_METEO_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS)
+      getEnvTimeout(['OPEN_METEO_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS),
+      { signal }
     );
     const daily = response?.daily || {};
     const dayCount = Array.isArray(daily?.time) ? daily.time.length : 0;
@@ -1363,20 +1398,22 @@ export async function fetchWeatherContext({
   }
 }
 
-export async function fetchTechBuzzSignal({ limit = 10 } = {}) {
+export async function fetchTechBuzzSignal({ limit = 10 } = {}, { signal } = {}) {
   try {
     const fetchedAt = new Date().toISOString();
     const maxRows = toBoundedInt(limit, 10, 1, 30);
     const topStoryIds = await fetchJsonWithRetry(
       'https://hacker-news.firebaseio.com/v0/topstories.json',
-      getEnvTimeout(['HACKERNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS)
+      getEnvTimeout(['HACKERNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS),
+      { signal }
     );
     const ids = Array.isArray(topStoryIds) ? topStoryIds.slice(0, maxRows) : [];
     const itemResponses = await Promise.all(
       ids.map((id) =>
         fetchJsonWithRetry(
           `https://hacker-news.firebaseio.com/v0/item/${id}.json`,
-          getEnvTimeout(['HACKERNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS)
+          getEnvTimeout(['HACKERNEWS_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS),
+          { signal }
         ).catch(() => null)
       )
     );
@@ -1397,7 +1434,7 @@ export async function fetchMarketPriceFeed({
   order = 'market_cap_desc',
   limit = 10,
   page = 1
-} = {}) {
+} = {}, { signal } = {}) {
   try {
     const fetchedAt = new Date().toISOString();
     const url = new URL('https://api.coingecko.com/api/v3/coins/markets');
@@ -1417,7 +1454,8 @@ export async function fetchMarketPriceFeed({
     url.searchParams.set('price_change_percentage', '24h');
     const response = await fetchJsonWithRetry(
       url.toString(),
-      getEnvTimeout(['COINGECKO_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS)
+      getEnvTimeout(['COINGECKO_TIMEOUT_MS'], DEFAULT_TIMEOUT_MS),
+      { signal }
     );
     const markets = compactList(response).map((item) => mapCoinGeckoMarket(item, fetchedAt));
     return buildSuccess(

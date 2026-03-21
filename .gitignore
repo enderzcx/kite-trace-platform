@@ -21,6 +21,17 @@ backend/.tmp-*.out.log
 agent-network/tmp-*.log
 *.pid
 
+# Deploy / build artifacts
+*-deploy-*.tgz
+*-deploy.tgz
+tmp-*
+.codex-run/
+backend/.codex-run/
+.mcp.json
+backend/.env.*.backup.*
+backend/scripts/test-aa-v3-pay.mjs
+test_aa_steps.mjs
+
 # Runtime data (keep placeholder only)
 backend/data/*
 !backend/data/.gitkeep

@@ -1,4 +1,5 @@
 import { config as loadEnv } from 'dotenv';
+import { applyNodeEnvProxyPreference } from '../lib/envProxy.js';
 import { ethers } from 'ethers';
 import { BTC_TRADING_PLAN_V1_SCHEMA_ID } from '../lib/deliverySchemas/btcTradingPlanV1.js';
 import fs from 'node:fs';
@@ -25,6 +26,7 @@ import {
 } from './mcpRuntimeContextHelpers.mjs';
 
 loadEnv({ path: path.resolve(process.cwd(), '.env') });
+applyNodeEnvProxyPreference();
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -69,8 +71,8 @@ const REQUEST_TIMEOUT_MS = Math.max(30_000, Number(process.env.KITE_RPC_TIMEOUT_
 const USE_MANAGED_CONSUMER = envFlag(process.env.MCP_LIVE_USE_MANAGED_CONSUMER || '');
 const TARGET_NATIVE_BALANCE = normalizeText(process.env.MCP_LIVE_REQUIRED_AA_NATIVE || (USE_MANAGED_CONSUMER ? '0.02' : '0.009'));
 const TARGET_TOKEN_BALANCE = normalizeText(process.env.MCP_LIVE_REQUIRED_AA_TOKEN || '0.005');
-const PAID_TOOL_TIMEOUT_MS = Math.max(45_000, Number(process.env.MCP_LIVE_PAID_TOOL_TIMEOUT_MS || 90_000) || 90_000);
-const FRESH_PROBE_TIMEOUT_MS = Math.max(15_000, Number(process.env.MCP_LIVE_FRESH_PROBE_TIMEOUT_MS || 25_000) || 25_000);
+const PAID_TOOL_TIMEOUT_MS = Math.max(45_000, Number(process.env.MCP_LIVE_PAID_TOOL_TIMEOUT_MS || 120_000) || 120_000);
+const FRESH_PROBE_TIMEOUT_MS = Math.max(15_000, Number(process.env.MCP_LIVE_FRESH_PROBE_TIMEOUT_MS || 110_000) || 110_000);
 const TOKEN_ABI = [
   'function balanceOf(address account) view returns (uint256)',
   'function decimals() view returns (uint8)',
@@ -827,7 +829,7 @@ try {
         candidateToolName,
         {
           ...(candidate?.exampleInput && typeof candidate.exampleInput === 'object' ? candidate.exampleInput : {}),
-          payer: aaWallet,
+          payer: normalizeText(process.env.MCP_LIVE_PAYER_AA_OVERRIDE || '') || aaWallet,
           _meta: {
             traceId: candidateTraceId
           }

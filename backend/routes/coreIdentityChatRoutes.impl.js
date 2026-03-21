@@ -43,7 +43,6 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     readJobs,
     readSessionAuthorizations,
     readSessionApprovalRequests,
-    XMTP_ROUTER_DERIVED_ADDRESS,
     readIdentityChallenges,
     readRecords,
     readSessionRuntime,
@@ -1882,9 +1881,8 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     forceNewSession = false
   } = {}) {
     const provider = backendSigner?.provider || createBackendRpcProvider();
-    const fallbackRouterOwner = normalizeAddress(XMTP_ROUTER_DERIVED_ADDRESS || '');
     const currentRuntime = resolveSessionRuntime({ owner });
-    const requestedOwner = normalizeAddress(owner || currentRuntime.owner || fallbackRouterOwner || '');
+    const requestedOwner = normalizeAddress(owner || currentRuntime.owner || '');
     if (!ethers.isAddress(requestedOwner)) {
       throw new Error('A valid owner address is required for session creation.');
     }

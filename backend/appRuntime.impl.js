@@ -35,7 +35,6 @@ import { createSessionPayHelpers } from './lib/sessionPay.js';
 import { createEnsureAAAccountDeployment } from './lib/aaAccount.js';
 import { createOnboardingSetupHelpers } from './lib/onboardingSetupHelpers.js';
 import { createClaudeConnectorAuthHelpers } from './lib/claudeConnectorAuth.js';
-import { createAutoXmtpNetworkLoop } from './lib/loops/xmtpLoop.js';
 import { createAutoTradePlanLoop } from './lib/loops/tradePlanLoop.js';
 import { createAutoJobExpiryLoop } from './lib/loops/jobExpiryLoop.js';
 import {
@@ -66,7 +65,6 @@ import { createHyperliquidAdapter } from './services/hyperliquidAdapter.js';
 import { createPersistenceStore } from './services/persistenceStore.js';
 import { createMessageProviderAnalysisService } from './services/messageProviderAnalysisService.js';
 import { createX402ReceiptService } from './services/x402ReceiptService.js';
-import { createXmtpAgentRuntime } from './services/xmtpAgentRuntime.js';
 import { createAgent001ExecutionService } from './services/agent001ExecutionService.js';
 import { createAgent001PlanningService } from './services/agent001PlanningService.js';
 import { createAgent001Orchestrator } from './services/agent001Orchestrator.js';
@@ -81,7 +79,6 @@ import {
   resolveAgent001Intent
 } from './services/agent001Intent.js';
 import { registerAutomationX402Routes } from './routes/automationX402Routes.js';
-import { registerXmtpNetworkRoutes } from './routes/xmtpNetworkRoutes.js';
 import { registerWorkflowA2aRoutes } from './routes/workflowA2aRoutes.js';
 import { registerCoreIdentityChatRoutes } from './routes/coreIdentityChatRoutes.js';
 import { registerMarketAgentServiceRoutes } from './routes/marketAgentServiceRoutes.js';
@@ -107,9 +104,7 @@ import { createAgent001TradeFlowHelpers } from './routes/agent001TradeFlowHelper
 import { createAgent001AnalysisFlowHelpers } from './routes/agent001AnalysisFlowHelpers.js';
 import { createAgent001ConversationGateHelpers } from './routes/agent001ConversationGateHelpers.js';
 import { createRuntimeTaskEnvelopeHelpers } from './routes/runtimeTaskEnvelopeHelpers.js';
-import { createXmtpRuntimeRegistryHelpers } from './routes/xmtpRuntimeRegistryHelpers.js';
 import { createServiceNetworkHelpers } from './routes/serviceNetworkHelpers.js';
-import { createXmtpRouterService } from './services/xmtpRouterService.js';
 import { registerMcpRoutes } from './mcp/mcpServer.js';
 import { createRuntimeConfig } from './runtime/config.js';
 import {
@@ -152,8 +147,6 @@ const {
   validationRecordsPath,
   trustPublicationsPath,
   networkAgentsPath,
-  xmtpEventsPath,
-  xmtpGroupsPath,
   networkCommandsPath,
   networkAuditPath,
   agent001ResultsPath,
@@ -299,82 +292,16 @@ const {
   KTRACE_AUTO_JOB_EXPIRY_ENABLED,
   KTRACE_AUTO_JOB_EXPIRY_INTERVAL_MS,
   X_READER_MAX_CHARS_DEFAULT,
-  XMTP_ROUTER_KEY_AVAILABLE,
-  XMTP_RISK_KEY_AVAILABLE,
-  XMTP_READER_KEY_AVAILABLE,
-  XMTP_PRICE_KEY_AVAILABLE,
-  XMTP_EXECUTOR_KEY_AVAILABLE,
-  XMTP_ANY_KEY_AVAILABLE,
-  XMTP_ENABLED_RAW,
-  XMTP_ENABLED,
-  XMTP_AUTO_ACK,
-  XMTP_EVENT_RETENTION,
-  XMTP_ENV,
-  XMTP_API_URL,
-  XMTP_HISTORY_SYNC_URL,
-  XMTP_GATEWAY_HOST,
-  XMTP_DB_ENCRYPTION_KEY,
-  XMTP_DB_DIRECTORY,
-  XMTP_WALLET_KEY,
-  XMTP_ROUTER_WALLET_KEY,
-  XMTP_RISK_WALLET_KEY,
-  XMTP_READER_WALLET_KEY,
-  XMTP_PRICE_WALLET_KEY,
-  XMTP_EXECUTOR_WALLET_KEY,
-  XMTP_ROUTER_AGENT_ADDRESS,
-  XMTP_RISK_AGENT_ADDRESS,
-  XMTP_READER_AGENT_ADDRESS,
-  XMTP_PRICE_AGENT_ADDRESS,
-  XMTP_EXECUTOR_AGENT_ADDRESS,
-  XMTP_ROUTER_AGENT_AA_ADDRESS,
-  XMTP_RISK_AGENT_AA_ADDRESS,
-  XMTP_READER_AGENT_AA_ADDRESS,
-  XMTP_PRICE_AGENT_AA_ADDRESS,
-  XMTP_EXECUTOR_AGENT_AA_ADDRESS,
-  XMTP_ROUTER_RUNTIME_ENABLED,
-  XMTP_RISK_RUNTIME_ENABLED,
-  XMTP_READER_RUNTIME_ENABLED,
-  XMTP_PRICE_RUNTIME_ENABLED,
-  XMTP_EXECUTOR_RUNTIME_ENABLED,
-  XMTP_ANY_RUNTIME_ENABLED,
-  XMTP_AUTO_NETWORK_ENABLED,
-  XMTP_AUTO_NETWORK_INTERVAL_MS,
-  XMTP_AUTO_NETWORK_SOURCE_AGENT_ID,
-  XMTP_AUTO_NETWORK_TARGET_AGENT_IDS,
-  XMTP_AUTO_NETWORK_CAPABILITY,
-  XMTP_WORKERS_GROUP_LABEL,
-  XMTP_WORKERS_GROUP_NAME,
-  XMTP_WORKERS_GROUP_AGENT_IDS,
   AGENT001_REQUIRE_X402,
   AGENT001_PREBIND_ONLY,
   AGENT001_BIND_TIMEOUT_MS,
   ROLE_RANK,
-  ROUTER_WALLET_KEY_NORMALIZED,
-  RISK_WALLET_KEY_NORMALIZED,
-  READER_WALLET_KEY_NORMALIZED,
-  PRICE_WALLET_KEY_NORMALIZED,
-  EXECUTOR_WALLET_KEY_NORMALIZED,
   ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED,
   ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED,
   ERC8183_VALIDATOR_PRIVATE_KEY_NORMALIZED,
-  XMTP_ROUTER_DERIVED_ADDRESS,
-  XMTP_RISK_DERIVED_ADDRESS,
-  XMTP_READER_DERIVED_ADDRESS,
-  XMTP_PRICE_DERIVED_ADDRESS,
-  XMTP_EXECUTOR_DERIVED_ADDRESS,
   ERC8183_REQUESTER_OWNER_ADDRESS,
   ERC8183_EXECUTOR_OWNER_ADDRESS,
-  ERC8183_VALIDATOR_OWNER_ADDRESS,
-  XMTP_ROUTER_RESOLVED_ADDRESS,
-  XMTP_RISK_RESOLVED_ADDRESS,
-  XMTP_READER_RESOLVED_ADDRESS,
-  XMTP_PRICE_RESOLVED_ADDRESS,
-  XMTP_EXECUTOR_RESOLVED_ADDRESS,
-  XMTP_ROUTER_DB_DIRECTORY,
-  XMTP_RISK_DB_DIRECTORY,
-  XMTP_READER_DB_DIRECTORY,
-  XMTP_PRICE_DB_DIRECTORY,
-  XMTP_EXECUTOR_DB_DIRECTORY
+  ERC8183_VALIDATOR_OWNER_ADDRESS
 } = runtimeConfig;
 let onboardingSetupHelpers = null;
 let claudeConnectorAuthHelpers = null;
@@ -474,8 +401,6 @@ const PERSIST_ARRAY_PATHS = [
   validationRecordsPath,
   trustPublicationsPath,
   networkAgentsPath,
-  xmtpEventsPath,
-  xmtpGroupsPath,
   sessionAuthorizationsPath,
   sessionApprovalRequestsPath,
   networkCommandsPath,
@@ -492,25 +417,6 @@ const { readJsonArray, writeJsonArray, readJsonObject, writeJsonObject, queuePer
   onPersistWriteError: (message) => console.error(message)
 });
 let persistenceInitDone = false;
-
-const autoXmtpNetworkState = {
-  enabled: false,
-  intervalMs: XMTP_AUTO_NETWORK_INTERVAL_MS,
-  sourceAgentId: XMTP_AUTO_NETWORK_SOURCE_AGENT_ID,
-  targetAgentIds: parseAgentIdList(XMTP_AUTO_NETWORK_TARGET_AGENT_IDS),
-  capability: XMTP_AUTO_NETWORK_CAPABILITY || 'network-heartbeat',
-  startedAt: '',
-  lastTickAt: '',
-  lastTraceId: '',
-  lastRequestId: '',
-  lastTaskId: '',
-  lastTargetAgentId: '',
-  lastStatus: '',
-  lastError: '',
-  sentCount: 0,
-  failedCount: 0,
-  cursor: 0
-};
 
 const autoTradePlanState = {
   enabled: false,
@@ -584,11 +490,6 @@ const {
   writeTrustPublications,
   readNetworkAgents,
   writeNetworkAgents,
-  ensureXmtpEventsStateLoaded,
-  readXmtpEvents,
-  writeXmtpEvents,
-  readXmtpGroups,
-  writeXmtpGroups,
   readNetworkCommands,
   writeNetworkCommands,
   readNetworkAuditEvents,
@@ -616,8 +517,6 @@ const {
     validationRecordsPath,
     trustPublicationsPath,
     networkAgentsPath,
-    xmtpEventsPath,
-    xmtpGroupsPath,
     networkCommandsPath,
     networkAuditPath,
     agent001ResultsPath
@@ -770,12 +669,7 @@ const sessionOwnerByAaWallet = (() => {
   for (const [aaWallet, owner] of [
     [ERC8183_REQUESTER_AA_ADDRESS, ERC8183_REQUESTER_OWNER_ADDRESS],
     [ERC8183_EXECUTOR_AA_ADDRESS, ERC8183_EXECUTOR_OWNER_ADDRESS],
-    [ERC8183_VALIDATOR_AA_ADDRESS, ERC8183_VALIDATOR_OWNER_ADDRESS],
-    [XMTP_ROUTER_AGENT_AA_ADDRESS, XMTP_ROUTER_DERIVED_ADDRESS],
-    [XMTP_RISK_AGENT_AA_ADDRESS, XMTP_RISK_DERIVED_ADDRESS],
-    [XMTP_READER_AGENT_AA_ADDRESS, XMTP_READER_DERIVED_ADDRESS],
-    [XMTP_PRICE_AGENT_AA_ADDRESS, XMTP_PRICE_DERIVED_ADDRESS],
-    [XMTP_EXECUTOR_AGENT_AA_ADDRESS, XMTP_EXECUTOR_DERIVED_ADDRESS]
+    [ERC8183_VALIDATOR_AA_ADDRESS, ERC8183_VALIDATOR_OWNER_ADDRESS]
   ]) {
     const normalizedAaWallet = normalizeAddress(aaWallet || '');
     const normalizedOwner = normalizeAddress(owner || '');
@@ -1148,6 +1042,7 @@ async function initializePersistence() {
 const {
   computeX402StatusCounts,
   expireStaleX402PendingRequests,
+  scheduleX402PendingCleanup,
   upsertAgent001ResultRecord,
   upsertWorkflow,
   createX402Request,
@@ -1327,9 +1222,7 @@ const {
   x402RiskScorePrice: X402_RISK_SCORE_PRICE,
   x402TechnicalPrice: X402_TECHNICAL_PRICE,
   x402XReaderPrice: X402_X_READER_PRICE,
-  x402Price: X402_PRICE,
-  xmtpReaderAgentAaAddress: XMTP_READER_AGENT_AA_ADDRESS,
-  xmtpRiskAgentAaAddress: XMTP_RISK_AGENT_AA_ADDRESS
+  x402Price: X402_PRICE
 });
 const {
   getCoreAllowedRecipients,
@@ -1499,16 +1392,6 @@ const {
   X402_TECHNICAL_PRICE,
   X402_UNIFIED_SERVICE_PRICE,
   X_READER_MAX_CHARS_DEFAULT,
-  XMTP_EXECUTOR_AGENT_AA_ADDRESS,
-  XMTP_EXECUTOR_RESOLVED_ADDRESS,
-  XMTP_PRICE_AGENT_AA_ADDRESS,
-  XMTP_PRICE_RESOLVED_ADDRESS,
-  XMTP_READER_AGENT_AA_ADDRESS,
-  XMTP_READER_RESOLVED_ADDRESS,
-  XMTP_ROUTER_AGENT_AA_ADDRESS,
-  XMTP_ROUTER_RESOLVED_ADDRESS,
-  XMTP_RISK_AGENT_AA_ADDRESS,
-  XMTP_RISK_RESOLVED_ADDRESS,
   getUtcDateKey,
   isInfoAnalysisAction,
   isTechnicalAnalysisAction,
@@ -1577,22 +1460,17 @@ const {
   createCommandId,
   extractNetworkCommandRefs,
   findNetworkCommandById,
-  findXmtpGroupRecord,
   normalizeNetworkCommandPayload,
   normalizeNetworkCommandType,
   parseNetworkCommandFilterList,
-  sanitizeXmtpGroupRecord,
   summarizeNetworkCommandExecution,
-  upsertNetworkCommandRecord,
-  upsertXmtpGroupRecord
+  upsertNetworkCommandRecord
 } = createNetworkCommandHelpers({
   createTraceId,
   normalizeAddresses,
   parseAgentIdList,
   readNetworkCommands,
-  readXmtpGroups,
-  writeNetworkCommands,
-  writeXmtpGroups
+  writeNetworkCommands
 });
 
 const { executeNetworkCommand } = createNetworkCommandExecutionHelpers({
@@ -1637,17 +1515,11 @@ const {
 });
 
 const {
-  isRecoverableXmtpFailure,
   runAgent001DispatchTask
 } = createAgent001DispatchHelpers({
-  XMTP_READER_RESOLVED_ADDRESS,
-  XMTP_RISK_RESOLVED_ADDRESS,
   buildLocalTechnicalRecoveryDispatch,
   createTraceId,
   findNetworkAgentById,
-  getReaderRuntime: () => xmtpReaderRuntime,
-  getRiskRuntime: () => xmtpRiskRuntime,
-  getRouterRuntime: () => xmtpRuntime,
   isLegacyBtcOnlyTechnicalFailure,
   normalizeAddress,
   waitMs
@@ -1663,7 +1535,6 @@ const {
   extractHorizonFromText,
   extractTradingSymbolFromText,
   fetchXReaderDigest,
-  isRecoverableXmtpFailure,
   normalizeStringArray,
   normalizeXReaderParams,
   llmAdapter,
@@ -1705,7 +1576,6 @@ const agent001ExecutionService = createAgent001ExecutionService({
   hasStrictX402Evidence,
   upsertAgent001ResultRecord,
   normalizeAddress,
-  getXmtpRuntime: () => xmtpRuntime,
   port: PORT
 });
 const {
@@ -1774,15 +1644,9 @@ const { resolveAgent001ConversationEntry } = createAgent001ConversationGateHelpe
   classifyAgent001IntentFallback,
   createTraceId,
   detectAgent001IntentOverrides,
-  getAllXmtpRuntimeStatuses: () => getAllXmtpRuntimeStatuses(),
   llmAdapter,
   parseJsonObjectFromText,
   resolveAgent001Intent
-});
-const { handleRouterRuntimeTextMessage } = createXmtpRouterService({
-  handleAgent001AnalysisIntent,
-  handleAgent001TradeIntent,
-  resolveAgent001ConversationEntry
 });
 const {
   getAutoTradePlanStatus,
@@ -1794,8 +1658,7 @@ const {
   intervalMs: AUTO_TRADE_PLAN_INTERVAL_MS,
   symbol: AUTO_TRADE_PLAN_SYMBOL,
   horizonMin: AUTO_TRADE_PLAN_HORIZON_MIN,
-  prompt: AUTO_TRADE_PLAN_PROMPT,
-  handleRouterRuntimeTextMessage
+  prompt: AUTO_TRADE_PLAN_PROMPT
 });
 const executeJobExpiry = createJobExpiryExecutor({
   readJobs,
@@ -1844,63 +1707,6 @@ const {
   normalizeXReaderParams,
   llmAdapter,
   runRiskScoreAnalysis
-});
-
-const {
-  getAllXmtpRuntimeStatuses,
-  startXmtpRuntimes,
-  stopXmtpRuntimes,
-  xmtpExecutorRuntime,
-  xmtpPriceRuntime,
-  xmtpReaderRuntime,
-  xmtpRiskRuntime,
-  xmtpRuntime
-} = createXmtpRuntimeRegistryHelpers({
-  createXmtpAgentRuntime,
-  EXECUTOR_WALLET_KEY_NORMALIZED,
-  findNetworkAgentById,
-  handleExecutorRuntimeTaskEnvelope,
-  handlePriceRuntimeTaskEnvelope,
-  handleReaderRuntimeTaskEnvelope,
-  handleRiskRuntimeTaskEnvelope,
-  handleRouterRuntimeTextMessage,
-  PRICE_WALLET_KEY_NORMALIZED,
-  READER_WALLET_KEY_NORMALIZED,
-  readXmtpEvents,
-  RISK_WALLET_KEY_NORMALIZED,
-  ROUTER_WALLET_KEY_NORMALIZED,
-  writeXmtpEvents,
-  XMTP_API_URL,
-  XMTP_DB_ENCRYPTION_KEY,
-  XMTP_ENV,
-  XMTP_EVENT_RETENTION,
-  XMTP_EXECUTOR_DB_DIRECTORY,
-  XMTP_EXECUTOR_RUNTIME_ENABLED,
-  XMTP_GATEWAY_HOST,
-  XMTP_HISTORY_SYNC_URL,
-  XMTP_PRICE_DB_DIRECTORY,
-  XMTP_PRICE_RUNTIME_ENABLED,
-  XMTP_READER_DB_DIRECTORY,
-  XMTP_READER_RUNTIME_ENABLED,
-  XMTP_RISK_DB_DIRECTORY,
-  XMTP_RISK_RUNTIME_ENABLED,
-  XMTP_ROUTER_DB_DIRECTORY,
-  XMTP_ROUTER_RUNTIME_ENABLED
-});
-const {
-  getAutoXmtpNetworkStatus,
-  runAutoXmtpNetworkTick,
-  startAutoXmtpNetworkLoop,
-  stopAutoXmtpNetworkLoop
-} = createAutoXmtpNetworkLoop({
-  state: autoXmtpNetworkState,
-  intervalMs: XMTP_AUTO_NETWORK_INTERVAL_MS,
-  sourceAgentId: XMTP_AUTO_NETWORK_SOURCE_AGENT_ID,
-  targetAgentIds: XMTP_AUTO_NETWORK_TARGET_AGENT_IDS,
-  capability: XMTP_AUTO_NETWORK_CAPABILITY,
-  findNetworkAgentById,
-  xmtpRuntime,
-  createTraceId
 });
 
 function assertRouteDependencies(routeName = '', deps = {}, requiredKeys = []) {
@@ -1992,41 +1798,6 @@ const routeDeps = Object.freeze({
   X402_HYPERLIQUID_ORDER_PRICE,
   X402_UNIFIED_SERVICE_PRICE,
   X_READER_MAX_CHARS_DEFAULT,
-  XMTP_API_URL,
-  XMTP_DB_ENCRYPTION_KEY,
-  XMTP_ENV,
-  XMTP_EVENT_RETENTION,
-  XMTP_GATEWAY_HOST,
-  XMTP_HISTORY_SYNC_URL,
-  XMTP_ROUTER_RUNTIME_ENABLED,
-  XMTP_ROUTER_DB_DIRECTORY,
-  XMTP_ROUTER_DERIVED_ADDRESS,
-  XMTP_ROUTER_RESOLVED_ADDRESS,
-  XMTP_ROUTER_AGENT_AA_ADDRESS,
-  XMTP_PRICE_RUNTIME_ENABLED,
-  XMTP_PRICE_DB_DIRECTORY,
-  XMTP_PRICE_RESOLVED_ADDRESS,
-  XMTP_PRICE_AGENT_AA_ADDRESS,
-  XMTP_READER_RUNTIME_ENABLED,
-  XMTP_READER_DB_DIRECTORY,
-  XMTP_READER_RESOLVED_ADDRESS,
-  XMTP_READER_AGENT_AA_ADDRESS,
-  XMTP_RISK_RUNTIME_ENABLED,
-  XMTP_RISK_DB_DIRECTORY,
-  XMTP_RISK_RESOLVED_ADDRESS,
-  XMTP_RISK_AGENT_AA_ADDRESS,
-  XMTP_EXECUTOR_RUNTIME_ENABLED,
-  XMTP_EXECUTOR_DB_DIRECTORY,
-  XMTP_EXECUTOR_RESOLVED_ADDRESS,
-  XMTP_EXECUTOR_AGENT_AA_ADDRESS,
-  XMTP_WORKERS_GROUP_AGENT_IDS,
-  XMTP_WORKERS_GROUP_LABEL,
-  XMTP_WORKERS_GROUP_NAME,
-  ROUTER_WALLET_KEY_NORMALIZED,
-  PRICE_WALLET_KEY_NORMALIZED,
-  READER_WALLET_KEY_NORMALIZED,
-  RISK_WALLET_KEY_NORMALIZED,
-  EXECUTOR_WALLET_KEY_NORMALIZED,
   GokiteAASDK,
   crypto,
   ethers,
@@ -2036,9 +1807,6 @@ const routeDeps = Object.freeze({
   persistenceStore,
   x402Path,
   sessionRuntimePath,
-  xmtpRuntime,
-  xmtpReaderRuntime,
-  xmtpRiskRuntime,
   authConfigured,
   extractApiKey,
   resolveRoleByApiKey,
@@ -2065,7 +1833,6 @@ const routeDeps = Object.freeze({
   createTraceId,
   createCommandId,
   createX402Request,
-  createXmtpAgentRuntime,
   appendReputationSignal,
   appendTrustPublication,
   appendValidationRecord,
@@ -2103,8 +1870,6 @@ const routeDeps = Object.freeze({
   readValidationRecords,
   readWorkflows,
   readX402Requests,
-  readXmtpEvents,
-  readXmtpGroups,
   writeIdentityChallenges,
   writeOnboardingChallenges,
   writeJsonObject,
@@ -2121,15 +1886,12 @@ const routeDeps = Object.freeze({
   writeSessionRuntime,
   writeTemplates,
   writeX402Requests,
-  writeXmtpEvents,
-  writeXmtpGroups,
   upsertAgent001ResultRecord,
   upsertJobRecord,
   upsertNetworkCommandRecord,
   upsertPurchaseRecord,
   upsertServiceInvocation,
   upsertWorkflow,
-  upsertXmtpGroupRecord,
   buildA2ACapabilities,
   buildA2AReceipt,
   buildAgent001DispatchSummary,
@@ -2178,11 +1940,8 @@ const routeDeps = Object.freeze({
   findNetworkAgentById,
   findConsumerIntent,
   findNetworkCommandById,
-  findXmtpGroupRecord,
   getActionConfig,
-  getAllXmtpRuntimeStatuses,
   getAutoTradePlanStatus,
-  getAutoXmtpNetworkStatus,
   getEscrowJob,
   getInternalAgentApiKey,
   getLatestIdentityChallengeSnapshot,
@@ -2194,13 +1953,11 @@ const routeDeps = Object.freeze({
   handlePriceRuntimeTaskEnvelope,
   handleReaderRuntimeTaskEnvelope,
   handleRiskRuntimeTaskEnvelope,
-  handleRouterRuntimeTextMessage,
   hasStrictX402Evidence,
   isAgent001ForceOrderRequested,
   isAgent001TaskSuccessful,
   isInfoAnalysisAction,
   isLegacyBtcOnlyTechnicalFailure,
-  isRecoverableXmtpFailure,
   isTechnicalAnalysisAction,
   issueIdentityChallenge,
   listNetworkAuditEventsByTraceId,
@@ -2236,7 +1993,6 @@ const routeDeps = Object.freeze({
   runRiskScoreAnalysis,
   sanitizeNetworkAgentRecord,
   sanitizeServiceRecord,
-  sanitizeXmtpGroupRecord,
   selectAgent001ProviderPlan,
   selectServiceCandidatesByCapability,
   sendSessionTransferViaEoaRelay,
@@ -2246,11 +2002,7 @@ const routeDeps = Object.freeze({
   shouldRetrySessionPayCategory,
   signResponseHash,
   startAutoTradePlanLoop,
-  startAutoXmtpNetworkLoop,
-  startXmtpRuntimes,
   stopAutoTradePlanLoop,
-  stopAutoXmtpNetworkLoop,
-  stopXmtpRuntimes,
   submitEscrowResult,
   summarizeNetworkCommandExecution,
   toPriceNumber,
@@ -2312,11 +2064,6 @@ const routeRegistrations = [
       'requireRole',
       'upsertWorkflow'
     ]
-  },
-  {
-    name: 'xmtpNetworkRoutes',
-    register: registerXmtpNetworkRoutes,
-    requiredKeys: ['createCommandId', 'executeNetworkCommand', 'findNetworkAgentById', 'requireRole']
   },
   {
     name: 'marketAgentServiceRoutes',
@@ -2384,6 +2131,8 @@ for (const routeRegistration of routeRegistrations) {
   routeRegistration.register(app, routeDeps);
 }
 
+scheduleX402PendingCleanup(5 * 60 * 1000);
+
 const { startServer, shutdownServer } = createRuntimeServerLifecycle({
   app,
   autoJobExpiry: {
@@ -2399,14 +2148,6 @@ const { startServer, shutdownServer } = createRuntimeServerLifecycle({
     start: startAutoTradePlanLoop,
     symbol: AUTO_TRADE_PLAN_SYMBOL
   },
-  autoXmtp: {
-    capability: XMTP_AUTO_NETWORK_CAPABILITY,
-    enabled: XMTP_AUTO_NETWORK_ENABLED,
-    intervalMs: XMTP_AUTO_NETWORK_INTERVAL_MS,
-    sourceAgentId: XMTP_AUTO_NETWORK_SOURCE_AGENT_ID,
-    start: startAutoXmtpNetworkLoop,
-    targetAgentIds: XMTP_AUTO_NETWORK_TARGET_AGENT_IDS
-  },
   ensureNetworkAgents,
   ensureServiceCatalog,
   ensureTemplateCatalog,
@@ -2414,12 +2155,8 @@ const { startServer, shutdownServer } = createRuntimeServerLifecycle({
   parseAgentIdList,
   persistenceStore,
   port: PORT,
-  startXmtpRuntimes,
   stopAutoJobExpiryLoop,
-  stopAutoTradePlanLoop,
-  stopAutoXmtpNetworkLoop,
-  stopXmtpRuntimes,
-  xmtpAnyRuntimeEnabled: XMTP_ANY_RUNTIME_ENABLED
+  stopAutoTradePlanLoop
 });
 
 export { shutdownServer, startServer };

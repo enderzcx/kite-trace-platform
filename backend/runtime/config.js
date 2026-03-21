@@ -92,8 +92,6 @@ export function createRuntimeConfig() {
   const validationRecordsPath = path.resolve('data', 'validation_records.json');
   const trustPublicationsPath = path.resolve('data', 'trust_publications.json');
   const networkAgentsPath = path.resolve('data', 'network_agents.json');
-  const xmtpEventsPath = path.resolve('data', 'xmtp_events.json');
-  const xmtpGroupsPath = path.resolve('data', 'xmtp_groups.json');
   const networkCommandsPath = path.resolve('data', 'network_commands.json');
   const networkAuditPath = path.resolve('data', 'network_audit_events.json');
   const agent001ResultsPath = path.resolve('data', 'agent001_results.json');
@@ -445,78 +443,6 @@ export function createRuntimeConfig() {
     Math.min(Number(process.env.KTRACE_AUTO_JOB_EXPIRY_INTERVAL_MS || 300_000), 3_600_000)
   );
   const X_READER_MAX_CHARS_DEFAULT = Math.max(200, Math.min(8000, Number(process.env.X_READER_MAX_CHARS_DEFAULT || 1200)));
-  const XMTP_ROUTER_KEY_AVAILABLE = Boolean(
-    String(process.env.XMTP_ROUTER_WALLET_KEY || process.env.XMTP_WALLET_KEY || '').trim()
-  );
-  const XMTP_RISK_KEY_AVAILABLE = Boolean(String(process.env.XMTP_RISK_WALLET_KEY || '').trim());
-  const XMTP_READER_KEY_AVAILABLE = Boolean(String(process.env.XMTP_READER_WALLET_KEY || '').trim());
-  const XMTP_PRICE_KEY_AVAILABLE = Boolean(String(process.env.XMTP_PRICE_WALLET_KEY || '').trim());
-  const XMTP_EXECUTOR_KEY_AVAILABLE = Boolean(String(process.env.XMTP_EXECUTOR_WALLET_KEY || '').trim());
-  const XMTP_ANY_KEY_AVAILABLE =
-    XMTP_ROUTER_KEY_AVAILABLE ||
-    XMTP_RISK_KEY_AVAILABLE ||
-    XMTP_READER_KEY_AVAILABLE ||
-    XMTP_PRICE_KEY_AVAILABLE ||
-    XMTP_EXECUTOR_KEY_AVAILABLE;
-  const XMTP_ENABLED_RAW = String(process.env.XMTP_ENABLED || '').trim();
-  const XMTP_ENABLED = XMTP_ENABLED_RAW
-    ? /^(1|true|yes|on)$/i.test(XMTP_ENABLED_RAW)
-    : XMTP_ANY_KEY_AVAILABLE;
-  const XMTP_AUTO_ACK = /^(1|true|yes|on)$/i.test(String(process.env.XMTP_AUTO_ACK || '').trim());
-  const XMTP_EVENT_RETENTION = Math.max(50, Math.min(Number(process.env.XMTP_EVENT_RETENTION || 600), 5000));
-  const XMTP_ENV = String(process.env.XMTP_ENV || 'dev').trim().toLowerCase() || 'dev';
-  const XMTP_API_URL = String(process.env.XMTP_API_URL || '').trim();
-  const XMTP_HISTORY_SYNC_URL = String(process.env.XMTP_HISTORY_SYNC_URL || '').trim();
-  const XMTP_GATEWAY_HOST = String(process.env.XMTP_GATEWAY_HOST || '').trim();
-  const XMTP_DB_ENCRYPTION_KEY = String(process.env.XMTP_DB_ENCRYPTION_KEY || '').trim();
-  const XMTP_DB_DIRECTORY = String(process.env.XMTP_DB_DIRECTORY || './data/xmtp-db').trim();
-  const XMTP_WALLET_KEY = String(process.env.XMTP_WALLET_KEY || '').trim();
-  const XMTP_ROUTER_WALLET_KEY = String(process.env.XMTP_ROUTER_WALLET_KEY || XMTP_WALLET_KEY).trim();
-  const XMTP_RISK_WALLET_KEY = String(process.env.XMTP_RISK_WALLET_KEY || '').trim();
-  const XMTP_READER_WALLET_KEY = String(process.env.XMTP_READER_WALLET_KEY || '').trim();
-  const XMTP_PRICE_WALLET_KEY = String(process.env.XMTP_PRICE_WALLET_KEY || '').trim();
-  const XMTP_EXECUTOR_WALLET_KEY = String(process.env.XMTP_EXECUTOR_WALLET_KEY || '').trim();
-  const XMTP_ROUTER_AGENT_ADDRESS = String(process.env.XMTP_ROUTER_AGENT_ADDRESS || '').trim();
-  const XMTP_RISK_AGENT_ADDRESS = String(process.env.XMTP_RISK_AGENT_ADDRESS || '').trim();
-  const XMTP_READER_AGENT_ADDRESS = String(process.env.XMTP_READER_AGENT_ADDRESS || '').trim();
-  const XMTP_PRICE_AGENT_ADDRESS = String(process.env.XMTP_PRICE_AGENT_ADDRESS || '').trim();
-  const XMTP_EXECUTOR_AGENT_ADDRESS = String(process.env.XMTP_EXECUTOR_AGENT_ADDRESS || '').trim();
-  const XMTP_ROUTER_AGENT_AA_ADDRESS = String(process.env.XMTP_ROUTER_AGENT_AA_ADDRESS || '').trim();
-  const XMTP_RISK_AGENT_AA_ADDRESS = String(process.env.XMTP_RISK_AGENT_AA_ADDRESS || '').trim();
-  const XMTP_READER_AGENT_AA_ADDRESS = String(process.env.XMTP_READER_AGENT_AA_ADDRESS || '').trim();
-  const XMTP_PRICE_AGENT_AA_ADDRESS = String(process.env.XMTP_PRICE_AGENT_AA_ADDRESS || '').trim();
-  const XMTP_EXECUTOR_AGENT_AA_ADDRESS = String(process.env.XMTP_EXECUTOR_AGENT_AA_ADDRESS || '').trim();
-  const XMTP_ROUTER_RUNTIME_ENABLED = /^(1|true|yes|on)$/i.test(
-    String(process.env.XMTP_ROUTER_RUNTIME_ENABLED || (XMTP_ENABLED && XMTP_ROUTER_KEY_AVAILABLE ? '1' : '0')).trim()
-  );
-  const XMTP_RISK_RUNTIME_ENABLED = /^(1|true|yes|on)$/i.test(
-    String(process.env.XMTP_RISK_RUNTIME_ENABLED || (XMTP_ENABLED && XMTP_RISK_KEY_AVAILABLE ? '1' : '0')).trim()
-  );
-  const XMTP_READER_RUNTIME_ENABLED = /^(1|true|yes|on)$/i.test(
-    String(process.env.XMTP_READER_RUNTIME_ENABLED || (XMTP_ENABLED && XMTP_READER_KEY_AVAILABLE ? '1' : '0')).trim()
-  );
-  const XMTP_PRICE_RUNTIME_ENABLED = /^(1|true|yes|on)$/i.test(
-    String(process.env.XMTP_PRICE_RUNTIME_ENABLED || (XMTP_ENABLED && XMTP_PRICE_KEY_AVAILABLE ? '1' : '0')).trim()
-  );
-  const XMTP_EXECUTOR_RUNTIME_ENABLED = /^(1|true|yes|on)$/i.test(
-    String(process.env.XMTP_EXECUTOR_RUNTIME_ENABLED || (XMTP_ENABLED && XMTP_EXECUTOR_KEY_AVAILABLE ? '1' : '0')).trim()
-  );
-  const XMTP_ANY_RUNTIME_ENABLED =
-    XMTP_ROUTER_RUNTIME_ENABLED ||
-    XMTP_RISK_RUNTIME_ENABLED ||
-    XMTP_READER_RUNTIME_ENABLED ||
-    XMTP_PRICE_RUNTIME_ENABLED ||
-    XMTP_EXECUTOR_RUNTIME_ENABLED;
-  const XMTP_AUTO_NETWORK_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.XMTP_AUTO_NETWORK_ENABLED || '').trim());
-  const XMTP_AUTO_NETWORK_INTERVAL_MS = Math.max(15_000, Number(process.env.XMTP_AUTO_NETWORK_INTERVAL_MS || 60_000));
-  const XMTP_AUTO_NETWORK_SOURCE_AGENT_ID = String(process.env.XMTP_AUTO_NETWORK_SOURCE_AGENT_ID || 'router-agent').trim().toLowerCase();
-  const XMTP_AUTO_NETWORK_TARGET_AGENT_IDS = String(process.env.XMTP_AUTO_NETWORK_TARGET_AGENT_IDS || 'risk-agent,reader-agent').trim();
-  const XMTP_AUTO_NETWORK_CAPABILITY = String(process.env.XMTP_AUTO_NETWORK_CAPABILITY || 'network-heartbeat').trim();
-  const XMTP_WORKERS_GROUP_LABEL = String(process.env.XMTP_WORKERS_GROUP_LABEL || 'workers-group').trim();
-  const XMTP_WORKERS_GROUP_NAME = String(process.env.XMTP_WORKERS_GROUP_NAME || 'Agent001 + Workers').trim();
-  const XMTP_WORKERS_GROUP_AGENT_IDS = String(
-    process.env.XMTP_WORKERS_GROUP_AGENT_IDS || 'risk-agent,reader-agent,price-agent,executor-agent'
-  ).trim();
   const AGENT001_REQUIRE_X402 = true;
   const AGENT001_PREBIND_ONLY = !/^(0|false|no|off)$/i.test(
     String(process.env.AGENT001_PREBIND_ONLY || '1').trim()
@@ -531,34 +457,12 @@ export function createRuntimeConfig() {
     agent: 2,
     admin: 3
   };
-  const ROUTER_WALLET_KEY_NORMALIZED = normalizePrivateKey(XMTP_ROUTER_WALLET_KEY);
-  const RISK_WALLET_KEY_NORMALIZED = normalizePrivateKey(XMTP_RISK_WALLET_KEY);
-  const READER_WALLET_KEY_NORMALIZED = normalizePrivateKey(XMTP_READER_WALLET_KEY);
-  const PRICE_WALLET_KEY_NORMALIZED = normalizePrivateKey(XMTP_PRICE_WALLET_KEY);
-  const EXECUTOR_WALLET_KEY_NORMALIZED = normalizePrivateKey(XMTP_EXECUTOR_WALLET_KEY);
   const ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED = normalizePrivateKey(ERC8183_REQUESTER_PRIVATE_KEY);
   const ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED = normalizePrivateKey(ERC8183_EXECUTOR_PRIVATE_KEY);
   const ERC8183_VALIDATOR_PRIVATE_KEY_NORMALIZED = normalizePrivateKey(ERC8183_VALIDATOR_PRIVATE_KEY);
-  const XMTP_ROUTER_DERIVED_ADDRESS = deriveAddressFromPrivateKey(ROUTER_WALLET_KEY_NORMALIZED);
-  const XMTP_RISK_DERIVED_ADDRESS = deriveAddressFromPrivateKey(RISK_WALLET_KEY_NORMALIZED);
-  const XMTP_READER_DERIVED_ADDRESS = deriveAddressFromPrivateKey(READER_WALLET_KEY_NORMALIZED);
-  const XMTP_PRICE_DERIVED_ADDRESS = deriveAddressFromPrivateKey(PRICE_WALLET_KEY_NORMALIZED);
-  const XMTP_EXECUTOR_DERIVED_ADDRESS = deriveAddressFromPrivateKey(EXECUTOR_WALLET_KEY_NORMALIZED);
   const ERC8183_REQUESTER_OWNER_ADDRESS = deriveAddressFromPrivateKey(ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED);
   const ERC8183_EXECUTOR_OWNER_ADDRESS = deriveAddressFromPrivateKey(ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED);
   const ERC8183_VALIDATOR_OWNER_ADDRESS = deriveAddressFromPrivateKey(ERC8183_VALIDATOR_PRIVATE_KEY_NORMALIZED);
-  const XMTP_ROUTER_RESOLVED_ADDRESS = normalizeAddress(XMTP_ROUTER_AGENT_ADDRESS || XMTP_ROUTER_DERIVED_ADDRESS || '');
-  const XMTP_RISK_RESOLVED_ADDRESS = normalizeAddress(XMTP_RISK_AGENT_ADDRESS || XMTP_RISK_DERIVED_ADDRESS || '');
-  const XMTP_READER_RESOLVED_ADDRESS = normalizeAddress(XMTP_READER_AGENT_ADDRESS || XMTP_READER_DERIVED_ADDRESS || '');
-  const XMTP_PRICE_RESOLVED_ADDRESS = normalizeAddress(XMTP_PRICE_AGENT_ADDRESS || XMTP_PRICE_DERIVED_ADDRESS || '');
-  const XMTP_EXECUTOR_RESOLVED_ADDRESS = normalizeAddress(
-    XMTP_EXECUTOR_AGENT_ADDRESS || XMTP_EXECUTOR_DERIVED_ADDRESS || ''
-  );
-  const XMTP_ROUTER_DB_DIRECTORY = path.resolve(XMTP_DB_DIRECTORY, 'router-agent');
-  const XMTP_RISK_DB_DIRECTORY = path.resolve(XMTP_DB_DIRECTORY, 'risk-agent');
-  const XMTP_READER_DB_DIRECTORY = path.resolve(XMTP_DB_DIRECTORY, 'reader-agent');
-  const XMTP_PRICE_DB_DIRECTORY = path.resolve(XMTP_DB_DIRECTORY, 'price-agent');
-  const XMTP_EXECUTOR_DB_DIRECTORY = path.resolve(XMTP_DB_DIRECTORY, 'executor-agent');
 
   return {
     PORT,
@@ -589,8 +493,6 @@ export function createRuntimeConfig() {
     validationRecordsPath,
     trustPublicationsPath,
     networkAgentsPath,
-    xmtpEventsPath,
-    xmtpGroupsPath,
     networkCommandsPath,
     networkAuditPath,
     agent001ResultsPath,
@@ -739,81 +641,15 @@ export function createRuntimeConfig() {
     KTRACE_AUTO_JOB_EXPIRY_ENABLED,
     KTRACE_AUTO_JOB_EXPIRY_INTERVAL_MS,
     X_READER_MAX_CHARS_DEFAULT,
-    XMTP_ROUTER_KEY_AVAILABLE,
-    XMTP_RISK_KEY_AVAILABLE,
-    XMTP_READER_KEY_AVAILABLE,
-    XMTP_PRICE_KEY_AVAILABLE,
-    XMTP_EXECUTOR_KEY_AVAILABLE,
-    XMTP_ANY_KEY_AVAILABLE,
-    XMTP_ENABLED_RAW,
-    XMTP_ENABLED,
-    XMTP_AUTO_ACK,
-    XMTP_EVENT_RETENTION,
-    XMTP_ENV,
-    XMTP_API_URL,
-    XMTP_HISTORY_SYNC_URL,
-    XMTP_GATEWAY_HOST,
-    XMTP_DB_ENCRYPTION_KEY,
-    XMTP_DB_DIRECTORY,
-    XMTP_WALLET_KEY,
-    XMTP_ROUTER_WALLET_KEY,
-    XMTP_RISK_WALLET_KEY,
-    XMTP_READER_WALLET_KEY,
-    XMTP_PRICE_WALLET_KEY,
-    XMTP_EXECUTOR_WALLET_KEY,
-    XMTP_ROUTER_AGENT_ADDRESS,
-    XMTP_RISK_AGENT_ADDRESS,
-    XMTP_READER_AGENT_ADDRESS,
-    XMTP_PRICE_AGENT_ADDRESS,
-    XMTP_EXECUTOR_AGENT_ADDRESS,
-    XMTP_ROUTER_AGENT_AA_ADDRESS,
-    XMTP_RISK_AGENT_AA_ADDRESS,
-    XMTP_READER_AGENT_AA_ADDRESS,
-    XMTP_PRICE_AGENT_AA_ADDRESS,
-    XMTP_EXECUTOR_AGENT_AA_ADDRESS,
-    XMTP_ROUTER_RUNTIME_ENABLED,
-    XMTP_RISK_RUNTIME_ENABLED,
-    XMTP_READER_RUNTIME_ENABLED,
-    XMTP_PRICE_RUNTIME_ENABLED,
-    XMTP_EXECUTOR_RUNTIME_ENABLED,
-    XMTP_ANY_RUNTIME_ENABLED,
-    XMTP_AUTO_NETWORK_ENABLED,
-    XMTP_AUTO_NETWORK_INTERVAL_MS,
-    XMTP_AUTO_NETWORK_SOURCE_AGENT_ID,
-    XMTP_AUTO_NETWORK_TARGET_AGENT_IDS,
-    XMTP_AUTO_NETWORK_CAPABILITY,
-    XMTP_WORKERS_GROUP_LABEL,
-    XMTP_WORKERS_GROUP_NAME,
-    XMTP_WORKERS_GROUP_AGENT_IDS,
     AGENT001_REQUIRE_X402,
     AGENT001_PREBIND_ONLY,
     AGENT001_BIND_TIMEOUT_MS,
     ROLE_RANK,
-    ROUTER_WALLET_KEY_NORMALIZED,
-    RISK_WALLET_KEY_NORMALIZED,
-    READER_WALLET_KEY_NORMALIZED,
-    PRICE_WALLET_KEY_NORMALIZED,
-    EXECUTOR_WALLET_KEY_NORMALIZED,
     ERC8183_REQUESTER_PRIVATE_KEY_NORMALIZED,
     ERC8183_EXECUTOR_PRIVATE_KEY_NORMALIZED,
     ERC8183_VALIDATOR_PRIVATE_KEY_NORMALIZED,
-    XMTP_ROUTER_DERIVED_ADDRESS,
-    XMTP_RISK_DERIVED_ADDRESS,
-    XMTP_READER_DERIVED_ADDRESS,
-    XMTP_PRICE_DERIVED_ADDRESS,
-    XMTP_EXECUTOR_DERIVED_ADDRESS,
     ERC8183_REQUESTER_OWNER_ADDRESS,
     ERC8183_EXECUTOR_OWNER_ADDRESS,
-    ERC8183_VALIDATOR_OWNER_ADDRESS,
-    XMTP_ROUTER_RESOLVED_ADDRESS,
-    XMTP_RISK_RESOLVED_ADDRESS,
-    XMTP_READER_RESOLVED_ADDRESS,
-    XMTP_PRICE_RESOLVED_ADDRESS,
-    XMTP_EXECUTOR_RESOLVED_ADDRESS,
-    XMTP_ROUTER_DB_DIRECTORY,
-    XMTP_RISK_DB_DIRECTORY,
-    XMTP_READER_DB_DIRECTORY,
-    XMTP_PRICE_DB_DIRECTORY,
-    XMTP_EXECUTOR_DB_DIRECTORY
+    ERC8183_VALIDATOR_OWNER_ADDRESS
   };
 }

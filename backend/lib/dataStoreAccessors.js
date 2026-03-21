@@ -8,11 +8,6 @@ export function createDataStoreAccessors({
   queuePersistWrite,
   writeJsonArrayToFile
 } = {}) {
-  const xmtpEventsState = {
-    loaded: false,
-    rows: []
-  };
-
   function readRecords() {
     return readJsonArray(paths.dataPath);
   }
@@ -165,38 +160,6 @@ export function createDataStoreAccessors({
     writeJsonArray(paths.networkAgentsPath, records);
   }
 
-  function ensureXmtpEventsStateLoaded() {
-    if (xmtpEventsState.loaded) return;
-    const rows = loadJsonArrayFromFile(paths.xmtpEventsPath);
-    xmtpEventsState.rows = Array.isArray(rows) ? rows : [];
-    const stateKey = persistenceKeyForPath(paths.xmtpEventsPath);
-    persistArrayCache.set(stateKey, xmtpEventsState.rows);
-    xmtpEventsState.loaded = true;
-  }
-
-  function readXmtpEvents() {
-    ensureXmtpEventsStateLoaded();
-    return xmtpEventsState.rows;
-  }
-
-  function writeXmtpEvents(records) {
-    ensureXmtpEventsStateLoaded();
-    const rows = Array.isArray(records) ? records : [];
-    xmtpEventsState.rows = rows;
-    const stateKey = persistenceKeyForPath(paths.xmtpEventsPath);
-    persistArrayCache.set(stateKey, rows);
-    writeJsonArrayToFile(paths.xmtpEventsPath, rows);
-    queuePersistWrite(stateKey, rows);
-  }
-
-  function readXmtpGroups() {
-    return readJsonArray(paths.xmtpGroupsPath);
-  }
-
-  function writeXmtpGroups(records) {
-    writeJsonArray(paths.xmtpGroupsPath, records);
-  }
-
   function readNetworkCommands() {
     return readJsonArray(paths.networkCommandsPath);
   }
@@ -260,11 +223,6 @@ export function createDataStoreAccessors({
     writeTrustPublications,
     readNetworkAgents,
     writeNetworkAgents,
-    ensureXmtpEventsStateLoaded,
-    readXmtpEvents,
-    writeXmtpEvents,
-    readXmtpGroups,
-    writeXmtpGroups,
     readNetworkCommands,
     writeNetworkCommands,
     readNetworkAuditEvents,

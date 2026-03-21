@@ -4,67 +4,8 @@ export function createNetworkCommandHelpers(deps = {}) {
     normalizeAddresses,
     parseAgentIdList,
     readNetworkCommands,
-    readXmtpGroups,
-    writeNetworkCommands,
-    writeXmtpGroups
+    writeNetworkCommands
   } = deps;
-
-  function sanitizeXmtpGroupRecord(input = {}, existing = null) {
-    const source = input && typeof input === 'object' ? input : {};
-    const prev = existing && typeof existing === 'object' ? existing : {};
-    const now = new Date().toISOString();
-    const groupId = String(source.groupId || prev.groupId || '').trim();
-    const label = String(source.label || prev.label || '').trim();
-    const groupName = String(source.groupName || prev.groupName || '').trim();
-    const description = String(source.description || prev.description || '').trim();
-    const runtimeName = String(source.runtimeName || prev.runtimeName || 'router-runtime').trim();
-    const memberAgentIds = parseAgentIdList(source.memberAgentIds || prev.memberAgentIds || []);
-    const memberAddresses = normalizeAddresses(source.memberAddresses || prev.memberAddresses || []);
-    const createdAt = String(prev.createdAt || source.createdAt || now).trim() || now;
-    const updatedAt = String(source.updatedAt || now).trim() || now;
-    const lastUsedAt = String(source.lastUsedAt || prev.lastUsedAt || updatedAt).trim() || updatedAt;
-    return {
-      groupId,
-      label,
-      groupName,
-      description,
-      runtimeName,
-      memberAgentIds,
-      memberAddresses,
-      createdAt,
-      updatedAt,
-      lastUsedAt
-    };
-  }
-
-  function upsertXmtpGroupRecord(input = {}) {
-    const rows = readXmtpGroups();
-    const groupId = String(input?.groupId || '').trim();
-    const label = String(input?.label || '').trim().toLowerCase();
-    const idx = rows.findIndex((item) => {
-      if (groupId && String(item?.groupId || '').trim() === groupId) return true;
-      if (label && String(item?.label || '').trim().toLowerCase() === label) return true;
-      return false;
-    });
-    const current = idx >= 0 ? rows[idx] : null;
-    const record = sanitizeXmtpGroupRecord(input, current);
-    if (idx >= 0) rows[idx] = record;
-    else rows.unshift(record);
-    writeXmtpGroups(rows);
-    return record;
-  }
-
-  function findXmtpGroupRecord({ groupId = '', label = '' } = {}) {
-    const normalizedGroupId = String(groupId || '').trim();
-    const normalizedLabel = String(label || '').trim().toLowerCase();
-    return (
-      readXmtpGroups().find((item) => {
-        if (normalizedGroupId && String(item?.groupId || '').trim() === normalizedGroupId) return true;
-        if (normalizedLabel && String(item?.label || '').trim().toLowerCase() === normalizedLabel) return true;
-        return false;
-      }) || null
-    );
-  }
 
   function normalizeNetworkCommandType(value = '') {
     const type = String(value || '').trim().toLowerCase();
@@ -252,14 +193,11 @@ export function createNetworkCommandHelpers(deps = {}) {
     createCommandId,
     extractNetworkCommandRefs,
     findNetworkCommandById,
-    findXmtpGroupRecord,
     normalizeNetworkCommandPayload,
     normalizeNetworkCommandType,
     parseNetworkCommandFilterList,
     sanitizeNetworkCommandRecord,
-    sanitizeXmtpGroupRecord,
     summarizeNetworkCommandExecution,
-    upsertNetworkCommandRecord,
-    upsertXmtpGroupRecord
+    upsertNetworkCommandRecord
   };
 }

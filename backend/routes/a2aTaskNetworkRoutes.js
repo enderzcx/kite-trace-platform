@@ -72,7 +72,6 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
     fromAgentId,
     gatewayRecipient,
     getActionConfig,
-    getAllXmtpRuntimeStatuses,
     getLatestIdentityChallengeSnapshot,
     handle,
     hasQuantity,
@@ -239,8 +238,6 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
     X402_INFO_PRICE,
     X402_RISK_SCORE_PRICE,
     X402_X_READER_PRICE,
-    XMTP_ENV,
-    xmtpRuntime,
   } = deps;
 
   function parseBooleanFlag(value, fallback = false) {
@@ -2125,40 +2122,11 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
     const rows = ensureNetworkAgents()
       .filter((item) => (activeOnly ? item?.active !== false : true))
       .slice(0, limit);
-    const runtimeStatuses = getAllXmtpRuntimeStatuses();
-    const routerStatus = runtimeStatuses.router;
-    const riskStatus = runtimeStatuses.risk;
-    const readerStatus = runtimeStatuses.reader;
-    const priceStatus = runtimeStatuses.price;
-    const executorStatus = runtimeStatuses.executor;
     return res.json({
       ok: true,
       traceId: req.traceId || '',
       network: {
-        total: rows.length,
-        xmtp: {
-          env: routerStatus.env || XMTP_ENV,
-          router: {
-            enabled: routerStatus.enabled,
-            running: routerStatus.running
-          },
-          risk: {
-            enabled: riskStatus.enabled,
-            running: riskStatus.running
-          },
-          reader: {
-            enabled: readerStatus.enabled,
-            running: readerStatus.running
-          },
-          price: {
-            enabled: priceStatus.enabled,
-            running: priceStatus.running
-          },
-          executor: {
-            enabled: executorStatus.enabled,
-            running: executorStatus.running
-          }
-        }
+        total: rows.length
       },
       items: rows
     });

@@ -269,9 +269,22 @@ export function createX402WorkflowHelpers({
     };
   }
 
+  let _cleanupInterval = null;
+  function scheduleX402PendingCleanup(intervalMs = 5 * 60 * 1000) {
+    if (_cleanupInterval) return;
+    const safeInterval = Math.max(60_000, Number(intervalMs) || 5 * 60 * 1000);
+    _cleanupInterval = setInterval(() => {
+      try {
+        expireStaleX402PendingRequests({ stalePendingMs: 30 * 60 * 1000 });
+      } catch (_) { /* cleanup best-effort */ }
+    }, safeInterval);
+    if (_cleanupInterval.unref) _cleanupInterval.unref();
+  }
+
   return {
     computeX402StatusCounts,
     expireStaleX402PendingRequests,
+    scheduleX402PendingCleanup,
     upsertAgent001ResultRecord,
     upsertWorkflow,
     createX402Request,

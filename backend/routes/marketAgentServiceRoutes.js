@@ -62,7 +62,6 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     runRiskScoreAnalysis,
     sanitizeServiceRecord,
     SETTLEMENT_TOKEN,
-    startXmtpRuntimes,
     upsertWorkflow,
     upsertAgent001ResultRecord,
     upsertServiceInvocation,
@@ -985,9 +984,6 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         reason: 'text is required'
       });
     }
-    if (body.autoStart !== false) {
-      await startXmtpRuntimes();
-    }
     try {
       const reply = await handleRouterRuntimeTextMessage({ text });
       return res.json({
@@ -1381,6 +1377,11 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       const isTechnicalServiceAction = effectiveAction === 'risk-score-feed' || effectiveAction === 'technical-analysis-feed';
       const isInfoServiceAction = effectiveAction === 'info-analysis-feed';
       if (isExternalFeedCapability) {
+        const INVOKE_TOTAL_TIMEOUT_MS = Math.max(30_000, Number(process.env.INVOKE_TOTAL_TIMEOUT_MS || 90_000));
+        const invokeAbortController = new AbortController();
+        const invokeTimer = setTimeout(() => invokeAbortController.abort(), INVOKE_TOTAL_TIMEOUT_MS);
+        const invokeSignal = invokeAbortController.signal;
+        try {
         persistInvocation(invocation);
         const agentManagedPayment =
           normalizeText(body.x402Mode || body.paymentMode || '').toLowerCase() === 'agent' ||
@@ -1456,13 +1457,19 @@ export function registerMarketAgentServiceRoutes(app, deps) {
           }
         }
 
-        externalResult = evidenceRequest?.previewResult?.external || null;
+        const PREVIEW_CACHE_TTL_MS = 5 * 60 * 1000;
+        const cachedPreview = evidenceRequest?.previewResult?.external || null;
+        const cachedFetchedAt = cachedPreview?.fetchedAt ? new Date(cachedPreview.fetchedAt).getTime() : 0;
+        externalResult = (cachedPreview && cachedFetchedAt > 0 && Date.now() - cachedFetchedAt < PREVIEW_CACHE_TTL_MS)
+          ? cachedPreview
+          : null;
         if (!externalResult) {
+          const signalOpts = { signal: invokeSignal };
           if (isFundamentalExternalCapability) {
-            if (capabilityId === 'cap-listing-alert') externalResult = await fetchListingAlert(input);
-            else if (capabilityId === 'cap-news-signal') externalResult = await fetchNewsSignal(input);
-            else if (capabilityId === 'cap-meme-sentiment') externalResult = await fetchMemeSentiment(input);
-            else if (capabilityId === 'cap-kol-monitor') externalResult = await fetchKolMonitor(input);
+            if (capabilityId === 'cap-listing-alert') externalResult = await fetchListingAlert(input, signalOpts);
+            else if (capabilityId === 'cap-news-signal') externalResult = await fetchNewsSignal(input, signalOpts);
+            else if (capabilityId === 'cap-meme-sentiment') externalResult = await fetchMemeSentiment(input, signalOpts);
+            else if (capabilityId === 'cap-kol-monitor') externalResult = await fetchKolMonitor(input, signalOpts);
           } else if (isTechnicalExternalCapability) {
             if (capabilityId === 'cap-smart-money-signal') externalResult = await fetchSmartMoneySignal(input);
             else if (capabilityId === 'cap-trenches-scan') externalResult = await fetchTrenchesScan(input);
@@ -1470,9 +1477,9 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             else if (capabilityId === 'cap-wallet-pnl') externalResult = await fetchWalletPnl(input);
             else if (capabilityId === 'cap-dex-market') externalResult = await fetchDexMarket(input);
           } else if (isDataNodeExternalCapability) {
-            if (capabilityId === 'cap-weather-context') externalResult = await fetchWeatherContext(input);
-            else if (capabilityId === 'cap-tech-buzz-signal') externalResult = await fetchTechBuzzSignal(input);
-            else if (capabilityId === 'cap-market-price-feed') externalResult = await fetchMarketPriceFeed(input);
+            if (capabilityId === 'cap-weather-context') externalResult = await fetchWeatherContext(input, signalOpts);
+            else if (capabilityId === 'cap-tech-buzz-signal') externalResult = await fetchTechBuzzSignal(input, signalOpts);
+            else if (capabilityId === 'cap-market-price-feed') externalResult = await fetchMarketPriceFeed(input, signalOpts);
           }
         }
         if (externalResult) {
@@ -1700,7 +1707,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
                 action: capabilityId || effectiveAction,
                 query: normalizeText(evidenceRequest?.query || `${service?.name || serviceId} ${effectiveAction}`)
               },
-              { maxAttempts: 2, timeoutMs: 60_000 }
+              { maxAttempts: 2, timeoutMs: 45_000, signal: invokeSignal }
             );
             const payBody = pay?.body || {};
             txHash = normalizeText(payBody?.payment?.txHash || '');
@@ -1845,6 +1852,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             invocationId
           });
         }
+      } finally { clearTimeout(invokeTimer); }
       }
       const invokePayload =
         isTechnicalServiceAction
@@ -1974,7 +1982,9 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         trust
       });
     } catch (error) {
-      const failureReason = String(error?.message || 'service invoke failed').trim();
+      const isInvokeAbort = error?.name === 'AbortError';
+      const rawMessage = String(error?.message || 'service invoke failed').trim();
+      const failureReason = isInvokeAbort ? 'invoke_timeout' : rawMessage;
       if (evidenceRequest) {
         evidenceRequest = upsertX402RequestRecord({
           ...evidenceRequest,

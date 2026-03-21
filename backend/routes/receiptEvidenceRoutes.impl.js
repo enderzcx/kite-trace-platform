@@ -93,7 +93,6 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     fromAgentId,
     gatewayRecipient,
     getActionConfig,
-    getAllXmtpRuntimeStatuses,
     getEscrowJob,
     getLatestIdentityChallengeSnapshot,
     handle,
@@ -263,8 +262,6 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     X402_INFO_PRICE,
     X402_RISK_SCORE_PRICE,
     X402_X_READER_PRICE,
-    XMTP_ENV,
-    xmtpRuntime,
   } = deps;
 
   const normalizeExecutionState = (value = '', fallback = 'unknown') => {
@@ -300,53 +297,7 @@ export function registerReceiptEvidenceRoutes(app, deps) {
     summary: String(workflow?.result?.summary || reqItem?.result?.summary || '').trim()
   });
 
-  const buildTraceXmtpEvidence = ({ traceId = '', requestId = '' } = {}) => {
-    const runtimes =
-      typeof getAllXmtpRuntimeStatuses === 'function'
-        ? Object.entries(getAllXmtpRuntimeStatuses() || {}).map(([runtimeName, runtimeStatus]) => ({
-            runtimeName: String(runtimeName || '').trim(),
-            enabled: Boolean(runtimeStatus?.enabled),
-            running: Boolean(runtimeStatus?.running),
-            inboxId: String(runtimeStatus?.inboxId || '').trim(),
-            walletAddress: String(runtimeStatus?.walletAddress || '').trim(),
-            environment: String(runtimeStatus?.environment || XMTP_ENV || '').trim()
-          }))
-        : [];
-    const auditEvents =
-      typeof listNetworkAuditEventsByTraceId === 'function' && traceId
-        ? listNetworkAuditEventsByTraceId(traceId)
-        : [];
-    const digestInput = {
-      traceId: String(traceId || '').trim(),
-      requestId: String(requestId || '').trim(),
-      runtimes: runtimes.map((item) => ({
-        runtimeName: item.runtimeName,
-        enabled: item.enabled,
-        running: item.running,
-        inboxId: item.inboxId,
-        walletAddress: item.walletAddress,
-        environment: item.environment
-      })),
-      auditCount: Array.isArray(auditEvents) ? auditEvents.length : 0
-    };
-    const digest =
-      typeof digestStableObject === 'function'
-        ? digestStableObject(digestInput)
-        : { algorithm: 'none', canonicalization: 'none', value: JSON.stringify(digestInput) };
-
-    return {
-      traceId: String(traceId || '').trim(),
-      requestId: String(requestId || '').trim(),
-      total: runtimes.length,
-      runtimes,
-      auditCount: Array.isArray(auditEvents) ? auditEvents.length : 0,
-      digest: {
-        algorithm: String(digest?.algorithm || 'unknown').trim(),
-        canonicalization: String(digest?.canonicalization || '').trim(),
-        value: String(digest?.value || '').trim()
-      }
-    };
-  };
+  const buildTraceXmtpEvidence = () => ({ total: 0, digest: '' });
 
   const buildRuntimeSnapshot = (runtime = {}) => ({
     aaWallet: runtime.aaWallet || '',
@@ -701,10 +652,7 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       (r) => String(r.txHash || '').toLowerCase() === String(workflow.txHash || '').toLowerCase()
     );
     const runtime = readSessionRuntime();
-    const xmtp = buildTraceXmtpEvidence({
-      traceId: normalizedTraceId,
-      requestId: String(workflow?.requestId || reqItem?.requestId || '').trim()
-    });
+    const xmtp = { total: 0, digest: '' };
     const networkAuditEvents = listNetworkAuditEventsByTraceId(normalizedTraceId);
     const networkAuditRef = {
       traceId: normalizedTraceId,
@@ -767,10 +715,7 @@ export function registerReceiptEvidenceRoutes(app, deps) {
             paymentTxHash: String(reqItem.paymentTxHash || reqItem?.paymentProof?.txHash || '').trim()
           }
         : null,
-      xmtp: {
-        total: Number(xmtp?.total || 0),
-        digest: String(xmtp?.digest?.value || '').trim()
-      },
+      xmtp: { total: 0, digest: '' },
       paymentRecord: paymentRecord
         ? {
             txHash: String(paymentRecord.txHash || '').trim(),

@@ -379,7 +379,6 @@ export function createPlatformV1Shared(deps) {
         verification,
         onboarding,
         runtime: {
-        xmtpAddress: normalizeText(provider?.xmtpAddress),
         aaAddress: normalizeText(provider?.aaAddress),
         inboxId: normalizeText(provider?.inboxId),
         ownerWallet: normalizeText(provider?.ownerWallet)

@@ -114,7 +114,7 @@ export function createAgent001TradeFlowHelpers(deps = {}) {
     ]);
     if (!isAgent001TaskSuccessful(technicalQuoteTask) || !isAgent001TaskSuccessful(infoQuoteTask)) {
       return [
-        '交易链路中断：XMTP 报价协商失败。',
+        '交易链路中断：报价协商失败。',
         `technical quote: ${technicalQuoteTask?.reason || technicalQuoteTask?.error || 'failed'}`,
         `message quote: ${infoQuoteTask?.reason || infoQuoteTask?.error || 'failed'}`
       ].join('\n');

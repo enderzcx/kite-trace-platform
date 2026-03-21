@@ -327,7 +327,6 @@ function printProviderShow(envelope) {
   console.log(`active: ${provider.active === false ? 'no' : 'yes'}`);
   console.log(`identityRegistry: ${provider?.identity?.registry || '-'}`);
   console.log(`identityAgentId: ${provider?.identity?.agentId || '-'}`);
-  console.log(`xmtpAddress: ${provider?.runtime?.xmtpAddress || '-'}`);
   console.log(`aaAddress: ${provider?.runtime?.aaAddress || '-'}`);
   console.log(`capabilities: ${Array.isArray(provider?.capabilities) ? provider.capabilities.join(', ') || '-' : '-'}`);
 }
@@ -739,7 +738,7 @@ function printError(envelope) {
     console.error('hint: set ERC8004_AGENT_ID in backend/.env to the registered agent id.');
   }
   if (reason.includes('Router owner key unavailable')) {
-    console.error('hint: set XMTP_ROUTER_WALLET_KEY in backend/.env for AA session creation.');
+    console.error('hint: set KITECLAW_ROUTER_WALLET_KEY in backend/.env for AA session creation.');
   }
   if (reason.includes('Backend signer unavailable')) {
     console.error('hint: set KITECLAW_BACKEND_SIGNER_PRIVATE_KEY in backend/.env for AA account deployment.');

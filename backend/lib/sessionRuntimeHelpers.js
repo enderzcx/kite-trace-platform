@@ -243,11 +243,12 @@ export function createSessionRuntimeHelpers({
       const runtimeByOwner = readSessionRuntimeByOwner(normalizedOwner);
       if (
         runtimeByOwner.owner &&
+        (!normalizedAaWallet || normalizeAddress(runtimeByOwner.aaWallet || '') === normalizedAaWallet) &&
         (!normalizedRuntimePurpose || String(runtimeByOwner.runtimePurpose || '').trim().toLowerCase() === normalizedRuntimePurpose)
       ) {
         return runtimeByOwner;
       }
-      if (requireStrictOwnerMatch) {
+      if (requireStrictOwnerMatch && !normalizedAaWallet) {
         return sanitizeSessionRuntime({});
       }
     }

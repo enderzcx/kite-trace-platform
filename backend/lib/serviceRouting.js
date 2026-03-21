@@ -21,18 +21,14 @@ export function createServiceRoutingHelpers({
   x402RiskScorePrice,
   x402TechnicalPrice,
   x402XReaderPrice,
-  x402Price,
-  xmtpReaderAgentAaAddress,
-  xmtpRiskAgentAaAddress
+  x402Price
 }) {
   function resolveTechnicalSettlementRecipient() {
-    const candidate = normalizeAddress(xmtpRiskAgentAaAddress || kiteAgent2AaAddress || '');
-    return ethers.isAddress(candidate) ? candidate : normalizeAddress(kiteAgent2AaAddress || '');
+    return normalizeAddress(kiteAgent2AaAddress || '');
   }
 
   function resolveInfoSettlementRecipient() {
-    const candidate = normalizeAddress(xmtpReaderAgentAaAddress || kiteAgent2AaAddress || '');
-    return ethers.isAddress(candidate) ? candidate : normalizeAddress(kiteAgent2AaAddress || '');
+    return normalizeAddress(kiteAgent2AaAddress || '');
   }
 
   function getActionConfig(actionRaw = '') {

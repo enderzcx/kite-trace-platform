@@ -245,22 +245,27 @@ export function createSessionPayHelpers({
     // `/api/session/pay` already performs its own AA/bundler retry loop and receipt wait.
     // Keep the outer loopback HTTP timeout comfortably above that internal window so we
     // don't abort a valid payment attempt mid-flight and surface a false "This operation was aborted".
-    const timeoutMs = Math.max(30_000, Math.min(Number(options.timeoutMs || 90_000), 180_000));
+    const timeoutMs = Math.max(30_000, Math.min(Number(options.timeoutMs || 45_000), 180_000));
     const internalApiKey = getInternalAgentApiKey();
     const headers = { 'Content-Type': 'application/json' };
     if (internalApiKey) headers['x-api-key'] = internalApiKey;
 
+    const parentSignal = options.signal || null;
     let lastError = null;
     for (let i = 0; i < maxAttempts; i += 1) {
+      if (parentSignal?.aborted) throw new DOMException('The operation was aborted', 'AbortError');
       const attempt = i + 1;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const combinedSignal = parentSignal
+        ? AbortSignal.any([controller.signal, parentSignal])
+        : controller.signal;
       try {
         const resp = await fetch(`http://127.0.0.1:${PORT}/api/session/pay`, {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
-          signal: controller.signal
+          signal: combinedSignal
         });
         const body = await resp.json().catch(() => ({}));
         if (resp.ok && body?.ok) {

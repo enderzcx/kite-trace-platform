@@ -58,7 +58,7 @@
     const traceId = typeof createTraceId === 'function' ? createTraceId(`${normalizedAgentId.replace(/[^a-z0-9]+/g, '_')}_llm`) : '';
     const prompt = [
       `You are ${normalizedAgentId}.`,
-      'This message is sent via XMTP task-result and must be concise and concrete.',
+      'This message is a task-result and must be concise and concrete.',
       'Return plain text only in 1-2 short sentences.',
       `Must include this core fact: ${safeFallback}`,
       promptBody ? `Context: ${String(promptBody || '').trim()}` : ''

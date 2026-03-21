@@ -15,16 +15,6 @@
     X402_TECHNICAL_PRICE,
     X402_UNIFIED_SERVICE_PRICE,
     X_READER_MAX_CHARS_DEFAULT,
-    XMTP_EXECUTOR_AGENT_AA_ADDRESS,
-    XMTP_EXECUTOR_RESOLVED_ADDRESS,
-    XMTP_PRICE_AGENT_AA_ADDRESS,
-    XMTP_PRICE_RESOLVED_ADDRESS,
-    XMTP_READER_AGENT_AA_ADDRESS,
-    XMTP_READER_RESOLVED_ADDRESS,
-    XMTP_ROUTER_AGENT_AA_ADDRESS,
-    XMTP_ROUTER_RESOLVED_ADDRESS,
-    XMTP_RISK_AGENT_AA_ADDRESS,
-    XMTP_RISK_RESOLVED_ADDRESS,
     getUtcDateKey,
     isInfoAnalysisAction,
     isTechnicalAnalysisAction,
@@ -755,7 +745,6 @@
     const name = String(source.name || fallback.name || '').trim();
     const role = String(source.role || fallback.role || '').trim().toLowerCase();
     const mode = String(source.mode || fallback.mode || '').trim().toLowerCase();
-    const xmtpAddress = normalizeAddress(source.xmtpAddress || fallback.xmtpAddress || '');
     const aaAddress = normalizeAddress(source.aaAddress || fallback.aaAddress || '');
     const inboxId = String(source.inboxId || fallback.inboxId || '').trim();
     const ownerWallet = normalizeAddress(source.ownerWallet || fallback.ownerWallet || '');
@@ -791,7 +780,6 @@
       name: name || id,
       role,
       mode,
-      xmtpAddress,
       aaAddress,
       inboxId,
       ownerWallet,
@@ -820,8 +808,7 @@
         name: 'AGENT001',
         role: 'router',
         mode: 'a2a',
-        xmtpAddress: XMTP_ROUTER_RESOLVED_ADDRESS,
-        aaAddress: XMTP_ROUTER_AGENT_AA_ADDRESS,
+        aaAddress: '',
         identityRegistry: ERC8004_IDENTITY_REGISTRY || '',
         identityAgentId: ERC8004_AGENT_ID !== null ? String(ERC8004_AGENT_ID || '') : '',
         description: 'AGENT001 orchestrator: direct DM entry for task routing and A2A coordination.',
@@ -832,10 +819,7 @@
         name: 'Risk Agent',
         role: 'provider',
         mode: 'a2a',
-        xmtpAddress: XMTP_RISK_RESOLVED_ADDRESS,
-        aaAddress: XMTP_RISK_AGENT_AA_ADDRESS,
-        identityRegistry: String(process.env.XMTP_RISK_IDENTITY_REGISTRY || '').trim(),
-        identityAgentId: String(process.env.XMTP_RISK_IDENTITY_AGENT_ID || '').trim(),
+        aaAddress: '',
         description: 'Computes risk-score feed through agent capability.',
         capabilities: ['risk-score-feed', 'volatility-snapshot', 'technical-analysis-feed']
       },
@@ -844,10 +828,7 @@
         name: 'Technical Agent',
         role: 'provider',
         mode: 'a2a',
-        xmtpAddress: XMTP_RISK_RESOLVED_ADDRESS,
-        aaAddress: XMTP_RISK_AGENT_AA_ADDRESS,
-        identityRegistry: String(process.env.XMTP_TECHNICAL_IDENTITY_REGISTRY || process.env.XMTP_RISK_IDENTITY_REGISTRY || '').trim(),
-        identityAgentId: String(process.env.XMTP_TECHNICAL_IDENTITY_AGENT_ID || process.env.XMTP_RISK_IDENTITY_AGENT_ID || '').trim(),
+        aaAddress: '',
         description: 'Single technical facade over risk/price sub-analysis outputs.',
         capabilities: ['technical-analysis-feed', 'risk-score-feed', 'market-quote']
       },
@@ -856,10 +837,7 @@
         name: 'Reader Agent',
         role: 'provider',
         mode: 'a2api',
-        xmtpAddress: XMTP_READER_RESOLVED_ADDRESS,
-        aaAddress: XMTP_READER_AGENT_AA_ADDRESS,
-        identityRegistry: String(process.env.XMTP_READER_IDENTITY_REGISTRY || '').trim(),
-        identityAgentId: String(process.env.XMTP_READER_IDENTITY_AGENT_ID || '').trim(),
+        aaAddress: '',
         description: 'Runs x-reader digest for URLs via ATAPI adapter.',
         capabilities: ['url-digest', 'info-analysis-feed']
       },
@@ -868,10 +846,7 @@
         name: 'Message Agent',
         role: 'provider',
         mode: 'a2api',
-        xmtpAddress: XMTP_READER_RESOLVED_ADDRESS,
-        aaAddress: XMTP_READER_AGENT_AA_ADDRESS,
-        identityRegistry: String(process.env.XMTP_MESSAGE_IDENTITY_REGISTRY || process.env.XMTP_READER_IDENTITY_REGISTRY || '').trim(),
-        identityAgentId: String(process.env.XMTP_MESSAGE_IDENTITY_AGENT_ID || process.env.XMTP_READER_IDENTITY_AGENT_ID || '').trim(),
+        aaAddress: '',
         description: 'Message/news sentiment facade over reader runtime.',
         capabilities: ['info-analysis-feed', 'url-digest']
       },
@@ -880,8 +855,7 @@
         name: 'Price Agent',
         role: 'provider',
         mode: 'a2api',
-        xmtpAddress: XMTP_PRICE_RESOLVED_ADDRESS,
-        aaAddress: XMTP_PRICE_AGENT_AA_ADDRESS,
+        aaAddress: '',
         description: 'Fetches BTC/market quote feeds.',
         capabilities: ['btc-price-feed', 'market-quote']
       },
@@ -890,8 +864,7 @@
         name: 'Executor Agent',
         role: 'executor',
         mode: 'a2a',
-        xmtpAddress: XMTP_EXECUTOR_RESOLVED_ADDRESS,
-        aaAddress: XMTP_EXECUTOR_AGENT_AA_ADDRESS,
+        aaAddress: '',
         description: 'Executes final orchestration and result aggregation.',
         capabilities: ['execute-plan', 'result-aggregation']
       },
@@ -900,8 +873,7 @@
         name: 'Data Node Real',
         role: 'provider',
         mode: 'a2api',
-        xmtpAddress: XMTP_PRICE_RESOLVED_ADDRESS,
-        aaAddress: XMTP_PRICE_AGENT_AA_ADDRESS,
+        aaAddress: '',
         description: 'Public data primitive provider for weather, tech buzz, and market snapshots.',
         capabilities: [
           'weather-context',
@@ -1053,7 +1025,7 @@
     const resolved = [];
     for (const id of normalizedIds) {
       const row = findNetworkAgentById(id);
-      const address = normalizeAddress(row?.xmtpAddress || '');
+      const address = normalizeAddress(row?.aaAddress || '');
       if (!address) continue;
       resolved.push({
         agentId: id,

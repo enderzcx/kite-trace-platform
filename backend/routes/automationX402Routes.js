@@ -454,7 +454,10 @@ export function registerAutomationX402Routes(app, deps) {
           }
         });
       }
-      if (requestedOwner && normalizeAddress(runtime.owner || '') !== requestedOwner) {
+      // When payer explicitly matched a runtime owned by a different owner, allow it
+      // (the payer/aaWallet match at line 447 already passed, so the runtime is valid for this wallet)
+      const payerControlledByDifferentOwner = requestedPayer && normalizeAddress(runtime.owner || '') !== requestedOwner;
+      if (requestedOwner && normalizeAddress(runtime.owner || '') !== requestedOwner && !payerControlledByDifferentOwner) {
         return failSessionPay(400, {
           error: 'session_not_configured',
           reason: `No synced session runtime matched owner ${requestedOwner}.`,
@@ -514,7 +517,7 @@ export function registerAutomationX402Routes(app, deps) {
       const sessionWallet = new ethers.Wallet(runtime.sessionPrivateKey, provider);
       const sessionSignerAddress = await sessionWallet.getAddress();
       const serviceProvider = getServiceProviderBytes32(action);
-  
+
       const accountCode = await provider.getCode(runtime.aaWallet);
       if (!accountCode || accountCode === '0x') {
         return failSessionPay(400, {

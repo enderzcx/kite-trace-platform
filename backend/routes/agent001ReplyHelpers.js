@@ -5,7 +5,7 @@
     extractHorizonFromText,
     extractTradingSymbolFromText,
     fetchXReaderDigest,
-    isRecoverableXmtpFailure,
+    isRecoverableDispatchFailure,
     normalizeStringArray,
     normalizeXReaderParams,
     llmAdapter,
@@ -94,7 +94,7 @@
 
   function shouldUseAgent001LocalFallback(result = null) {
     if (!result || result.ok) return false;
-    return isRecoverableXmtpFailure(result?.error, result?.reason);
+    return isRecoverableDispatchFailure(result?.error, result?.reason);
   }
 
   async function applyAgent001LocalFallback({

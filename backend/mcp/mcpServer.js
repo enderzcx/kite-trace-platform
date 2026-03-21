@@ -256,7 +256,7 @@ function createFetchLoopbackJson({ PORT, getInternalAgentApiKey }) {
       init.body = JSON.stringify(body);
     }
 
-    const loopbackTimeoutMs = Math.max(30_000, Number(process.env.MCP_LOOPBACK_TIMEOUT_MS || 85_000));
+    const loopbackTimeoutMs = Math.max(30_000, Number(process.env.MCP_LOOPBACK_TIMEOUT_MS || 100_000));
     const loopbackController = new AbortController();
     const loopbackTimer = setTimeout(() => loopbackController.abort(), loopbackTimeoutMs);
     let response;

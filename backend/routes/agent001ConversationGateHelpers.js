@@ -4,7 +4,6 @@
     classifyAgent001IntentFallback,
     createTraceId,
     detectAgent001IntentOverrides,
-    getAllXmtpRuntimeStatuses,
     llmAdapter,
     parseJsonObjectFromText,
     resolveAgent001Intent
@@ -17,7 +16,7 @@
       '2) 消息面：例如 “分析 btc market sentiment today” 或发送 URL',
       '3) 联合分析：例如 “给我 BTC 的消息+技术联合结论”',
       '4) 交易执行：例如 “市价下单 BTCUSDT 买入 size=0.001 止盈 90000 止损 82000” 或 “限价下单 BTCUSDT 卖出 price=95000 size=0.001”',
-      '我会自动与 technical-agent / message-agent 通过 XMTP 协作，再回你结果。'
+      '我会自动与 technical-agent / message-agent 协作，再回你结果。'
     ].join('\n');
   }
 
@@ -80,15 +79,9 @@
     }
 
     if (/(status|状态|在线|running)/i.test(rawText)) {
-      const runtime = getAllXmtpRuntimeStatuses();
       return {
         handled: true,
-        response: [
-          'AGENT001 状态:',
-          `router: ${runtime.router.running ? 'running' : 'stopped'}`,
-          `technical(risk): ${runtime.risk.running ? 'running' : 'stopped'}`,
-          `message(reader): ${runtime.reader.running ? 'running' : 'stopped'}`
-        ].join('\n'),
+        response: 'AGENT001 状态: running',
         rawText,
         intent: null
       };

@@ -14,7 +14,6 @@ function createAgent001ExecutionService(deps = {}) {
     hasStrictX402Evidence,
     upsertAgent001ResultRecord,
     normalizeAddress,
-    getXmtpRuntime,
     port
   } = deps;
 
@@ -26,7 +25,6 @@ function createAgent001ExecutionService(deps = {}) {
   assertDependency('hasStrictX402Evidence', hasStrictX402Evidence);
   assertDependency('upsertAgent001ResultRecord', upsertAgent001ResultRecord);
   assertDependency('normalizeAddress', normalizeAddress);
-  assertDependency('getXmtpRuntime', getXmtpRuntime);
   const safePort = Number(port || 0);
   if (!Number.isFinite(safePort) || safePort <= 0) {
     throw new Error('agent001_execution_missing_dependency:port');
@@ -182,62 +180,12 @@ function createAgent001ExecutionService(deps = {}) {
     return lines.join('\n');
   }
 
-  async function maybeSendAgent001ProgressDm({
-    context = null,
-    capability = '',
-    summary = '',
-    payment = null
-  } = {}) {
-    const senderAddress = normalizeAddress(context?.senderAddress || '');
-    if (!senderAddress) return { ok: false, skipped: true, reason: 'sender_address_missing' };
-    const requestId = String(payment?.requestId || '').trim();
-    const txHash = String(payment?.txHash || '').trim();
-    const label = capability === 'technical-analysis-feed' ? '技术面' : capability === 'info-analysis-feed' ? '消息面' : '分析';
-    const lines = [`${label}结果已返回`, `summary: ${String(summary || '').trim() || '-'}`, `x402: requestId=${requestId || '-'} txHash=${txHash || '-'}`];
-    if (requestId) lines.push(`pull: /api/agent001/results/${requestId}`);
-    const result = await getXmtpRuntime().sendDm({
-      fromAgentId: 'router-agent',
-      toAddress: senderAddress,
-      toAgentId: 'human-user',
-      channel: 'dm',
-      hopIndex: 1,
-      text: lines.join('\n')
-    });
-    return result?.ok ? { ok: true } : { ok: false, skipped: false, reason: result?.reason || result?.error || 'xmtp_send_failed' };
+  async function maybeSendAgent001ProgressDm() {
+    return { ok: false, skipped: true, reason: 'xmtp_removed' };
   }
 
-  async function maybeSendAgent001TradePlanDm({
-    context = null,
-    tradePlanText = '',
-    infoPayment = null,
-    technicalPayment = null
-  } = {}) {
-    const senderAddress = normalizeAddress(context?.senderAddress || '');
-    if (!senderAddress) return { ok: false, skipped: true, reason: 'sender_address_missing' };
-    const planText = String(tradePlanText || '').trim();
-    if (!planText) return { ok: false, skipped: true, reason: 'trade_plan_missing' };
-
-    const infoRequestId = String(infoPayment?.requestId || '').trim();
-    const infoTxHash = String(infoPayment?.txHash || '').trim();
-    const technicalRequestId = String(technicalPayment?.requestId || '').trim();
-    const technicalTxHash = String(technicalPayment?.txHash || '').trim();
-    const lines = ['AGENT001 交易计划', planText];
-    if (infoRequestId || infoTxHash || technicalRequestId || technicalTxHash) {
-      lines.push('');
-      lines.push(`消息面 x402: requestId=${infoRequestId || '-'} txHash=${infoTxHash || '-'}`);
-      lines.push(`技术面 x402: requestId=${technicalRequestId || '-'} txHash=${technicalTxHash || '-'}`);
-      if (infoRequestId) lines.push(`消息面 pull: /api/agent001/results/${infoRequestId}`);
-      if (technicalRequestId) lines.push(`技术面 pull: /api/agent001/results/${technicalRequestId}`);
-    }
-    const result = await getXmtpRuntime().sendDm({
-      fromAgentId: 'router-agent',
-      toAddress: senderAddress,
-      toAgentId: 'human-user',
-      channel: 'dm',
-      hopIndex: 1,
-      text: lines.join('\n')
-    });
-    return result?.ok ? { ok: true } : { ok: false, skipped: false, reason: result?.reason || result?.error || 'xmtp_send_failed' };
+  async function maybeSendAgent001TradePlanDm() {
+    return { ok: false, skipped: true, reason: 'xmtp_removed' };
   }
 
   async function appendAgent001OrderExecutionLines({

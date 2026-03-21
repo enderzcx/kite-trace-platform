@@ -125,30 +125,13 @@ export function createRuntimeServerLifecycle(deps = {}) {
   const {
     app,
     autoTradePlan,
-    autoXmtp,
-    parseAgentIdList,
     persistenceStore,
     port,
-    startXmtpRuntimes,
     stopAutoJobExpiryLoop,
-    stopAutoTradePlanLoop,
-    stopAutoXmtpNetworkLoop,
-    stopXmtpRuntimes,
-    xmtpAnyRuntimeEnabled
+    stopAutoTradePlanLoop
   } = deps;
 
   let httpServer = null;
-
-  function logXmtpRuntimeStartup(name = '', runtimeStatus = null) {
-    if (!runtimeStatus?.enabled) return;
-    if (runtimeStatus?.running) {
-      console.log(
-        `[xmtp/${name}] env=${runtimeStatus.env} address=${runtimeStatus.address || '-'} inbox=${runtimeStatus.inboxId || '-'}`
-      );
-      return;
-    }
-    console.warn(`[xmtp/${name}] failed to start: ${runtimeStatus?.lastError || 'unknown_error'}`);
-  }
 
   async function startServer() {
     await deps.initializePersistence();
@@ -179,34 +162,11 @@ export function createRuntimeServerLifecycle(deps = {}) {
         console.log(`[auto-job-expiry] enabled intervalMs=${deps.autoJobExpiry.intervalMs}`);
       }
     });
-    if (xmtpAnyRuntimeEnabled) {
-      const status = await startXmtpRuntimes();
-      logXmtpRuntimeStartup('router', status?.router);
-      logXmtpRuntimeStartup('risk', status?.risk);
-      logXmtpRuntimeStartup('reader', status?.reader);
-      logXmtpRuntimeStartup('price', status?.price);
-      logXmtpRuntimeStartup('executor', status?.executor);
-      if (status?.router?.running && autoXmtp.enabled) {
-        autoXmtp.start({
-          intervalMs: autoXmtp.intervalMs,
-          sourceAgentId: autoXmtp.sourceAgentId,
-          targetAgentIds: autoXmtp.targetAgentIds,
-          capability: autoXmtp.capability,
-          immediate: true,
-          reason: 'startup'
-        });
-        console.log(
-          `[auto-xmtp] enabled intervalMs=${autoXmtp.intervalMs} source=${autoXmtp.sourceAgentId} targets=${parseAgentIdList(autoXmtp.targetAgentIds).join(',')}`
-        );
-      }
-    }
   }
 
   async function shutdownServer() {
     stopAutoTradePlanLoop();
     stopAutoJobExpiryLoop();
-    stopAutoXmtpNetworkLoop();
-    await stopXmtpRuntimes();
     try {
       if (httpServer) {
         await new Promise((resolve) => httpServer.close(resolve));

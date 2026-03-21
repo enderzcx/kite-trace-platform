@@ -18,7 +18,7 @@ export function buildAgentMetadataPayload(env = {}) {
     env.jobEndpoint
   ]);
   const capabilities = parseCsv(env.capabilities || 'negotiated-buy,x402-payment,erc8183-job');
-  const transports = parseCsv(env.transports || 'http,xmtp');
+  const transports = parseCsv(env.transports || 'http');
 
   return {
     standard: 'erc-8004',

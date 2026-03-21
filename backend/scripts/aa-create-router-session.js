@@ -66,9 +66,9 @@ async function main() {
 
   const ownerKey =
     normalizePrivateKey(parseArg('ownerKey')) ||
-    normalizePrivateKey(process.env.XMTP_ROUTER_WALLET_KEY || '');
+    normalizePrivateKey(process.env.KITECLAW_ROUTER_WALLET_KEY || process.env.KITECLAW_BACKEND_SIGNER_PRIVATE_KEY || '');
   if (!ownerKey) {
-    throw new Error('Missing owner key. Set XMTP_ROUTER_WALLET_KEY or pass --ownerKey.');
+    throw new Error('Missing owner key. Set KITECLAW_ROUTER_WALLET_KEY or pass --ownerKey.');
   }
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);

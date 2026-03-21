@@ -26,9 +26,22 @@ export function applyNodeEnvProxyPreference() {
   );
   if (hasProxyEnv) {
     process.env.NODE_USE_ENV_PROXY = '1';
+    const noProxy = String(process.env.NO_PROXY || '').trim();
+    const rpcHost = extractHost(process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/');
+    // Only bypass proxy for RPC (ethers FetchRequest incompatible with proxy).
+    // Bundler must go through proxy for better connectivity.
+    const noProxyEntries = noProxy.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const extraHosts = [rpcHost].filter(Boolean).filter((h) => !noProxyEntries.includes(h.toLowerCase()));
+    if (extraHosts.length > 0) {
+      process.env.NO_PROXY = [noProxy, ...extraHosts].filter(Boolean).join(',');
+    }
     return true;
   }
   return false;
+}
+
+function extractHost(url = '') {
+  try { return new URL(url).hostname; } catch { return ''; }
 }
 
 export function getEnvProxyDiagnostics() {

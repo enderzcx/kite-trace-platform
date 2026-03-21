@@ -1,7 +1,5 @@
 export function createAgent001DispatchHelpers(deps = {}) {
   const {
-    XMTP_READER_RESOLVED_ADDRESS,
-    XMTP_RISK_RESOLVED_ADDRESS,
     buildLocalTechnicalRecoveryDispatch,
     createTraceId,
     findNetworkAgentById,
@@ -13,35 +11,15 @@ export function createAgent001DispatchHelpers(deps = {}) {
     waitMs
   } = deps;
 
-  function isXmtpRuntimeUnhealthy(status = {}) {
-    if (!status || typeof status !== 'object') return true;
-    if (!status.enabled) return true;
-    if (!status.configured) return true;
-    if (!status.running) return true;
-    const reason = String(status.lastError || '').trim().toLowerCase();
-    if (!reason) return false;
-    return (
-      reason.includes('conversation streaming') ||
-      reason.includes('streaming') ||
-      reason.includes('incoming_handler') ||
-      reason.includes('unhandled') ||
-      reason.includes('connection') ||
-      reason.includes('genericfailure')
-    );
-  }
-
-  function isRecoverableXmtpFailure(error = '', reason = '') {
+  function isRecoverableDispatchFailure(error = '', reason = '') {
     const text = `${String(error || '').trim()} ${String(reason || '').trim()}`.toLowerCase();
     if (!text) return false;
     return (
       text.includes('stream') ||
       text.includes('timeout') ||
-      text.includes('xmtp_') ||
       text.includes('not_running') ||
       text.includes('unhandled') ||
       text.includes('connection') ||
-      text.includes('h2 protocol') ||
-      text.includes('genericfailure') ||
       text.includes('router_send_failed')
     );
   }
@@ -72,11 +50,7 @@ export function createAgent001DispatchHelpers(deps = {}) {
   function resolveAgentAddressByIdForRouter(agentId = '') {
     const id = String(agentId || '').trim().toLowerCase();
     const mapped = findNetworkAgentById(id);
-    const mappedAddress = normalizeAddress(mapped?.xmtpAddress || '');
-    if (mappedAddress) return mappedAddress;
-    if (id === 'risk-agent' || id === 'technical-agent') return normalizeAddress(XMTP_RISK_RESOLVED_ADDRESS);
-    if (id === 'reader-agent' || id === 'message-agent') return normalizeAddress(XMTP_READER_RESOLVED_ADDRESS);
-    return '';
+    return normalizeAddress(mapped?.aaAddress || '');
   }
 
   async function waitRouterTaskResultByTaskId(taskId = '', waitMsLimit = 25_000) {
@@ -100,12 +74,12 @@ export function createAgent001DispatchHelpers(deps = {}) {
     return null;
   }
 
-  async function healXmtpRuntime(runtime, label = '') {
+  async function healRuntime(runtime, label = '') {
     if (!runtime || typeof runtime.getStatus !== 'function') {
       return { label, attempted: false, recovered: false, reason: 'runtime_not_found' };
     }
     const before = runtime.getStatus();
-    if (!isXmtpRuntimeUnhealthy(before)) {
+    if (before && before.running) {
       return {
         label,
         attempted: false,
@@ -141,10 +115,10 @@ export function createAgent001DispatchHelpers(deps = {}) {
   async function ensureDispatchRuntimesHealthy(toAgentId = '') {
     const actions = [];
     const routerRuntime = getRouterRuntimeSafe();
-    actions.push(await healXmtpRuntime(routerRuntime, 'router'));
+    actions.push(await healRuntime(routerRuntime, 'router'));
     const target = resolveDispatchRuntimeByAgentId(toAgentId);
     if (target?.runtime) {
-      actions.push(await healXmtpRuntime(target.runtime, target.label || 'target'));
+      actions.push(await healRuntime(target.runtime, target.label || 'target'));
     }
     return {
       actions,
@@ -168,7 +142,7 @@ export function createAgent001DispatchHelpers(deps = {}) {
     if (!routerStatus?.running) {
       return {
         ok: false,
-        error: 'xmtp_router_not_running',
+        error: 'router_not_running',
         reason: routerStatus?.lastError || 'router runtime is not running',
         recovery
       };
@@ -181,7 +155,7 @@ export function createAgent001DispatchHelpers(deps = {}) {
     if (targetStatus && !targetStatus.running) {
       return {
         ok: false,
-        error: 'xmtp_target_not_running',
+        error: 'target_not_running',
         reason: targetStatus.lastError || `${targetRuntime.label || resolvedToAgentId} runtime is not running`,
         recovery
       };
@@ -191,7 +165,7 @@ export function createAgent001DispatchHelpers(deps = {}) {
       return {
         ok: false,
         error: 'target_agent_address_missing',
-        reason: `missing xmtp address for ${resolvedToAgentId || 'unknown'}`,
+        reason: `missing address for ${resolvedToAgentId || 'unknown'}`,
         recovery
       };
     }
@@ -280,7 +254,7 @@ export function createAgent001DispatchHelpers(deps = {}) {
         };
       }
 
-      if (attempt < maxAttempts && isRecoverableXmtpFailure(lastFailure?.error, lastFailure?.reason)) {
+      if (attempt < maxAttempts && isRecoverableDispatchFailure(lastFailure?.error, lastFailure?.reason)) {
         const extra = await ensureDispatchRuntimesHealthy(resolvedToAgentId);
         if (Array.isArray(extra?.actions)) recovery.push(...extra.actions);
         await waitMs(650);
@@ -296,7 +270,7 @@ export function createAgent001DispatchHelpers(deps = {}) {
   }
 
   return {
-    isRecoverableXmtpFailure,
+    isRecoverableDispatchFailure,
     runAgent001DispatchTask
   };
 }
