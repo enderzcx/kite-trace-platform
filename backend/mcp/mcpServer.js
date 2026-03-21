@@ -103,6 +103,9 @@ function applyConnectorGrantAuth(req, grant = {}) {
   const ownerEoa = normalizeText(grant.ownerEoa || '');
   const aaWallet = normalizeText(grant.aaWallet || '');
   const grantId = normalizeText(grant.grantId || '');
+  const agentId = normalizeText(grant.agentId || '');
+  const identityRegistry = normalizeText(grant.identityRegistry || '');
+  const allowedBuiltinTools = Array.isArray(grant.allowedBuiltinTools) ? grant.allowedBuiltinTools : [];
   req.authRole = 'agent';
   req.authSource = 'connector-grant';
   req.authOwnerEoa = ownerEoa;
@@ -116,7 +119,10 @@ function applyConnectorGrantAuth(req, grant = {}) {
       authSource: 'connector-grant',
       ownerEoa,
       aaWallet,
-      grantId
+      grantId,
+      agentId,
+      identityRegistry,
+      allowedBuiltinTools
     }
   };
   req.accountCtx = ownerEoa
@@ -136,12 +142,27 @@ function buildRequestAuth(req, deps) {
     const touchConnectorGrantUsage =
       deps.touchAgentConnectorGrantUsage || deps.touchClaudeConnectorGrantUsage;
     let grant = resolveConnectorToken?.(connectorToken) || null;
+    if (grant?.type === 'legacy_grant' || grant?.type === 'legacy_install_code') {
+      return {
+        ok: false,
+        status: Number(grant?.statusCode || 401) || 401,
+        message: normalizeText(grant?.reason || 'Connector reconnect required.'),
+        code: -32001
+      };
+    }
     if (grant?.type === 'install_code') {
       const claimed = claimConnectorInstallCode?.(connectorToken) || null;
       if (claimed?.ok && claimed.grant) {
         grant = {
           type: 'grant',
           grant: claimed.grant
+        };
+      } else if (claimed?.ok === false) {
+        return {
+          ok: false,
+          status: Number(claimed?.statusCode || 401) || 401,
+          message: normalizeText(claimed?.reason || 'Connector reconnect required.'),
+          code: -32001
         };
       } else {
         grant = null;
@@ -165,7 +186,10 @@ function buildRequestAuth(req, deps) {
       apiKey: '',
       ownerEoa: normalizeText(effectiveGrant.ownerEoa || ''),
       aaWallet: normalizeText(effectiveGrant.aaWallet || ''),
-      grantId: normalizeText(effectiveGrant.grantId || '')
+      grantId: normalizeText(effectiveGrant.grantId || ''),
+      agentId: normalizeText(effectiveGrant.agentId || ''),
+      identityRegistry: normalizeText(effectiveGrant.identityRegistry || ''),
+      allowedBuiltinTools: Array.isArray(effectiveGrant.allowedBuiltinTools) ? effectiveGrant.allowedBuiltinTools : []
     };
   }
 
@@ -199,7 +223,10 @@ function buildRequestAuth(req, deps) {
     authSource: normalizeLower(req.authSource || resolved.authSource || '') || 'env-api-key',
     apiKey: normalizeText(req.auth?.token || deps.extractApiKey?.(req) || ''),
     ownerEoa: normalizeText(req.authOwnerEoa || req.accountCtx?.ownerEoa || ''),
-    aaWallet: normalizeText(req.accountCtx?.aaWallet || '')
+    aaWallet: normalizeText(req.accountCtx?.aaWallet || ''),
+    agentId: normalizeText(req.auth?.extra?.agentId || ''),
+    identityRegistry: normalizeText(req.auth?.extra?.identityRegistry || ''),
+    allowedBuiltinTools: Array.isArray(req.auth?.extra?.allowedBuiltinTools) ? req.auth.extra.allowedBuiltinTools : []
   };
 }
 
@@ -275,7 +302,10 @@ function registerTools(server, tools, invokeAdapter, requestContext) {
           ownerEoa: requestContext.ownerEoa,
           aaWallet: requestContext.aaWallet,
           authSource: requestContext.authSource,
-          grantId: requestContext.grantId
+          grantId: requestContext.grantId,
+          agentId: requestContext.agentId,
+          identityRegistry: requestContext.identityRegistry,
+          allowedBuiltinTools: requestContext.allowedBuiltinTools
         })
     );
   }
@@ -292,7 +322,10 @@ async function handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter) {
   try {
     const tools = await toolsAdapter.listTools({
       traceId: normalizeText(req.traceId || ''),
-      apiKey: auth.apiKey
+      apiKey: auth.apiKey,
+      authSource: auth.authSource,
+      role: auth.role,
+      allowedBuiltinTools: auth.allowedBuiltinTools
     });
 
     const server = new McpServer(
@@ -313,7 +346,10 @@ async function handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter) {
       ownerEoa: auth.ownerEoa,
       aaWallet: auth.aaWallet,
       authSource: auth.authSource,
-      grantId: auth.grantId
+      grantId: auth.grantId,
+      agentId: auth.agentId,
+      identityRegistry: auth.identityRegistry,
+      allowedBuiltinTools: auth.allowedBuiltinTools
     });
 
     const transport = new StreamableHTTPServerTransport({

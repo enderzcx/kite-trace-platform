@@ -12,6 +12,7 @@ import { registerMarketAgentServiceRoutes } from '../routes/marketAgentServiceRo
 import { createPaymentPolicyHelpers } from '../routes/paymentPolicyHelpers.js';
 import { registerReceiptEvidenceRoutes } from '../routes/receiptEvidenceRoutes.js';
 import { registerTemplateRoutes } from '../routes/templateRoutes.js';
+import { registerTrustV1Routes } from '../routes/v1/trustV1Routes.js';
 
 export function assert(condition, message) {
   if (!condition) {
@@ -102,6 +103,9 @@ export async function createConsumerAuthorityHarness(options = {}) {
   const providerServiceId = String(options.serviceId || 'svc-price').trim();
   const providerTemplateId = String(options.templateId || 'tpl_svc-price').trim();
   const providerCapability = String(options.capability || 'btc-price-feed').trim().toLowerCase();
+  const identityRegistry = normalizeAddress(
+    options.identityRegistry || '0x7777777777777777777777777777777777777777'
+  );
 
   const state = {
     runtime: {
@@ -153,6 +157,7 @@ export async function createConsumerAuthorityHarness(options = {}) {
     connectorInstallCodes: [],
     connectorGrants: [],
     reputationSignals: [],
+    trustPublications: [],
     validationRecords: [],
     templates: [
       {
@@ -184,6 +189,19 @@ export async function createConsumerAuthorityHarness(options = {}) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         publishedBy: 'system'
+      }
+    ],
+    networkAgents: [
+      {
+        id: providerAgentId,
+        name: 'Harness Provider',
+        role: 'provider',
+        mode: 'a2api',
+        identityRegistry,
+        identityAgentId: '42',
+        identityVerifiedAt: new Date().toISOString(),
+        active: true,
+        capabilities: [providerCapability]
       }
     ],
     services: [
@@ -357,6 +375,7 @@ export async function createConsumerAuthorityHarness(options = {}) {
     CONNECTOR_INSTALL_CODE_TTL_MS: 900_000,
     CONNECTOR_INSTALL_CODE_MAX_ROWS: 500,
     CONNECTOR_GRANT_MAX_ROWS: 1_000,
+    DEFAULT_CONNECTOR_IDENTITY_REGISTRY: identityRegistry,
     createTraceId,
     normalizeAddress,
     readConnectorInstallCodes: () => readRows('connectorInstallCodes'),
@@ -383,6 +402,9 @@ export async function createConsumerAuthorityHarness(options = {}) {
         amount: Number(service?.price || 0) || 0,
         currency: 'token'
       },
+      audience: 'public_product',
+      scopeMode: 'scoped',
+      riskLevel: 'standard',
       active: service?.active !== false,
       createdAt: now,
       updatedAt: now
@@ -431,6 +453,11 @@ export async function createConsumerAuthorityHarness(options = {}) {
 
   function appendValidationRecord(record = {}) {
     state.validationRecords.unshift(clone(record));
+    return clone(record);
+  }
+
+  function appendTrustPublication(record = {}) {
+    state.trustPublications.unshift(clone(record));
     return clone(record);
   }
 
@@ -571,7 +598,7 @@ export async function createConsumerAuthorityHarness(options = {}) {
     app,
     deps: {
       ERC8004_AGENT_ID: null,
-      ERC8004_IDENTITY_REGISTRY: '',
+      ERC8004_IDENTITY_REGISTRY: identityRegistry,
       BACKEND_PUBLIC_URL: host,
       PORT: String(port),
       createTraceId,
@@ -634,7 +661,9 @@ export async function createConsumerAuthorityHarness(options = {}) {
     buildAuthoritySnapshot: consumerAuthorityHelpers.buildAuthoritySnapshot,
     buildPolicySnapshotHash: consumerAuthorityHelpers.buildPolicySnapshotHash,
     createTraceId,
+    ensureNetworkAgents: () => readRows('networkAgents'),
     ensureServiceCatalog: () => readRows('services'),
+    ensureNetworkAgents: () => readRows('networkAgents'),
     ensureTemplateCatalog: () => readRows('templates'),
     finalizeConsumerIntent: consumerAuthorityHelpers.finalizeConsumerIntent,
     findConsumerIntent: consumerAuthorityHelpers.findConsumerIntent,
@@ -669,9 +698,13 @@ export async function createConsumerAuthorityHarness(options = {}) {
       amount: String(extras?.amount || state.services[0]?.price || '0.001'),
       recipient: normalizeAddress(extras?.recipient || state.services[0]?.recipient || providerRecipient),
       tokenAddress: normalizeAddress(extras?.tokenAddress || state.services[0]?.tokenAddress || settlementToken),
+      identity: extras?.identity || null,
       createdAt: Date.now()
     }),
+    appendReputationSignal,
+    appendTrustPublication,
     createTraceId,
+    ensureNetworkAgents: () => readRows('networkAgents'),
     ensureServiceCatalog: () => readRows('services'),
     evaluateServiceInvokeGuard,
     finalizeConsumerIntent: consumerAuthorityHelpers.finalizeConsumerIntent,
@@ -689,6 +722,28 @@ export async function createConsumerAuthorityHarness(options = {}) {
     normalizeXReaderParams: (input = {}) => input,
     PORT: String(port),
     postSessionPayWithRetry,
+    publishTrustPublicationOnChain: async (input = {}) => {
+      const mode = String(options.trustPublicationMode || '').trim().toLowerCase();
+      if (mode === 'fail') {
+        throw new Error('simulated_trust_publication_failure');
+      }
+      if (mode === 'published') {
+        return {
+          configured: true,
+          published: true,
+          registryAddress: '0x9999999999999999999999999999999999999999',
+          anchorId: createTraceId('anchor'),
+          anchorTxHash: `0x${'c'.repeat(64)}`
+        };
+      }
+      return {
+        configured: false,
+        published: false,
+        registryAddress: '',
+        anchorId: '',
+        anchorTxHash: ''
+      };
+    },
     readRecords: () => readRows('records'),
     readServiceInvocations: () => readRows('serviceInvocations'),
     readSessionRuntime,
@@ -719,6 +774,47 @@ export async function createConsumerAuthorityHarness(options = {}) {
     writePublishedServices: (rows = []) => writeRows('services', rows),
     X_READER_MAX_CHARS_DEFAULT: 800,
     X402_BTC_PRICE: String(state.services[0]?.price || '0.001')
+  });
+
+  registerTrustV1Routes(app, {
+    createTraceId,
+    publishTrustPublicationOnChain: async (input = {}) => {
+      const mode = String(options.trustPublicationMode || '').trim().toLowerCase();
+      if (mode === 'fail') {
+        throw new Error('simulated_trust_publication_failure');
+      }
+      if (mode === 'published') {
+        return {
+          configured: true,
+          published: true,
+          registryAddress: '0x9999999999999999999999999999999999999999',
+          anchorId: createTraceId('anchor'),
+          anchorTxHash: `0x${'c'.repeat(64)}`
+        };
+      }
+      return {
+        configured: false,
+        published: false,
+        registryAddress: '',
+        anchorId: '',
+        anchorTxHash: ''
+      };
+    },
+    readReputationSignals: () => readRows('reputationSignals'),
+    readTrustPublications: () => readRows('trustPublications'),
+    readValidationRecords: () => readRows('validationRecords'),
+    appendTrustPublication,
+    requireRole,
+    readIdentityProfile: async ({ registry = '', agentId = '' } = {}) => ({
+      configured: {
+        registry: normalizeText(registry || identityRegistry),
+        agentId: normalizeText(agentId || state.runtime.authorizedAgentId || '')
+      },
+      available: Boolean(normalizeText(registry || identityRegistry) && normalizeText(agentId || state.runtime.authorizedAgentId)),
+      ownerAddress: wallet,
+      agentWallet: wallet,
+      tokenURI: ''
+    })
   });
 
   registerJobLaneRoutes(app, {

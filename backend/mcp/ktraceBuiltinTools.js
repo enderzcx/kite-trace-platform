@@ -12,6 +12,111 @@ function normalizeState(value = '') {
   return normalizeText(value).toLowerCase();
 }
 
+function normalizeAddress(value = '') {
+  return normalizeText(value).toLowerCase();
+}
+
+function isConnectorScopedRequest(requestContext = {}) {
+  return normalizeText(requestContext?.authSource || '') === 'connector-grant';
+}
+
+function buildVisibleAddressSet(requestContext = {}) {
+  return new Set(
+    [requestContext?.ownerEoa, requestContext?.aaWallet]
+      .map((value) => normalizeAddress(value))
+      .filter(Boolean)
+  );
+}
+
+function recordMatchesVisibleAddresses(record = {}, requestContext = {}) {
+  if (!isConnectorScopedRequest(requestContext)) return true;
+  const visible = buildVisibleAddressSet(requestContext);
+  if (visible.size === 0) return false;
+  const candidates = new Set();
+  const pushCandidate = (value = '') => {
+    const normalized = normalizeAddress(value);
+    if (normalized) candidates.add(normalized);
+  };
+  pushCandidate(record?.payer);
+  pushCandidate(record?.requester);
+  pushCandidate(record?.requesterAddress);
+  pushCandidate(record?.requesterRuntimeAddress);
+  pushCandidate(record?.ownerEoa);
+  pushCandidate(record?.aaWallet);
+  pushCandidate(record?.authority?.payer);
+  pushCandidate(record?.authorityPublic?.payer);
+  pushCandidate(record?.payment?.payer);
+  return Array.from(candidates).some((value) => visible.has(value));
+}
+
+async function fetchJson(fetchLoopbackJson, pathname = '', traceId = '') {
+  return fetchLoopback(fetchLoopbackJson, { pathname, traceId });
+}
+
+async function resolveInvocationByRequestId(fetchLoopbackJson, requestId = '', traceId = '') {
+  if (!normalizeText(requestId)) return null;
+  const result = await fetchJson(
+    fetchLoopbackJson,
+    buildQueryPath('/api/service-invocations', { requestId, limit: 1 }),
+    traceId
+  );
+  if (result.status >= 400 || result.payload?.ok === false) return null;
+  return Array.isArray(result.payload?.items) ? result.payload.items[0] || null : null;
+}
+
+async function resolveInvocationByTraceId(fetchLoopbackJson, effectiveTraceId = '', traceId = '') {
+  if (!normalizeText(effectiveTraceId)) return null;
+  const result = await fetchJson(
+    fetchLoopbackJson,
+    buildQueryPath('/api/service-invocations', { traceId: effectiveTraceId, limit: 1 }),
+    traceId
+  );
+  if (result.status >= 400 || result.payload?.ok === false) return null;
+  return Array.isArray(result.payload?.items) ? result.payload.items[0] || null : null;
+}
+
+async function resolvePurchaseByTraceId(fetchLoopbackJson, effectiveTraceId = '', traceId = '') {
+  if (!normalizeText(effectiveTraceId)) return null;
+  const result = await fetchJson(
+    fetchLoopbackJson,
+    buildQueryPath('/api/purchases', { traceId: effectiveTraceId, limit: 1 }),
+    traceId
+  );
+  if (result.status >= 400 || result.payload?.ok === false) return null;
+  return Array.isArray(result.payload?.items) ? result.payload.items[0] || null : null;
+}
+
+async function resolveJobById(fetchLoopbackJson, jobId = '', traceId = '') {
+  if (!normalizeText(jobId)) return null;
+  const result = await fetchJson(fetchLoopbackJson, `/api/jobs/${encodeURIComponent(jobId)}`, traceId);
+  if (result.status >= 400 || result.payload?.ok === false) return null;
+  return result.payload?.job || null;
+}
+
+async function resolveJobByTraceId(fetchLoopbackJson, effectiveTraceId = '', traceId = '') {
+  if (!normalizeText(effectiveTraceId)) return null;
+  const result = await fetchJson(
+    fetchLoopbackJson,
+    buildQueryPath('/api/jobs', { traceId: effectiveTraceId, limit: 1 }),
+    traceId
+  );
+  if (result.status >= 400 || result.payload?.ok === false) return null;
+  return Array.isArray(result.payload?.items) ? result.payload.items[0] || null : null;
+}
+
+function assertRecordVisible(tool = {}, record = null, requestContext = {}) {
+  if (!isConnectorScopedRequest(requestContext)) return null;
+  if (!recordMatchesVisibleAddresses(record || {}, requestContext)) {
+    return buildToolError(
+      tool,
+      403,
+      { code: 'forbidden', reason: 'Connector grant cannot access records outside its owner scope.' },
+      'Connector grant cannot access records outside its owner scope.'
+    );
+  }
+  return null;
+}
+
 function buildQueryPath(pathname = '', params = {}) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(isPlainObject(params) ? params : {})) {
@@ -155,7 +260,7 @@ async function fetchLoopback(fetchLoopbackJson, options = {}) {
   };
 }
 
-async function invokeFlowHistory(fetchLoopbackJson, args = {}, traceId = '') {
+async function invokeFlowHistory(fetchLoopbackJson, args = {}, traceId = '', requestContext = {}) {
   const limit = Math.max(1, Math.min(Number(args?.limit || 20) || 20, 100));
   const filters = {
     state: normalizeText(args?.state || ''),
@@ -189,10 +294,16 @@ async function invokeFlowHistory(fetchLoopbackJson, args = {}, traceId = '') {
     }
   }
 
+  const visibleInvocations = (Array.isArray(invocationsResult.payload?.items) ? invocationsResult.payload.items : [])
+    .filter((item) => recordMatchesVisibleAddresses(item, requestContext));
+  const visiblePurchases = (Array.isArray(purchasesResult.payload?.items) ? purchasesResult.payload.items : [])
+    .filter((item) => recordMatchesVisibleAddresses(item, requestContext));
+  const visibleJobs = (Array.isArray(jobsResult.payload?.items) ? jobsResult.payload.items : [])
+    .filter((item) => recordMatchesVisibleAddresses(item, requestContext));
   const history = mergeFlowHistory(
-    Array.isArray(invocationsResult.payload?.items) ? invocationsResult.payload.items : [],
-    Array.isArray(purchasesResult.payload?.items) ? purchasesResult.payload.items : [],
-    Array.isArray(jobsResult.payload?.items) ? jobsResult.payload.items : [],
+    visibleInvocations,
+    visiblePurchases,
+    visibleJobs,
     limit
   );
 
@@ -204,7 +315,7 @@ async function invokeFlowHistory(fetchLoopbackJson, args = {}, traceId = '') {
   });
 }
 
-async function resolveFlowReference(fetchLoopbackJson, args = {}, traceId = '') {
+async function resolveFlowReference(fetchLoopbackJson, args = {}, traceId = '', requestContext = {}) {
   let effectiveTraceId = normalizeText(args?.traceId || '');
   let effectiveRequestId = normalizeText(args?.requestId || '');
   let effectiveJobId = normalizeText(args?.jobId || '');
@@ -229,6 +340,10 @@ async function resolveFlowReference(fetchLoopbackJson, args = {}, traceId = '') 
       };
     }
     job = jobResult.payload?.job || null;
+    const visibilityError = job
+      ? assertRecordVisible({ builtinId: 'flow_show', title: 'KTrace Flow Details' }, job, requestContext)
+      : null;
+    if (visibilityError) return { error: visibilityError };
     effectiveTraceId = normalizeText(job?.traceId || effectiveTraceId);
     effectiveRequestId = normalizeText(job?.paymentRequestId || effectiveRequestId);
   }
@@ -240,6 +355,10 @@ async function resolveFlowReference(fetchLoopbackJson, args = {}, traceId = '') 
     });
     if (invocationResult.status < 400 && invocationResult.payload?.ok !== false) {
       invocation = Array.isArray(invocationResult.payload?.items) ? invocationResult.payload.items[0] || null : null;
+      const visibilityError = invocation
+        ? assertRecordVisible({ builtinId: 'flow_show', title: 'KTrace Flow Details' }, invocation, requestContext)
+        : null;
+      if (visibilityError) return { error: visibilityError };
       effectiveTraceId = normalizeText(invocation?.traceId || effectiveTraceId);
     }
   }
@@ -251,6 +370,10 @@ async function resolveFlowReference(fetchLoopbackJson, args = {}, traceId = '') 
     });
     if (jobListResult.status < 400 && jobListResult.payload?.ok !== false) {
       job = Array.isArray(jobListResult.payload?.items) ? jobListResult.payload.items[0] || null : null;
+      const visibilityError = job
+        ? assertRecordVisible({ builtinId: 'flow_show', title: 'KTrace Flow Details' }, job, requestContext)
+        : null;
+      if (visibilityError) return { error: visibilityError };
       effectiveJobId = normalizeText(job?.jobId || effectiveJobId);
       effectiveRequestId = normalizeText(job?.paymentRequestId || effectiveRequestId);
     }
@@ -263,6 +386,10 @@ async function resolveFlowReference(fetchLoopbackJson, args = {}, traceId = '') 
     });
     if (purchaseResult.status < 400 && purchaseResult.payload?.ok !== false) {
       purchase = Array.isArray(purchaseResult.payload?.items) ? purchaseResult.payload.items[0] || null : null;
+      const visibilityError = purchase
+        ? assertRecordVisible({ builtinId: 'flow_show', title: 'KTrace Flow Details' }, purchase, requestContext)
+        : null;
+      if (visibilityError) return { error: visibilityError };
     }
   }
 
@@ -273,6 +400,10 @@ async function resolveFlowReference(fetchLoopbackJson, args = {}, traceId = '') 
     });
     if (invocationResult.status < 400 && invocationResult.payload?.ok !== false) {
       invocation = Array.isArray(invocationResult.payload?.items) ? invocationResult.payload.items[0] || null : null;
+      const visibilityError = invocation
+        ? assertRecordVisible({ builtinId: 'flow_show', title: 'KTrace Flow Details' }, invocation, requestContext)
+        : null;
+      if (visibilityError) return { error: visibilityError };
       effectiveRequestId = normalizeText(invocation?.requestId || effectiveRequestId);
     }
   }
@@ -298,8 +429,8 @@ async function resolveFlowReference(fetchLoopbackJson, args = {}, traceId = '') 
   };
 }
 
-async function invokeFlowShow(fetchLoopbackJson, args = {}, traceId = '') {
-  const resolved = await resolveFlowReference(fetchLoopbackJson, args, traceId);
+async function invokeFlowShow(fetchLoopbackJson, args = {}, traceId = '', requestContext = {}) {
+  const resolved = await resolveFlowReference(fetchLoopbackJson, args, traceId, requestContext);
   if (resolved.error) return resolved.error;
 
   const { traceId: effectiveTraceId, requestId, jobId, job, purchase, invocation } = resolved;
@@ -361,7 +492,7 @@ async function invokeFlowShow(fetchLoopbackJson, args = {}, traceId = '') {
   });
 }
 
-async function invokeArtifactReceipt(fetchLoopbackJson, args = {}, traceId = '') {
+async function invokeArtifactReceipt(fetchLoopbackJson, args = {}, traceId = '', requestContext = {}) {
   const requestId = normalizeText(args?.requestId || '');
   if (!requestId) {
     return buildToolError(
@@ -371,6 +502,7 @@ async function invokeArtifactReceipt(fetchLoopbackJson, args = {}, traceId = '')
       'requestId is required.'
     );
   }
+  const invocation = await resolveInvocationByRequestId(fetchLoopbackJson, requestId, traceId);
   const result = await fetchLoopback(fetchLoopbackJson, {
     pathname: `/api/receipt/${encodeURIComponent(requestId)}`,
     traceId
@@ -383,6 +515,12 @@ async function invokeArtifactReceipt(fetchLoopbackJson, args = {}, traceId = '')
       `Failed to load receipt for ${requestId}.`
     );
   }
+  const visibilityError = assertRecordVisible(
+    { builtinId: 'artifact_receipt', title: 'KTrace Receipt' },
+    invocation || result.payload?.receipt || {},
+    requestContext
+  );
+  if (visibilityError) return visibilityError;
   return buildToolResponse(`Loaded receipt for ${requestId}.`, {
     action: 'artifact_receipt',
     requestId,
@@ -390,7 +528,7 @@ async function invokeArtifactReceipt(fetchLoopbackJson, args = {}, traceId = '')
   });
 }
 
-async function invokeArtifactEvidence(fetchLoopbackJson, args = {}, traceId = '') {
+async function invokeArtifactEvidence(fetchLoopbackJson, args = {}, traceId = '', requestContext = {}) {
   const effectiveTraceId = normalizeText(args?.traceId || '');
   if (!effectiveTraceId) {
     return buildToolError(
@@ -400,6 +538,18 @@ async function invokeArtifactEvidence(fetchLoopbackJson, args = {}, traceId = ''
       'traceId is required.'
     );
   }
+  const [job, purchase, invocation] = await Promise.all([
+    resolveJobByTraceId(fetchLoopbackJson, effectiveTraceId, traceId),
+    resolvePurchaseByTraceId(fetchLoopbackJson, effectiveTraceId, traceId),
+    resolveInvocationByTraceId(fetchLoopbackJson, effectiveTraceId, traceId)
+  ]);
+  const visibleRecord = job || purchase || invocation;
+  const visibilityError = assertRecordVisible(
+    { builtinId: 'artifact_evidence', title: 'KTrace Evidence' },
+    visibleRecord,
+    requestContext
+  );
+  if (visibilityError) return visibilityError;
   const result = await fetchLoopback(fetchLoopbackJson, {
     pathname: buildQueryPath('/api/evidence/export', { traceId: effectiveTraceId }),
     traceId
@@ -567,7 +717,7 @@ async function invokeJobMutation(fetchLoopbackJson, tool = {}, args = {}, traceI
   );
 }
 
-async function invokeJobRead(fetchLoopbackJson, tool = {}, args = {}, traceId = '') {
+async function invokeJobRead(fetchLoopbackJson, tool = {}, args = {}, traceId = '', requestContext = {}) {
   const jobId = normalizeText(args?.jobId || '');
   if (!jobId) {
     return buildToolError(
@@ -591,6 +741,8 @@ async function invokeJobRead(fetchLoopbackJson, tool = {}, args = {}, traceId = 
       `${normalizeText(tool?.title || tool?.name || 'KTrace job read')} failed.`
     );
   }
+  const visibilityError = assertRecordVisible(tool, result.payload?.job || result.payload?.audit || {}, requestContext);
+  if (visibilityError) return visibilityError;
   return buildToolResponse(
     summarizePayload(tool, result.payload, `${normalizeText(tool?.title || tool?.name || 'KTrace job read')} loaded.`),
     {
@@ -600,6 +752,17 @@ async function invokeJobRead(fetchLoopbackJson, tool = {}, args = {}, traceId = 
       audit: result.payload?.audit || null
     }
   );
+}
+
+function resolveBuiltinMetadata(builtinId = '') {
+  const normalized = normalizeText(builtinId).toLowerCase();
+  if (['flow_history', 'flow_show', 'artifact_receipt', 'artifact_evidence'].includes(normalized)) {
+    return { audience: 'public_product', scopeMode: 'scoped', riskLevel: 'low' };
+  }
+  if (['job_create', 'job_show', 'job_audit'].includes(normalized)) {
+    return { audience: 'trusted_integration', scopeMode: 'scoped', riskLevel: 'high' };
+  }
+  return { audience: 'internal_ops', scopeMode: 'scoped', riskLevel: 'critical' };
 }
 
 const passthroughObject = () => z.object({}).passthrough();
@@ -830,7 +993,10 @@ export const KTRACE_BUILTIN_TOOLS = [
     kind: 'builtin',
     builtinId: 'job_expire'
   }
-];
+].map((tool) => ({
+  ...tool,
+  ...resolveBuiltinMetadata(tool?.builtinId)
+}));
 
 export async function invokeBuiltinTool({
   tool = {},
@@ -842,16 +1008,16 @@ export async function invokeBuiltinTool({
   const builtinId = normalizeText(tool?.builtinId || '');
 
   if (builtinId === 'flow_history') {
-    return invokeFlowHistory(fetchLoopbackJson, args, traceId);
+    return invokeFlowHistory(fetchLoopbackJson, args, traceId, requestContext);
   }
   if (builtinId === 'flow_show') {
-    return invokeFlowShow(fetchLoopbackJson, args, traceId);
+    return invokeFlowShow(fetchLoopbackJson, args, traceId, requestContext);
   }
   if (builtinId === 'artifact_receipt') {
-    return invokeArtifactReceipt(fetchLoopbackJson, args, traceId);
+    return invokeArtifactReceipt(fetchLoopbackJson, args, traceId, requestContext);
   }
   if (builtinId === 'artifact_evidence') {
-    return invokeArtifactEvidence(fetchLoopbackJson, args, traceId);
+    return invokeArtifactEvidence(fetchLoopbackJson, args, traceId, requestContext);
   }
   if (builtinId === 'job_create') {
     return invokeJobCreate(fetchLoopbackJson, args, traceId, requestContext);
@@ -860,7 +1026,7 @@ export async function invokeBuiltinTool({
     return invokeJobMutation(fetchLoopbackJson, tool, args, traceId, requestContext);
   }
   if (['job_show', 'job_audit'].includes(builtinId)) {
-    return invokeJobRead(fetchLoopbackJson, tool, args, traceId);
+    return invokeJobRead(fetchLoopbackJson, tool, args, traceId, requestContext);
   }
 
   return buildToolError(

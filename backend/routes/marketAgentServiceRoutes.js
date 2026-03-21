@@ -12,10 +12,13 @@ import {
   fetchWalletPnl,
   fetchWeatherContext
 } from '../lib/externalFeeds.js';
+import { createTrustLayerHelpers } from '../lib/trustLayerHelpers.js';
 
 export function registerMarketAgentServiceRoutes(app, deps) {
   const {
     ANALYSIS_PROVIDER,
+    appendReputationSignal,
+    appendTrustPublication,
     appendWorkflowStep,
     beginConsumerIntent,
     buildServiceStatus,
@@ -26,6 +29,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     computeServiceReputation,
     createX402Request,
     createTraceId,
+    ensureNetworkAgents,
     ensureServiceCatalog,
     evaluateServiceInvokeGuard,
     finalizeConsumerIntent,
@@ -43,6 +47,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     normalizeXReaderParams,
     PORT,
     postSessionPayWithRetry,
+    publishTrustPublicationOnChain,
     readRecords,
     readServiceInvocations,
     readSessionRuntime,
@@ -97,6 +102,34 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
     if (['0', 'false', 'no', 'off'].includes(raw)) return false;
     return fallback;
+  }
+
+  const { appendInvokeTrustArtifacts } = createTrustLayerHelpers({
+    appendReputationSignal,
+    appendTrustPublication,
+    createTraceId,
+    ensureNetworkAgents,
+    publishTrustPublicationOnChain
+  });
+
+  function resolveConsumerTrustSubject(body = {}, invocation = {}, requestRecord = {}) {
+    const agentId = normalizeText(
+      body.connectorAgentId ||
+      requestRecord?.identity?.agentId ||
+      invocation?.consumerAgentId ||
+      ''
+    );
+    const identityRegistry = normalizeText(
+      body.connectorIdentityRegistry ||
+      requestRecord?.identity?.registry ||
+      invocation?.consumerIdentityRegistry ||
+      ''
+    );
+    if (!agentId || !identityRegistry) return null;
+    return {
+      agentId,
+      identityRegistry
+    };
   }
 
   function resolveInvokeRuntime(body = {}) {
@@ -260,6 +293,13 @@ export function registerMarketAgentServiceRoutes(app, deps) {
           taskType: normalizeText(service?.action || invocation?.action || ''),
           traceId
         },
+        identity:
+          invocation?.consumerAgentId && invocation?.consumerIdentityRegistry
+            ? {
+                agentId: normalizeText(invocation.consumerAgentId),
+                registry: normalizeText(invocation.consumerIdentityRegistry)
+              }
+            : undefined,
         actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {}
       }
     );
@@ -1271,6 +1311,11 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       amount: String(service.price || X402_BTC_PRICE || ''),
       tokenAddress: String(service.tokenAddress || SETTLEMENT_TOKEN || '').trim(),
       recipient: String(service.recipient || KITE_AGENT2_AA_ADDRESS || '').trim(),
+      ownerEoa: normalizeText(body.ownerEoa || ''),
+      aaWallet: normalizeText(body.aaWallet || ''),
+      connectorGrantId: normalizeText(body.connectorGrantId || ''),
+      consumerAgentId: normalizeText(body.connectorAgentId || ''),
+      consumerIdentityRegistry: normalizeText(body.connectorIdentityRegistry || ''),
       authorityId: normalizeText(authoritySnapshot?.authorityId || ''),
       authority: authoritySnapshot,
       authorityPublic,
@@ -1322,6 +1367,13 @@ export function registerMarketAgentServiceRoutes(app, deps) {
           ...evidenceRequest,
           status: normalizeText(evidenceRequest?.status || '') === 'paid' ? 'paid' : 'pending',
           intentId,
+          identity:
+            invocation.consumerAgentId && invocation.consumerIdentityRegistry
+              ? {
+                  agentId: normalizeText(invocation.consumerAgentId),
+                  registry: normalizeText(invocation.consumerIdentityRegistry)
+                }
+              : evidenceRequest?.identity || null,
           authority: authoritySnapshot,
           authorityPublic,
           policySnapshotHash,
@@ -1843,6 +1895,20 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         updatedAt: new Date().toISOString()
       };
       upsertServiceInvocation(next);
+      let trust = null;
+      if (resp.ok && payload?.ok !== false && ['success', 'completed'].includes(next.state)) {
+        trust = await appendInvokeTrustArtifacts({
+          consumerSubject: resolveConsumerTrustSubject(body, next, evidenceRequest),
+          service,
+          sourceLane: 'buy',
+          sourceKind: normalizeText(body.authSource || '') === 'connector-grant' ? 'x402-mcp' : 'x402-invoke',
+          referenceId: next.requestId || next.invocationId,
+          traceId: next.traceId,
+          paymentRequestId: next.requestId,
+          summary: normalizeText(next.summary || `${effectiveAction} settled by x402 payment.`),
+          evaluator: normalizeText(sourceAgentId || payer || '')
+        });
+      }
       finalizeConsumerIntent?.(intentId, {
         status: resp.ok && payload?.ok !== false ? 'completed' : 'failed',
         resultRef: normalizeText(next.invocationId),
@@ -1854,7 +1920,8 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       return res.status(resp.status).json({
         ...payload,
         serviceId,
-        invocationId
+        invocationId,
+        trust
       });
     } catch (error) {
       const failureReason = String(error?.message || 'service invoke failed').trim();

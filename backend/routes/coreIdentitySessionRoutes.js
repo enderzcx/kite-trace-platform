@@ -169,6 +169,35 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     return normalizeText(value || '');
   }
 
+  function normalizeConnectorBuiltinToolId(value = '') {
+    const normalized = normalizeText(value || '').toLowerCase();
+    if (!normalized) return '';
+    if (normalized.startsWith('ktrace__')) return normalized.slice('ktrace__'.length);
+    return normalized.replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  }
+
+  function normalizeConnectorBuiltinToolList(value = []) {
+    const rawItems = Array.isArray(value)
+      ? value
+      : normalizeText(value)
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+    return Array.from(new Set(rawItems.map((item) => normalizeConnectorBuiltinToolId(item)).filter(Boolean)));
+  }
+
+  function resolveConnectorIdentity(body = {}, setup = null) {
+    const runtime = setup?.runtime && typeof setup.runtime === 'object' ? setup.runtime : {};
+    const agentId = normalizeText(body.agentId || runtime.authorizedAgentId || '');
+    const identityRegistry = normalizeSessionGrantAddress(
+      body.identityRegistry || body.registry || ERC8004_IDENTITY_REGISTRY || ''
+    );
+    return {
+      agentId,
+      identityRegistry
+    };
+  }
+
   function evaluateAgentConnectorSetup(ownerEoa = '') {
     const normalizedOwner = normalizeOwnerInput(ownerEoa || '');
     const missing = [];
@@ -239,19 +268,30 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     };
   }
 
-  function buildAgentConnectorStatus(ownerEoa = '', req, { client = 'agent', clientId = '' } = {}) {
+  function buildAgentConnectorStatus(ownerEoa = '', req, { client = 'agent', clientId = '', agentId = '', identityRegistry = '' } = {}) {
     const normalizedClient = normalizeConnectorClient(client);
     const normalizedClientId = normalizeConnectorClientId(clientId);
     const setup = evaluateAgentConnectorSetup(ownerEoa);
+    const identity = resolveConnectorIdentity(
+      {
+        agentId,
+        identityRegistry
+      },
+      setup
+    );
     const pendingInstallCode =
       findPendingClaudeConnectorInstallCode?.(ownerEoa, {
         client: normalizedClient,
-        clientId: normalizedClientId
+        clientId: normalizedClientId,
+        agentId: identity.agentId,
+        identityRegistry: identity.identityRegistry
       }) || null;
     const activeGrant =
       findActiveClaudeConnectorGrant?.(ownerEoa, {
         client: normalizedClient,
-        clientId: normalizedClientId
+        clientId: normalizedClientId,
+        agentId: identity.agentId,
+        identityRegistry: identity.identityRegistry
       }) || null;
     let state = 'not_connected';
     if (!setup.ready) state = 'not_ready';
@@ -269,6 +309,8 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
       connector: {
         client: normalizedClient,
         clientId: normalizedClientId,
+        agentId: identity.agentId,
+        identityRegistry: identity.identityRegistry,
         state,
         pendingInstallCode: pendingInstallCode
           ? buildClaudeConnectorInstallCodePublicRecord?.(pendingInstallCode) || null
@@ -962,7 +1004,9 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     return res.json(
       buildAgentConnectorStatus(ownerEoa, req, {
         client,
-        clientId
+        clientId,
+        agentId: req.query.agentId || '',
+        identityRegistry: req.query.identityRegistry || req.query.registry || ''
       })
     );
   }
@@ -973,6 +1017,8 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     const normalizedClient = normalizeConnectorClient(body.client || client);
     const normalizedClientId = normalizeConnectorClientId(body.clientId || body.deviceId || '');
     const setup = evaluateAgentConnectorSetup(ownerEoa);
+    const identity = resolveConnectorIdentity(body, setup);
+    const allowedBuiltinTools = normalizeConnectorBuiltinToolList(body.allowedBuiltinTools || []);
     if (!normalizeOwnerInput(ownerEoa)) {
       return sendRouteFailure(req, res, {
         statusCode: 400,
@@ -1010,6 +1056,22 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
         missing: setup.missing
       });
     }
+    if (!identity.agentId) {
+      return res.status(409).json({
+        ok: false,
+        error: 'connector_identity_required',
+        reason: 'Agent connector setup requires an agentId.',
+        traceId: req.traceId || ''
+      });
+    }
+    if (!identity.identityRegistry) {
+      return res.status(409).json({
+        ok: false,
+        error: 'connector_identity_registry_required',
+        reason: 'Agent connector setup requires an identityRegistry.',
+        traceId: req.traceId || ''
+      });
+    }
     if (!setup.authority || setup.missing.some((item) => item.startsWith('authority_'))) {
       return res.status(409).json({
         ok: false,
@@ -1023,7 +1085,9 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     const activeGrant =
       findActiveClaudeConnectorGrant?.(ownerEoa, {
         client: normalizedClient,
-        clientId: normalizedClientId
+        clientId: normalizedClientId,
+        agentId: identity.agentId,
+        identityRegistry: identity.identityRegistry
       }) || null;
     if (activeGrant) {
       return res.json({
@@ -1047,7 +1111,10 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
       authorityId: setup.authority?.authorityId || '',
       policySnapshotHash: buildAuthorityPolicySnapshotHash(setup.authority),
       client: normalizedClient,
-      clientId: normalizedClientId
+      clientId: normalizedClientId,
+      agentId: identity.agentId,
+      identityRegistry: identity.identityRegistry,
+      allowedBuiltinTools
     });
     if (!issued?.ok) {
       return sendRouteFailure(req, res, issued);
@@ -1061,10 +1128,13 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
       connector: {
         client: normalizedClient,
         clientId: normalizedClientId,
+        agentId: identity.agentId,
+        identityRegistry: identity.identityRegistry,
         state: 'install_code_issued',
         installCodeId: issued.publicRecord?.installCodeId || '',
         maskedPreview: issued.publicRecord?.maskedPreview || '',
         expiresAt: issued.publicRecord?.expiresAt || 0,
+        allowedBuiltinTools: issued.publicRecord?.allowedBuiltinTools || [],
         connectorUrl
       }
     });
@@ -1075,11 +1145,14 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     const ownerEoa = resolveAccountOwner(req, body);
     const normalizedClient = normalizeConnectorClient(body.client || client);
     const normalizedClientId = normalizeConnectorClientId(body.clientId || body.deviceId || '');
+    const identity = resolveConnectorIdentity(body);
     const result = revokeClaudeConnectorGrant?.({
       ownerEoa,
       reason: body.reason || body.revocationReason || 'revoked',
       client: normalizedClient,
-      clientId: normalizedClientId
+      clientId: normalizedClientId,
+      agentId: identity.agentId,
+      identityRegistry: identity.identityRegistry
     });
     if (!result?.ok) {
       return sendRouteFailure(req, res, result);

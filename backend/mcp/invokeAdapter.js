@@ -107,6 +107,10 @@ function buildInvokePayload(tool = {}, args = {}, extra = {}, paymentMode = '', 
   if (normalizeText(requestContext?.aaWallet || '')) payload.aaWallet = normalizeText(requestContext.aaWallet);
   if (normalizeText(requestContext?.authSource || '')) payload.authSource = normalizeText(requestContext.authSource);
   if (normalizeText(requestContext?.grantId || '')) payload.connectorGrantId = normalizeText(requestContext.grantId);
+  if (normalizeText(requestContext?.agentId || '')) payload.connectorAgentId = normalizeText(requestContext.agentId);
+  if (normalizeText(requestContext?.identityRegistry || '')) {
+    payload.connectorIdentityRegistry = normalizeText(requestContext.identityRegistry);
+  }
 
   return payload;
 }
@@ -187,7 +191,9 @@ export function createMcpInvokeAdapter({ fetchLoopbackJson }) {
     ownerEoa = '',
     aaWallet = '',
     authSource = '',
-    grantId = ''
+    grantId = '',
+    agentId = '',
+    identityRegistry = ''
   } = {}) {
     const traceId = pickTraceId(isPlainObject(args) ? args : {}, extra);
 
@@ -211,7 +217,9 @@ export function createMcpInvokeAdapter({ fetchLoopbackJson }) {
       ownerEoa,
       aaWallet,
       authSource,
-      grantId
+      grantId,
+      agentId,
+      identityRegistry
     });
     const effectiveTraceId = normalizeText(invokePayload.traceId || traceId || '');
 

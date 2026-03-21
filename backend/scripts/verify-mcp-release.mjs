@@ -35,6 +35,9 @@ try {
       ? { MCP_REQUIRE_PAID_SUCCESS: normalizeText(process.env.MCP_REQUIRE_PAID_SUCCESS || '') }
       : {})
   });
+  await runStep('a2a_trust_smoke', '.\\scripts\\verify-a2a-trust-smoke.mjs');
+  await runStep('mcp_local_connector', '.\\scripts\\verify-mcp-local-connector.mjs');
+  await runStep('mcp_trust_boundary', '.\\scripts\\verify-mcp-trust-boundary.mjs');
 
   console.log(
     JSON.stringify(
@@ -44,7 +47,10 @@ try {
           smoke: 'passed',
           auth: 'passed',
           consumer: 'passed',
-          paid: 'passed'
+          paid: 'passed',
+          a2aTrust: 'passed',
+          localConnector: 'passed',
+          trustBoundary: 'passed'
         }
       },
       null,

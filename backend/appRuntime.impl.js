@@ -648,6 +648,7 @@ claudeConnectorAuthHelpers = createClaudeConnectorAuthHelpers({
   CONNECTOR_INSTALL_CODE_TTL_MS: KTRACE_CONNECTOR_INSTALL_CODE_TTL_MS,
   CONNECTOR_INSTALL_CODE_MAX_ROWS: KTRACE_CONNECTOR_INSTALL_CODE_MAX_ROWS,
   CONNECTOR_GRANT_MAX_ROWS: KTRACE_CONNECTOR_GRANT_MAX_ROWS,
+  DEFAULT_CONNECTOR_IDENTITY_REGISTRY: ERC8004_IDENTITY_REGISTRY,
   createTraceId,
   normalizeAddress,
   readConnectorInstallCodes,
@@ -2301,7 +2302,16 @@ const routeRegistrations = [
   {
     name: 'workflowA2aRoutes',
     register: registerWorkflowA2aRoutes,
-    requiredKeys: ['buildPaymentRequiredResponse', 'createX402Request', 'requireRole', 'upsertWorkflow']
+    requiredKeys: [
+      'appendReputationSignal',
+      'appendTrustPublication',
+      'buildPaymentRequiredResponse',
+      'createX402Request',
+      'ensureNetworkAgents',
+      'publishTrustPublicationOnChain',
+      'requireRole',
+      'upsertWorkflow'
+    ]
   },
   {
     name: 'xmtpNetworkRoutes',
@@ -2311,7 +2321,16 @@ const routeRegistrations = [
   {
     name: 'marketAgentServiceRoutes',
     register: registerMarketAgentServiceRoutes,
-    requiredKeys: ['createX402Request', 'ensureServiceCatalog', 'requireRole', 'upsertServiceInvocation']
+    requiredKeys: [
+      'appendReputationSignal',
+      'appendTrustPublication',
+      'createX402Request',
+      'ensureNetworkAgents',
+      'ensureServiceCatalog',
+      'publishTrustPublicationOnChain',
+      'requireRole',
+      'upsertServiceInvocation'
+    ]
   },
   {
     name: 'dataFeedRoutes',

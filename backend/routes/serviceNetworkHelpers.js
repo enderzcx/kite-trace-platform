@@ -268,6 +268,9 @@
                       : { vsCurrency: 'usd', ids: 'bitcoin,ethereum', limit: 10 }
                 : { pair: 'BTCUSDT', source: 'hyperliquid' };
     const activeInput = input.active;
+    const audience = String(input.audience || existing?.audience || 'public_product').trim().toLowerCase() || 'public_product';
+    const scopeMode = String(input.scopeMode || existing?.scopeMode || 'scoped').trim().toLowerCase() || 'scoped';
+    const riskLevel = String(input.riskLevel || existing?.riskLevel || 'standard').trim().toLowerCase() || 'standard';
     const active =
       typeof activeInput === 'boolean'
         ? activeInput
@@ -288,6 +291,9 @@
       maxChars: normalizedTask.maxChars || null,
       providerAgentId,
       providerKey,
+      audience: ['public_product', 'trusted_integration', 'internal_ops'].includes(audience) ? audience : 'public_product',
+      scopeMode: ['scoped', 'global'].includes(scopeMode) ? scopeMode : 'scoped',
+      riskLevel: ['low', 'standard', 'high', 'critical'].includes(riskLevel) ? riskLevel : 'standard',
       recipient,
       tokenAddress,
       price: String(Number(priceRaw.toFixed(6))),

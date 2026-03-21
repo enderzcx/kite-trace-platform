@@ -14,6 +14,7 @@ export type TraceAnchor = {
     txHash?: string;
     registryAddress?: string;
     anchoredAt?: string;
+    payloadHash?: string;
   };
 };
 

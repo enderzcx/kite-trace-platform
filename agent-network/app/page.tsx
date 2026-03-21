@@ -134,7 +134,33 @@ async function loadShowcaseData(): Promise<{
   ]);
 
   const capabilities = mapCapabilities(capabilitiesPayload);
-  const providers = mapProviders(providersPayload, capabilities);
+  const baseProviders = mapProviders(providersPayload, capabilities);
+
+  // Enrich providers with trust profile data (graceful fallback if API not ready)
+  const providers = await Promise.all(
+    baseProviders.map(async (p) => {
+      if (!p.agentId) return p;
+      try {
+        const profile = await fetchJson<Record<string, unknown>>(
+          `/api/v1/trust/chain-profile?agentId=${encodeURIComponent(p.agentId)}`
+        );
+        if (!profile) return p;
+        const identity = profile.identity as Record<string, unknown> | undefined;
+        const onchain = profile.onchain as Record<string, unknown> | undefined;
+        const reputation = profile.reputation as Record<string, unknown> | undefined;
+        return {
+          ...p,
+          trustProfile: {
+            tokenId: String(identity?.tokenId || ""),
+            anchorCount: Number(onchain?.anchorCount || 0),
+            successRate: Number(reputation?.successRate || 0),
+          },
+        };
+      } catch {
+        return p;
+      }
+    })
+  );
 
   return {
     healthStats: {

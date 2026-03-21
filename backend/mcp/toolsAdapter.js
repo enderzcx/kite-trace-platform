@@ -16,6 +16,28 @@ function normalizeToolName(capabilityId = '') {
     .replace(/^_+|_+$/g, '')}`;
 }
 
+function normalizeAudience(value = '', fallback = 'public_product') {
+  const normalized = normalizeText(value).toLowerCase();
+  if (['public_product', 'trusted_integration', 'internal_ops'].includes(normalized)) return normalized;
+  if (normalized === 'public') return 'public_product';
+  if (normalized === 'trusted') return 'trusted_integration';
+  if (normalized === 'internal') return 'internal_ops';
+  return fallback;
+}
+
+function normalizeScopeMode(value = '', fallback = 'scoped') {
+  const normalized = normalizeText(value).toLowerCase();
+  if (['scoped', 'global'].includes(normalized)) return normalized;
+  if (normalized === 'owner-scoped') return 'scoped';
+  return fallback;
+}
+
+function normalizeRiskLevel(value = '', fallback = 'standard') {
+  const normalized = normalizeText(value).toLowerCase();
+  if (['low', 'standard', 'high', 'critical'].includes(normalized)) return normalized;
+  return fallback;
+}
+
 function inferTitleOverride(capability = {}) {
   const capabilityId = normalizeText(capability?.capabilityId || capability?.id || capability?.serviceId || '').toLowerCase();
   if (capabilityId === 'svc_btcusd_minute') {
@@ -127,13 +149,29 @@ function buildToolDefinition(capability = {}) {
     serviceId: capabilityId,
     action: normalizeText(capability?.action || ''),
     providerId: normalizeText(capability?.providerId || ''),
+    audience: normalizeAudience(capability?.audience, 'public_product'),
+    scopeMode: normalizeScopeMode(capability?.scopeMode, 'scoped'),
+    riskLevel: normalizeRiskLevel(capability?.riskLevel, 'standard'),
     rawCapability: capability,
     inputSchema: buildToolInputSchema(capability)
   };
 }
 
+function shouldExposeCapabilityTool(tool = {}, { authSource = '' } = {}) {
+  if (normalizeText(authSource) !== 'connector-grant') return true;
+  return normalizeAudience(tool?.audience, 'public_product') === 'public_product';
+}
+
+function shouldExposeBuiltinTool(tool = {}, { authSource = '', allowedBuiltinTools = [] } = {}) {
+  if (normalizeText(authSource) !== 'connector-grant') return true;
+  const audience = normalizeAudience(tool?.audience, 'public_product');
+  const allowed = new Set((Array.isArray(allowedBuiltinTools) ? allowedBuiltinTools : []).map((item) => normalizeText(item).toLowerCase()));
+  if (!allowed.has(normalizeText(tool?.builtinId || '').toLowerCase())) return false;
+  return audience === 'public_product' || audience === 'trusted_integration';
+}
+
 export function createMcpToolsAdapter({ fetchLoopbackJson }) {
-  async function listTools({ traceId = '', apiKey = '' } = {}) {
+  async function listTools({ traceId = '', apiKey = '', authSource = '', allowedBuiltinTools = [] } = {}) {
     const { payload } = await fetchLoopbackJson({
       pathname: '/api/v1/capabilities?limit=500',
       apiKey,
@@ -144,6 +182,7 @@ export function createMcpToolsAdapter({ fetchLoopbackJson }) {
     const capabilityTools = items
       .filter((item) => item?.active !== false)
       .map((item) => buildToolDefinition(item))
+      .filter((tool) => shouldExposeCapabilityTool(tool, { authSource }))
       .filter(Boolean)
       .sort((left, right) => {
         const priorityDiff = inferToolPriority(right?.rawCapability) - inferToolPriority(left?.rawCapability);
@@ -151,7 +190,9 @@ export function createMcpToolsAdapter({ fetchLoopbackJson }) {
         return normalizeText(left?.title).localeCompare(normalizeText(right?.title));
       });
 
-    const builtinTools = KTRACE_BUILTIN_TOOLS.map((tool) => ({ ...tool }));
+    const builtinTools = KTRACE_BUILTIN_TOOLS
+      .map((tool) => ({ ...tool }))
+      .filter((tool) => shouldExposeBuiltinTool(tool, { authSource, allowedBuiltinTools }));
     return [...builtinTools, ...capabilityTools];
   }
 

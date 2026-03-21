@@ -42,7 +42,8 @@ AGENTS.md
 STATUS.md
 START_HERE.md
 GOAL.md
-agent-network/
+agent-network/.env.local
+agent-network/tsconfig.tsbuildinfo
 spawn-agents.ps1
 start-agent-relay.ps1
 sync-agent-status.ps1

@@ -85,7 +85,8 @@ try {
     body: JSON.stringify({
       ownerEoa: owner,
       client,
-      clientId
+      clientId,
+      agentId: 'consumer-agent'
     })
   });
   assert(bootstrap.response.ok, 'local connector bootstrap failed');
@@ -120,9 +121,9 @@ try {
   assert(tools.some((tool) => tool?.name === 'ktrace__flow_show'), 'local connector tools/list missing flow_show');
   assert(tools.some((tool) => tool?.name === 'ktrace__artifact_receipt'), 'local connector tools/list missing artifact_receipt');
   assert(tools.some((tool) => tool?.name === 'ktrace__artifact_evidence'), 'local connector tools/list missing artifact_evidence');
-  assert(tools.some((tool) => tool?.name === 'ktrace__job_create'), 'local connector tools/list missing job_create');
-  assert(tools.some((tool) => tool?.name === 'ktrace__job_show'), 'local connector tools/list missing job_show');
-  assert(tools.some((tool) => tool?.name === 'ktrace__job_audit'), 'local connector tools/list missing job_audit');
+  assert(!tools.some((tool) => tool?.name === 'ktrace__job_create'), 'local connector tools/list should not expose job_create by default');
+  assert(!tools.some((tool) => tool?.name === 'ktrace__job_show'), 'local connector tools/list should not expose job_show by default');
+  assert(!tools.some((tool) => tool?.name === 'ktrace__job_audit'), 'local connector tools/list should not expose job_audit by default');
 
   const toolCall = await postJsonRpcToPath(
     harness.host,
@@ -235,68 +236,6 @@ try {
   assert(flowShowTool.status === 200, 'flow_show tool transport failed');
   assert(flowShowTool.payload?.result?.isError !== true, 'flow_show tool returned MCP tool error');
 
-  const jobCreateTool = await postJsonRpcToPath(
-    harness.host,
-    connectPath,
-    {
-      jsonrpc: '2.0',
-      id: 'job-create-tool',
-      method: 'tools/call',
-      params: {
-        name: 'ktrace__job_create',
-        arguments: {
-          provider: 'price-agent',
-          capability: 'svc-price',
-          budget: '1',
-          input: {
-            pair: 'BTCUSDT'
-          }
-        }
-      }
-    }
-  );
-  assert(jobCreateTool.status === 200, 'job_create tool transport failed');
-  assert(jobCreateTool.payload?.result?.isError !== true, 'job_create tool returned MCP tool error');
-  const createdJob = jobCreateTool.payload?.result?.structuredContent?.job || {};
-  const createdJobId = String(createdJob?.jobId || '').trim();
-  assert(createdJobId, 'job_create tool did not return jobId');
-
-  const jobShowTool = await postJsonRpcToPath(
-    harness.host,
-    connectPath,
-    {
-      jsonrpc: '2.0',
-      id: 'job-show-tool',
-      method: 'tools/call',
-      params: {
-        name: 'ktrace__job_show',
-        arguments: {
-          jobId: createdJobId
-        }
-      }
-    }
-  );
-  assert(jobShowTool.status === 200, 'job_show tool transport failed');
-  assert(jobShowTool.payload?.result?.isError !== true, 'job_show tool returned MCP tool error');
-
-  const jobAuditTool = await postJsonRpcToPath(
-    harness.host,
-    connectPath,
-    {
-      jsonrpc: '2.0',
-      id: 'job-audit-tool',
-      method: 'tools/call',
-      params: {
-        name: 'ktrace__job_audit',
-        arguments: {
-          jobId: createdJobId
-        }
-      }
-    }
-  );
-  assert(jobAuditTool.status === 200, 'job_audit tool transport failed');
-  assert(jobAuditTool.payload?.result?.isError !== true, 'job_audit tool returned MCP tool error');
-
   const statusAfterClaim = await harness.requestJson(
     `/api/connector/agent/status?owner=${encodeURIComponent(owner)}&client=${encodeURIComponent(client)}&clientId=${encodeURIComponent(clientId)}`,
     {
@@ -336,7 +275,6 @@ try {
           requestId,
           paidTraceId,
           evidenceRef,
-          createdJobId,
           connectorState: statusAfterClaim.payload?.connector?.state || '',
           revokedStatus: revokedList.status,
           traceId
