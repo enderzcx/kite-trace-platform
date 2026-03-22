@@ -927,7 +927,43 @@ export function registerReceiptEvidenceRoutes(app, deps) {
       normalizeExecutionState,
       normalizeXReaderParams,
       parseExcerptMaxChars,
-      signResponseHash
+      signResponseHash,
+      fetchOnchainEventLogs: async (txHashes = []) => {
+        const rpcUrl = String(process.env.KITEAI_RPC_URL || process.env.BACKEND_RPC_URL || '').trim();
+        if (!rpcUrl || !Array.isArray(txHashes) || txHashes.length === 0) return [];
+        const { ethers: eth } = deps;
+        if (!eth) return [];
+        const { createKiteRpcProvider } = await import('../lib/kiteRpc.js');
+        const provider = createKiteRpcProvider(eth, rpcUrl, { timeoutMs: 15000 });
+        const results = [];
+        for (const hash of txHashes.slice(0, 5)) {
+          const normalizedHash = String(hash || '').trim();
+          if (!normalizedHash) continue;
+          try {
+            const receipt = await provider.getTransactionReceipt(normalizedHash);
+            if (!receipt) { results.push({ txHash: normalizedHash, status: 'not_found' }); continue; }
+            results.push({
+              txHash: normalizedHash,
+              status: receipt.status === 1 ? 'success' : 'reverted',
+              blockNumber: receipt.blockNumber,
+              blockHash: receipt.blockHash,
+              from: receipt.from,
+              to: receipt.to,
+              gasUsed: String(receipt.gasUsed || ''),
+              logs: receipt.logs.map(log => ({
+                address: log.address,
+                topics: log.topics,
+                data: log.data,
+                logIndex: log.index,
+                blockNumber: log.blockNumber
+              }))
+            });
+          } catch {
+            results.push({ txHash: normalizedHash, status: 'fetch_failed' });
+          }
+        }
+        return results;
+      }
     }
   };
 

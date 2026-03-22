@@ -33,6 +33,22 @@ export function registerReceiptEvidenceEvidenceRoutes(ctx = {}) {
       });
     }
     const publicEvidence = buildPublicEvidenceView(result);
+
+    // Fetch on-chain event logs if txHash is available and ?logs=true
+    const includeLogs = /^(1|true|yes)$/i.test(String(req.query.logs || '').trim());
+    if (includeLogs && helpers.fetchOnchainEventLogs) {
+      try {
+        const txHashes = [
+          publicEvidence.paymentTxHash,
+          publicEvidence.jobAnchorTxHash
+        ].filter(Boolean);
+        const logs = await helpers.fetchOnchainEventLogs(txHashes);
+        publicEvidence.onchainEventLogs = logs;
+      } catch {
+        publicEvidence.onchainEventLogs = null;
+      }
+    }
+
     return res.json({
       ok: true,
       traceId: String(result.traceId || '').trim(),

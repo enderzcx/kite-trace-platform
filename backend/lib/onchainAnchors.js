@@ -89,10 +89,10 @@ export function createOnchainAnchorHelpers({
   }
 
   function getReadProvider() {
-    if (backendSigner?.provider) return backendSigner.provider;
     const rpcUrl = normalizeText(backendRpcUrl);
-    if (!rpcUrl) return null;
-    return createKiteRpcProvider(ethers, rpcUrl);
+    if (rpcUrl) return createKiteRpcProvider(ethers, rpcUrl);
+    if (backendSigner?.provider) return backendSigner.provider;
+    return null;
   }
 
   function normalizeAddress(value = '') {
@@ -253,43 +253,19 @@ export function createOnchainAnchorHelpers({
 
     let txHash = '';
     let receipt = null;
-    let publishedVia = 'backend-signer';
+    let publishedVia = '';
 
-    // Try AA session execution first (provider's own AA wallet)
+    // AA session execution only — no backendSigner fallback
     if (agentIdNum > 0) {
-      try {
-        const agentAaWallet = await resolveAgentAaWallet(agentId);
-        console.log('[trust-anchor] agentId=' + agentId + ' → aaWallet=' + (agentAaWallet || 'null'));
-        if (agentAaWallet) {
-          const aaResult = await publishViaAaSession(registryAddress, callData, agentAaWallet);
-          if (aaResult?.txHash) {
-            txHash = aaResult.txHash;
-            receipt = aaResult.receipt;
-            publishedVia = aaResult.publishedVia;
-          }
+      const agentAaWallet = await resolveAgentAaWallet(agentId);
+      if (agentAaWallet) {
+        const aaResult = await publishViaAaSession(registryAddress, callData, agentAaWallet);
+        if (aaResult?.txHash) {
+          txHash = aaResult.txHash;
+          receipt = aaResult.receipt;
+          publishedVia = aaResult.publishedVia;
         }
-      } catch (aaError) {
-        // AA path failed, fall back to backendSigner
-        console.error('[trust-anchor] AA session path failed for agentId=' + agentId + ':', aaError?.message || String(aaError));
-        txHash = '';
-        receipt = null;
       }
-    }
-
-    // Fallback: backendSigner direct call (legacy path)
-    if (!txHash && backendSigner) {
-      const anchorTimeoutMs = 30000;
-      const contract = new ethers.Contract(registryAddress, trustPublicationAnchorAbi, backendSigner);
-      const tx = await runWithOnchainRetry(() =>
-        contract.publishTrustPublication(
-          publicationType, sourceId, agentId, agentIdNum,
-          referenceId, traceId, payloadHash, detailsURI
-        ),
-        { timeoutMs: anchorTimeoutMs }
-      );
-      receipt = await runWithOnchainRetry(() => tx.wait(), { timeoutMs: anchorTimeoutMs });
-      txHash = String(tx?.hash || '').trim();
-      publishedVia = 'backend-signer';
     }
 
     if (!txHash) {
