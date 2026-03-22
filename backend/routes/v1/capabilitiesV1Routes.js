@@ -159,6 +159,29 @@ export function seedRealAgentCapabilities({
 } = {}) {
   const rows = ensureServiceCatalog().map((item) => ({ ...item }));
   const now = new Date().toISOString();
+
+  // Resolve agent-specific recipient wallets from env or network_agents
+  const agentWalletOverrides = new Map();
+  const envWalletMap = {
+    'fundamental-agent-real': process.env.KITE_FUNDAMENTAL_AGENT_WALLET || '',
+    'technical-agent-real': process.env.KITE_TECHNICAL_AGENT_WALLET || '',
+    'data-node-real': process.env.KITE_DATA_NODE_WALLET || ''
+  };
+  for (const [providerId, wallet] of Object.entries(envWalletMap)) {
+    const normalized = normalizeText(wallet).toLowerCase();
+    if (normalized && normalized !== '0x') agentWalletOverrides.set(providerId, normalized);
+  }
+  if (agentWalletOverrides.size < 3) {
+    const agents = ensureNetworkAgents();
+    for (const agent of agents) {
+      const id = normalizeLower(agent?.id);
+      if (id && !agentWalletOverrides.has(id)) {
+        const wallet = normalizeText(agent?.wallet || agent?.aaWallet || agent?.aaAddress || '').toLowerCase();
+        if (wallet && wallet !== '0x') agentWalletOverrides.set(id, wallet);
+      }
+    }
+  }
+
   const providerDefaults = new Map();
   const seededCapabilityIds = new Set(REAL_AGENT_CAPABILITY_SEEDS.map((seed) => normalizeLower(seed.capabilityId)));
   const seededProviderIds = new Set(
@@ -213,7 +236,11 @@ export function seedRealAgentCapabilities({
       maxChars: null,
       providerAgentId: seed.providerAgentId,
       providerKey: seed.providerKey,
-      recipient: normalizeText(defaults.recipient || ''),
+      recipient: normalizeText(
+        agentWalletOverrides.get(normalizeLower(seed.providerAgentId)) ||
+        agentWalletOverrides.get(normalizeLower(seed.providerKey)) ||
+        defaults.recipient || ''
+      ),
       tokenAddress: normalizeText(defaults.tokenAddress || ''),
       price: normalizeText(seed.pricing?.amount),
       pricing: seed.pricing,
