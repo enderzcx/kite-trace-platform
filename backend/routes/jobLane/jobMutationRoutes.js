@@ -1045,6 +1045,48 @@ export function registerJobMutationContinuation(ctx = {}) {
     };
   }
 
+  app.post('/api/jobs/:jobId/claim', requireRole('agent'), async (req, res) => {
+    const job = materializeJob(findJob(req.params.jobId));
+    if (!job) {
+      return sendJobRouteError(req, res, 404, 'job_not_found', 'Job was not found.', {
+        jobId: normalizeText(req.params.jobId)
+      });
+    }
+    if (normalizeJobState(job.state) !== 'funded') {
+      return sendJobRouteError(req, res, 409, 'job_not_claimable', `job state ${normalizeJobState(job.state)} cannot be claimed`, {
+        jobId: normalizeText(job.jobId), state: normalizeJobState(job.state)
+      });
+    }
+    const currentExecutor = normalizeText(job.executor || '').toLowerCase();
+    if (currentExecutor && currentExecutor !== '0x0000000000000000000000000000000000000000') {
+      return sendJobRouteError(req, res, 409, 'executor_already_set', 'Job already has an assigned executor. Use accept instead.', {
+        jobId: normalizeText(job.jobId), executor: job.executor
+      });
+    }
+    const body = req.body || {};
+    const claimerAddress = firstExplicitAddress(body.executorAddress, body.executor);
+    if (!claimerAddress) {
+      return sendJobRouteError(req, res, 400, 'executor_required', 'executor address is required for claim');
+    }
+    const now = new Date().toISOString();
+    let next = { ...job, executor: claimerAddress, executorRuntimeAddress: claimerAddress, updatedAt: now };
+    try {
+      if (typeof deps.claimEscrowJob === 'function') {
+        const escrow = await deps.claimEscrowJob({ jobId: next.jobId, executor: claimerAddress });
+        if (escrow?.claimed) {
+          next.escrowState = 'claimed';
+        }
+      }
+    } catch (error) {
+      const mapped = mapJobLaneExecutionError(error, 'job_claim_failed', 'job claim failed');
+      return sendJobRouteError(req, res, mapped.status, mapped.code, mapped.message, {
+        jobId: normalizeText(job?.jobId), ...mapped.detail
+      });
+    }
+    upsertJobRecord(next);
+    return res.json({ ok: true, traceId: req.traceId || '', job: buildJobView(next) });
+  });
+
   app.post('/api/jobs/:jobId/accept', requireRole('agent'), async (req, res) => {
     const job = materializeJob(findJob(req.params.jobId));
     if (!job) {

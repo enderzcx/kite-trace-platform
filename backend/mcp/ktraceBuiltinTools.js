@@ -644,6 +644,7 @@ async function invokeJobMutation(fetchLoopbackJson, tool = {}, args = {}, traceI
   const pathnameByAction = {
     job_prepare_funding: `/api/jobs/${encodeURIComponent(jobId)}/prepare-funding`,
     job_fund: `/api/jobs/${encodeURIComponent(jobId)}/fund`,
+    job_claim: `/api/jobs/${encodeURIComponent(jobId)}/claim`,
     job_accept: `/api/jobs/${encodeURIComponent(jobId)}/accept`,
     job_submit: `/api/jobs/${encodeURIComponent(jobId)}/submit`,
     job_validate: `/api/jobs/${encodeURIComponent(jobId)}/validate`,
@@ -876,9 +877,18 @@ export const KTRACE_BUILTIN_TOOLS = [
     builtinId: 'job_fund'
   },
   {
+    name: 'ktrace__job_claim',
+    title: 'KTrace Job Claim',
+    description: 'Claim an open KTrace job (executor not yet assigned). First come first served.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    inputSchema: z.object({ jobId: z.string(), executor: z.string().optional().describe('Executor AA wallet address. If omitted uses default executor runtime.') }).passthrough(),
+    kind: 'builtin',
+    builtinId: 'job_claim'
+  },
+  {
     name: 'ktrace__job_accept',
     title: 'KTrace Job Accept',
-    description: 'Accept a funded KTrace job.',
+    description: 'Accept a funded KTrace job (executor must be assigned first, use job_claim for open jobs).',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: z.object({ jobId: z.string() }).passthrough(),
     kind: 'builtin',

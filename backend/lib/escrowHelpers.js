@@ -11,9 +11,17 @@ let cachedJobEscrowAbi = null;
 
 function loadJobEscrowAbi() {
   if (cachedJobEscrowAbi) return cachedJobEscrowAbi;
-  const raw = fs.readFileSync(new URL('./abi/JobEscrowV2.json', import.meta.url), 'utf8');
-  const parsed = JSON.parse(raw);
-  cachedJobEscrowAbi = Array.isArray(parsed) ? parsed : [];
+  for (const abiFile of ['./abi/JobEscrowV4.json', './abi/JobEscrowV2.json']) {
+    try {
+      const raw = fs.readFileSync(new URL(abiFile, import.meta.url), 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        cachedJobEscrowAbi = parsed;
+        return cachedJobEscrowAbi;
+      }
+    } catch {}
+  }
+  cachedJobEscrowAbi = [];
   return cachedJobEscrowAbi;
 }
 
@@ -943,10 +951,9 @@ export function createEscrowHelpers({
     }
 
     const requesterAddress = normalizeAddress(requester);
-    const executorAddress = normalizeAddress(executor);
+    const executorAddress = normalizeAddress(executor) || ethers.ZeroAddress;
     const validatorAddress = normalizeAddress(validator);
     if (!requesterAddress) throw new Error(`Invalid requester address: ${requester}`);
-    if (!executorAddress) throw new Error(`Invalid executor address: ${executor}`);
     if (!validatorAddress) throw new Error(`Invalid validator address: ${validator}`);
 
     const normalizedAmount = await normalizeUnits(amount);
@@ -981,6 +988,52 @@ export function createEscrowHelpers({
       locked: true,
       contractAddress,
       tokenAddress: settlementTokenAddress,
+      txHash: execution.txHash,
+      userOpHash: execution.userOpHash,
+      runtimeAddress: execution.runtimeAddress,
+      runtimeOwner: execution.runtimeOwner,
+      accountVersionTag: execution.accountVersionTag,
+      accountCapabilities: execution.accountCapabilities,
+      aaMethod: execution.aaMethod,
+      executionMode: execution.executionMode,
+      escrowState: 'funded'
+    };
+  }
+
+  async function claimEscrowJob({ jobId = '', executor = '' } = {}) {
+    if (!contractAddress) {
+      return {
+        configured: false,
+        claimed: false,
+        contractAddress: '',
+        txHash: ''
+      };
+    }
+    const executorAddress = normalizeAddress(executor);
+    if (!executorAddress) {
+      throw buildEscrowError('runtime_not_found', 'executor AA address is required for claim.', {
+        executor
+      });
+    }
+    const context = await buildAaExecutionContext({ role: 'executor', roleAddress: executorAddress });
+    const callData = jobEscrowInterface.encodeFunctionData('claimJob', [normalizeText(jobId)]);
+    const execution = await executeEscrowCall({
+      context,
+      target: contractAddress,
+      callData,
+      gasOverrides: {
+        callGasLimit: 200000n,
+        verificationGasLimit: 520000n,
+        preVerificationGas: 110000n
+      },
+      actionCode: 'job_claim_failed',
+      submitTimeoutMs: Math.max(120_000, Number(escrowUserOpSubmitTimeoutMs || 0)),
+      waitTimeoutMs: Math.max(300_000, Number(escrowUserOpWaitTimeoutMs || 0))
+    });
+    return {
+      configured: true,
+      claimed: true,
+      contractAddress,
       txHash: execution.txHash,
       userOpHash: execution.userOpHash,
       runtimeAddress: execution.runtimeAddress,
@@ -1297,6 +1350,7 @@ export function createEscrowHelpers({
     preflightJobLaneCapability,
     prepareEscrowFunding,
     lockEscrowFunds,
+    claimEscrowJob,
     acceptEscrowJob,
     submitEscrowResult,
     validateEscrowJob,

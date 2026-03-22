@@ -139,6 +139,7 @@ export function createSynthesisRequestLoop({
       input: buildJobInput(),
       traceId,
       expiresAt,
+      executor: '0x0000000000000000000000000000000000000000',
       escrowAmount: budget,
       executorStakeAmount: '0',
       evaluator: 'auto',
