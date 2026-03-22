@@ -90,6 +90,8 @@ import { registerTemplateRoutes } from './routes/templateRoutes.js';
 import { registerTrustSignalRoutes } from './routes/trustSignalRoutes.js';
 import { registerPlatformV1Routes } from './routes/platformV1Routes.js';
 import { registerAgentCardRoutes } from './routes/agentCardRoutes.js';
+import { registerSynthesisRoutes } from './routes/synthesisRoutes.js';
+import { createSynthesisRequestLoop } from './lib/loops/synthesisRequestLoop.js';
 import { createIdentityVerificationHelpers } from './routes/identityVerificationHelpers.js';
 import { createPaymentPolicyHelpers } from './routes/paymentPolicyHelpers.js';
 import { createRuntimeSupportHelpers } from './routes/runtimeSupportHelpers.js';
@@ -1704,6 +1706,16 @@ const {
   expireJob: executeJobExpiry
 });
 
+const synthesisLoop = createSynthesisRequestLoop({
+  state: null,
+  intervalMs: Math.max(60_000, Number(process.env.SYNTHESIS_LOOP_INTERVAL_MS || 3600_000)),
+  requestJson: null,
+  readJobs,
+  publishTrustSignal: null,
+  broadcastEvent,
+  PORT
+});
+
 registerHealthRoutes(app, {
   getAutoJobExpiryStatus,
   kiteNetworkName: KITE_NETWORK_NAME,
@@ -2067,7 +2079,8 @@ const routeDeps = Object.freeze({
   buildClaudeConnectorGrantPublicRecord: claudeConnectorAuthHelpers.buildGrantPublicRecord,
   waitMs,
   withSessionUserOpLock,
-  ERC8183_TRACE_ANCHOR_GUARD
+  ERC8183_TRACE_ANCHOR_GUARD,
+  synthesisLoop
 });
 
 const routeRegistrations = [
@@ -2118,6 +2131,11 @@ const routeRegistrations = [
     name: 'agentCardRoutes',
     register: registerAgentCardRoutes,
     requiredKeys: ['PACKAGE_VERSION', 'authConfigured']
+  },
+  {
+    name: 'synthesisRoutes',
+    register: registerSynthesisRoutes,
+    requiredKeys: ['synthesisLoop', 'readJobs', 'PACKAGE_VERSION']
   },
   {
     name: 'platformV1Routes',
