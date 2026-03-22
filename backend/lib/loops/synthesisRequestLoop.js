@@ -130,7 +130,7 @@ export function createSynthesisRequestLoop({
   async function createTradeJob() {
     const traceId = createTraceId('synth_job');
     const budget = normalizeText(process.env.SYNTHESIS_JOB_BUDGET || '0.005');
-    const expiresAt = Date.now() + 2 * 60 * 60 * 1000; // 2 hours from now
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours from now
 
     const result = await postInternal('/api/jobs', {
       provider: 'any',
