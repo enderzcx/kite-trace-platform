@@ -4,8 +4,8 @@ import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 const _require = createRequire(import.meta.url);
 
-// Data-node feeds (CoinGecko, HackerNews, Open-Meteo, OpenNews) go direct —
-// no proxy needed and avoids stale ProxyAgent connection pool issues.
+// Data feeds (CoinGecko, HackerNews, Open-Meteo, OpenNews) go direct.
+// RPC and bundler use their own proxy via kiteRpc.js / gokite-aa-sdk.js.
 function getProxyDispatcher() {
   return null;
 }
