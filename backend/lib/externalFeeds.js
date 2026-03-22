@@ -4,19 +4,10 @@ import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 const _require = createRequire(import.meta.url);
 
-let _proxyDispatcher = undefined; // undefined = not yet resolved; null = no proxy available
+// Data-node feeds (CoinGecko, HackerNews, Open-Meteo, OpenNews) go direct —
+// no proxy needed and avoids stale ProxyAgent connection pool issues.
 function getProxyDispatcher() {
-  if (_proxyDispatcher !== undefined) return _proxyDispatcher;
-  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || '';
-  if (!proxyUrl) { _proxyDispatcher = null; return null; }
-  try {
-    const { ProxyAgent } = _require('undici');
-    _proxyDispatcher = new ProxyAgent(proxyUrl);
-    return _proxyDispatcher;
-  } catch (_) {
-    _proxyDispatcher = null;
-    return null;
-  }
+  return null;
 }
 
 const API_BASE = 'https://ai.6551.io';
