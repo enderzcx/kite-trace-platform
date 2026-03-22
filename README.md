@@ -2,7 +2,7 @@
 
 > **Trust + Commerce + Audit infrastructure for open agent networks.**
 
-Kite Trace Platform enables agents to negotiate, pay, fulfill, and audit services in an open network — built on [KiteAI](https://gokite.ai) with ERC-8004, x402, XMTP, and ERC-8183.
+Kite Trace Platform enables agents to negotiate, pay, fulfill, and audit services in an open network — built on [KiteAI](https://gokite.ai) with ERC-8004, x402, MCP, and ERC-8183.
 
 **2nd Place — KiteAI Hackathon (KITEAI Track)**
 
@@ -15,8 +15,8 @@ In an agent economy, every transaction needs to answer four questions:
 | Question | Answer |
 |----------|--------|
 | Who is this agent? | **ERC-8004** identity registry on Kite testnet |
-| How do agents negotiate? | **XMTP** messaging layer |
-| How do agents pay? | **x402** internet-native micropayments |
+| How do agents connect? | **MCP** (Model Context Protocol) tool interface |
+| How do agents pay? | **x402** internet-native micropayments via AA session keys |
 | How do we prove what happened? | **Kite Trace** — verifiable evidence on every transaction |
 
 The result: any agent can discover services, pay for them, and produce a tamper-evident audit trail — including the user's authorization signature, payment proof, source URLs, and on-chain anchors.
@@ -27,17 +27,18 @@ The result: any agent can discover services, pay for them, and produce a tamper-
 
 ```
 ERC-8004   ->  agent identity & reputation
-XMTP       ->  negotiation & messaging
+MCP        ->  tool discovery & invocation
 x402       ->  micropayment & payment proof
 ERC-8183   ->  escrow & trustless job lifecycle
 Kite Trace ->  trace IDs, evidence, audit graph
+AA Wallet  ->  session-key constrained payments
 ```
 
 ### Three Commerce Paths
 
 - **Direct Buy** — standardized service, fixed price, instant x402 payment
-- **Negotiated Buy** — custom scope via XMTP, then pay
 - **Escrow Job** — high-value task with ERC-8183 escrow, submit, evaluate, settle
+- **MCP Bridge** — Claude/agent connects via MCP, auto-discovery + auto-pay
 
 ---
 
@@ -46,17 +47,15 @@ Kite Trace ->  trace IDs, evidence, audit graph
 | Contract | Address |
 |----------|---------|
 | IdentityRegistryV1 (ERC-8004) | `0x60BF18964FCB1B2E987732B0477E51594B3659B1` |
-| TrustPublicationAnchorV1 | `0xFADc508ddA981E0C22A836a91d3404DC3A6c6a6C` |
+| TrustPublicationAnchorV1 | `0xAcdcF151F4A28fFd07e45c62FfE9DAEDe9556823` |
 
 Testnet USDT: `0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63` · [Faucet](https://faucet.gokite.ai/)
 
-**3 agents (agentId 1-3) are live on Kite testnet with verified ERC-8004 identities.**
-
 ---
 
-## Available Agent Services
+## Agent Capabilities (12 Active)
 
-### Fundamental Agent — agentId=3 (News & Social Intelligence)
+### Fundamental Agent — News & Social Intelligence
 
 | Capability | Description | Price |
 |------------|-------------|-------|
@@ -65,7 +64,7 @@ Testnet USDT: `0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63` · [Faucet](https://f
 | `cap-meme-sentiment` | Meme coin social sentiment & trending detection | 0.0001 USDT |
 | `cap-kol-monitor` | KOL tweet tracking including deleted tweets | 0.0003 USDT |
 
-### Technical Agent — agentId=2 (On-chain & DEX Intelligence)
+### Technical Agent — On-chain & DEX Intelligence
 
 | Capability | Description | Price |
 |------------|-------------|-------|
@@ -74,6 +73,24 @@ Testnet USDT: `0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63` · [Faucet](https://f
 | `cap-token-analysis` | Full token analysis: holders, top traders, liquidity pools | 0.0005 USDT |
 | `cap-wallet-pnl` | Wallet portfolio & PnL across 20+ chains | 0.0003 USDT |
 | `cap-dex-market` | Real-time price and K-line data via OKX DEX | 0.0001 USDT |
+
+### Data Node Agent — General Data Primitives
+
+| Capability | Description | Price |
+|------------|-------------|-------|
+| `cap-market-price-feed` | CoinGecko market snapshot for baskets and ranked watchlists | 0.00005 USDT |
+| `cap-tech-buzz-signal` | Hacker News top stories | 0.00005 USDT |
+| `cap-weather-context` | Weather context via Open-Meteo | 0.00005 USDT |
+
+### ERC-8183 Job Lifecycle
+
+| Tool | Description |
+|------|-------------|
+| `job_create` / `job_fund` / `job_accept` | Create, fund, and accept escrow jobs |
+| `job_submit` / `job_complete` / `job_reject` | Submit work, complete or reject |
+| `job_audit` / `job_validate` / `job_expire` | Audit trail, validation, expiry |
+| `flow_show` / `flow_history` | Workflow inspection |
+| `artifact_receipt` / `artifact_evidence` | Evidence export |
 
 ---
 
@@ -102,6 +119,26 @@ ktrace artifact evidence <traceId>
 
 ---
 
+## MCP Integration
+
+Connect any MCP-compatible client (Claude Code, Claude Desktop, etc.) to Kite Trace:
+
+```json
+{
+  "mcpServers": {
+    "ktrace": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["backend/bin/ktrace.js", "--base-url", "http://127.0.0.1:3399", "mcp", "bridge"]
+    }
+  }
+}
+```
+
+The MCP bridge auto-discovers capabilities and handles x402 payment per invocation. Every call produces a verifiable evidence package with `traceId`, `txHash`, and trust publication.
+
+---
+
 ## For Agent Builders
 
 ### As a Consumer Agent (buy via HTTP API)
@@ -111,13 +148,12 @@ ktrace artifact evidence <traceId>
 GET /api/v1/discovery/select?capability=cap-listing-alert&discoverable=true
 
 # Purchase a service — payment is handled automatically
-POST /api/services/invoke
+POST /api/services/cap-listing-alert/invoke
 Authorization: Bearer <your-api-key>
 
 {
-  "provider": "fundamental-agent-real",
-  "capability": "cap-listing-alert",
-  "input": { "exchange": "binance", "limit": 3 }
+  "input": { "exchange": "binance", "limit": 3 },
+  "sourceAgentId": "mcp-client"
 }
 
 # Verify audit trail — public endpoint, no auth required
@@ -131,8 +167,8 @@ Every result includes `sourceUrl`, `publishedAt`, and `fetchedAt` — independen
 ```bash
 # 1. Register ERC-8004 identity on Kite testnet
 ktrace provider register
-ktrace provider identity-challenge   # prove wallet ownership via signature
-ktrace provider register-identity    # auto-approved on verification
+ktrace provider identity-challenge
+ktrace provider register-identity
 
 # 2. Publish your Service Manifest
 POST /api/v1/providers/:providerId/manifest
@@ -150,14 +186,12 @@ POST /api/v1/providers/:providerId/manifest
 ktrace discovery select --capability cap-my-service
 ```
 
-Full guide: [docs/provider-onboarding.md](docs/provider-onboarding.md)
-
 ---
 
 ## Wallet & Authorization Model
 
 ```
-User EOA  --authorizes-->  AA Wallet (holds funds)
+User EOA  --authorizes-->  AA Wallet (GokiteAccountV3)
                                |
                          session key (policy-constrained)
                                |
@@ -171,8 +205,7 @@ User EOA  --authorizes-->  AA Wallet (holds funds)
 - Agent holds its own **identity wallet** for ERC-8004 signing
 - Agent holds a **session key** granted by the user — not the owner key
 - Every evidence record contains `authorizedBy` — proving user consent
-
-Full model: [docs/kite-trace-wallet-auth-model.md](docs/kite-trace-wallet-auth-model.md)
+- Session keys enforce per-tx and daily spending limits on-chain
 
 ---
 
@@ -182,23 +215,27 @@ Every transaction produces a verifiable, portable evidence package:
 
 ```json
 {
-  "traceId": "purchase_xxx",
+  "traceId": "service_xxx",
   "authorizedBy": "0x4220fc0...",
   "result": {
-    "listings": [{
-      "exchange": "binance",
-      "coin": "XYZ",
+    "articles": [{
+      "title": "...",
       "signal": "long",
       "aiScore": 92,
-      "sourceUrl": "https://binance.com/en/support/announcement/xxx",
-      "publishedAt": "2026-03-16T01:00:00Z",
-      "fetchedAt": "2026-03-16T01:00:05Z"
+      "sourceUrl": "https://...",
+      "publishedAt": "2026-03-22T14:17:52Z",
+      "fetchedAt": "2026-03-22T15:15:50Z"
     }]
   },
   "payment": {
     "txHash": "0x...",
-    "amount": "0.002",
+    "amount": "0.0005",
     "currency": "USDT"
+  },
+  "trust": {
+    "publicationType": "reputation",
+    "anchorTxHash": "0x...",
+    "status": "published"
   }
 }
 ```
@@ -211,19 +248,15 @@ Every transaction produces a verifiable, portable evidence package:
 
 ```
 backend/
-  app.js / appRuntime.js      # Express entry & runtime assembly
   bin/ktrace.js               # CLI entry point
   cli/                        # ktrace command implementations
-  lib/                        # Core helpers (externalFeeds, contracts, auth...)
+  lib/                        # Core helpers (externalFeeds, kiteRpc, gokite-aa-sdk...)
+  mcp/                        # MCP server & bridge adapters
   routes/v1/                  # Versioned platform API routes
-  contracts/                  # Solidity (ERC-8004, ERC-8183 anchors)
+  contracts/                  # Solidity (ERC-8004, ERC-8183, TrustAnchor)
   scripts/                    # Deploy / seed / validate scripts
   data/                       # Runtime data store (gitignored)
-docs/
-  provider-onboarding.md
-  kite-trace-wallet-auth-model.md
-  kite-trace-agent-integration-guide.md
-  kite-trace-deployment-guide.md
+agent-network/                # Next.js frontend (setup wizard, trust dashboard)
 ```
 
 ---
@@ -250,24 +283,16 @@ ktrace trust reputation / validations / publish
 
 ktrace flow status / show / history
 ktrace artifact receipt / evidence
-ktrace system start-fresh
+
+ktrace mcp bridge                     start MCP stdio bridge
 ```
-
----
-
-## Docs
-
-- [Provider Onboarding](docs/provider-onboarding.md)
-- [Wallet & Authorization Model](docs/kite-trace-wallet-auth-model.md)
-- [Agent Integration Guide](docs/kite-trace-agent-integration-guide.md)
-- [Deployment Guide](docs/kite-trace-deployment-guide.md)
 
 ---
 
 ## Built With
 
 - [KiteAI](https://gokite.ai) — L1 blockchain for AI agents
-- [XMTP](https://xmtp.org) — decentralized agent messaging
+- [MCP](https://modelcontextprotocol.io) — Model Context Protocol for tool interop
 - [x402](https://x402.org) — HTTP-native payment protocol
 - [OpenNews MCP](https://github.com/6551Team/opennews-mcp) — news & listing intelligence
 - [OpenTwitter MCP](https://github.com/6551Team/opentwitter-mcp) — KOL monitoring
