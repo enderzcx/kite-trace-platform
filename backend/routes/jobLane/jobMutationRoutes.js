@@ -1064,14 +1064,11 @@ export function registerJobMutationContinuation(ctx = {}) {
       });
     }
     const body = req.body || {};
-    const executorRuntimeByOwner = typeof resolveSessionRuntime === 'function'
-      ? resolveSessionRuntime({ owner: ERC8183_EXECUTOR_OWNER_ADDRESS, strictOwnerMatch: true })
-      : {};
+    const currentRuntime = typeof readSessionRuntime === 'function' ? readSessionRuntime() : {};
     const claimerAddress = firstExplicitAddress(
       body.executorAddress,
       body.executor,
-      executorRuntimeByOwner?.aaWallet,
-      ERC8183_EXECUTOR_AA_ADDRESS
+      currentRuntime?.aaWallet
     );
     if (!claimerAddress) {
       return sendJobRouteError(req, res, 400, 'executor_required', 'executor address is required for claim');

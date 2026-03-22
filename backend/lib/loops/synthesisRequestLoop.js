@@ -132,6 +132,10 @@ export function createSynthesisRequestLoop({
     const budget = normalizeText(process.env.SYNTHESIS_JOB_BUDGET || '0.005');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours from now
 
+    const requesterAa = normalizeText(
+      process.env.ERC8183_REQUESTER_AA_ADDRESS || ''
+    );
+
     const result = await postInternal('/api/jobs', {
       provider: 'any',
       capability: 'btc-trade-plan',
@@ -139,6 +143,7 @@ export function createSynthesisRequestLoop({
       input: buildJobInput(),
       traceId,
       expiresAt,
+      ...(requesterAa ? { payer: requesterAa, requester: requesterAa } : {}),
       executor: '0x0000000000000000000000000000000000000000',
       escrowAmount: budget,
       executorStakeAmount: '0',
