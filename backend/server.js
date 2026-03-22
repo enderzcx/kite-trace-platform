@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { createRequestLogger } from './lib/logger.js';
 
 import { applyNodeEnvProxyPreference } from './lib/envProxy.js';

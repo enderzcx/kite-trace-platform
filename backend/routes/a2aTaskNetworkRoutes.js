@@ -485,6 +485,12 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
           quote = null;
         }
       }
+      const trust = await appendA2ATrustArtifacts(reqItem, {
+        targetAgentId,
+        taskType: 'btc-price-feed',
+        traceId,
+        summary: reqItem?.result?.summary || 'ATAPI BTC price quote already unlocked'
+      });
       return {
         status: 200,
         body: {
@@ -505,7 +511,8 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
             phase: 'settled',
             state: 'success',
             summary: reqItem?.result?.summary || 'ATAPI BTC price quote already unlocked'
-          })
+          }),
+          trust
         }
       };
     }
@@ -743,6 +750,12 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
   
     if (reqItem.status === 'paid') {
       if (prebindOnly) {
+        const trust = await appendA2ATrustArtifacts(reqItem, {
+          targetAgentId,
+          taskType: taskAction,
+          traceId,
+          summary: reqItem?.result?.summary || `${serviceLabel} payment settled (prebind-only)`
+        });
         return {
           status: 200,
           body: {
@@ -764,7 +777,8 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
               phase: 'settled',
               state: 'success',
               summary: reqItem?.result?.summary || `${serviceLabel} payment settled (prebind-only)`
-            })
+            }),
+            trust
           }
         };
       }
@@ -786,6 +800,12 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
           riskResult = null;
         }
       }
+      const trust = await appendA2ATrustArtifacts(reqItem, {
+        targetAgentId,
+        taskType: taskAction,
+        traceId,
+        summary: reqItem?.result?.summary || `${serviceLabel} already unlocked`
+      });
       return {
         status: 200,
         body: {
@@ -803,7 +823,8 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
             phase: 'settled',
             state: 'success',
             summary: reqItem?.result?.summary || `${serviceLabel} already unlocked`
-          })
+          }),
+          trust
         }
       };
     }
@@ -1052,6 +1073,12 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
   
     if (reqItem.status === 'paid') {
       if (prebindOnly) {
+        const trust = await appendA2ATrustArtifacts(reqItem, {
+          targetAgentId,
+          taskType: taskAction,
+          traceId,
+          summary: reqItem?.result?.summary || `${serviceLabel} payment settled (prebind-only)`
+        });
         return {
           status: 200,
           body: {
@@ -1073,7 +1100,8 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
               phase: 'settled',
               state: 'success',
               summary: reqItem?.result?.summary || `${serviceLabel} payment settled (prebind-only)`
-            })
+            }),
+            trust
           }
         };
       }
@@ -1094,6 +1122,12 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
           reader = null;
         }
       }
+      const trust = await appendA2ATrustArtifacts(reqItem, {
+        targetAgentId,
+        taskType: taskAction,
+        traceId,
+        summary: reqItem?.result?.summary || `${serviceLabel} already unlocked`
+      });
       return {
         status: 200,
         body: {
@@ -1114,7 +1148,8 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
             phase: 'settled',
             state: 'success',
             summary: reqItem?.result?.summary || `${serviceLabel} already unlocked`
-          })
+          }),
+          trust
         }
       };
     }
@@ -1353,6 +1388,12 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
     }
   
     if (reqItem.status === 'paid') {
+      const trust = await appendA2ATrustArtifacts(reqItem, {
+        targetAgentId,
+        taskType: 'reactive-stop-orders',
+        traceId,
+        summary: 'A2A reactive stop-order task already unlocked'
+      });
       return {
         status: 200,
         body: {
@@ -1379,7 +1420,8 @@ export function registerA2aTaskNetworkRoutes(app, deps) {
             phase: 'settled',
             state: 'success',
             summary: 'A2A reactive stop-order task already unlocked'
-          })
+          }),
+          trust
         }
       };
     }

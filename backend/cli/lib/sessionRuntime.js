@@ -6,8 +6,33 @@ import {
   resolveAaRequiredVersion
 } from '../../lib/aaConfig.js';
 import { getServiceProviderBytes32 } from '../../lib/addressPolicyHelpers.js';
+import { applyNodeEnvProxyPreference } from '../../lib/envProxy.js';
 import { createCliError } from './errors.js';
 import { requestJson, resolveAdminTransportApiKey, resolveAgentTransportApiKey } from './httpRuntime.js';
+
+const KITE_TESTNET_CHAIN_ID = 2368;
+
+function resolveRpcTimeoutMs() {
+  const configured = Number(
+    process.env.KITE_RPC_TIMEOUT_MS ||
+      process.env.KITE_PROVIDER_RPC_TIMEOUT_MS ||
+      process.env.KITE_SESSION_RPC_TIMEOUT_MS ||
+      60_000
+  );
+  if (!Number.isFinite(configured)) return 60_000;
+  return Math.max(5_000, Math.min(Math.round(configured), 300_000));
+}
+
+function createKiteRpcProvider(rpcUrl = '') {
+  applyNodeEnvProxyPreference();
+  const request = new ethers.FetchRequest(String(rpcUrl || '').trim());
+  request.timeout = resolveRpcTimeoutMs();
+  const staticNetwork = ethers.Network.from({
+    chainId: KITE_TESTNET_CHAIN_ID,
+    name: 'kite_testnet'
+  });
+  return new ethers.JsonRpcProvider(request, staticNetwork, { staticNetwork });
+}
 
 export function normalizeWalletAddress(value = '') {
   const raw = String(value || '').trim();
@@ -396,7 +421,7 @@ export async function createSelfCustodialSession(
     });
   }
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = createKiteRpcProvider(rpcUrl);
   const ownerWallet = new ethers.Wallet(normalizedOwnerKey, provider);
   const owner = normalizeSessionGrantAddress(ownerWallet.address || '');
   const sdk = new GokiteAASDK({
@@ -595,7 +620,7 @@ export async function sendLocalSessionPayment(
   const accountFactoryAddress = resolveAaFactoryAddress();
   const accountImplementationAddress = resolveAaAccountImplementation();
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = createKiteRpcProvider(rpcUrl);
   const sessionWallet = new ethers.Wallet(localRuntime.sessionPrivateKey, provider);
   const sessionSignerAddress = normalizeSessionGrantAddress(await sessionWallet.getAddress());
   const accountCode = await provider.getCode(localRuntime.aaWallet);

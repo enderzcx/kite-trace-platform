@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { GokiteAASDK } from './gokite-aa-sdk.js';
+import { createKiteRpcProvider } from './kiteRpc.js';
 
 export function createEnsureAAAccountDeployment({
   backendSigner,
@@ -43,7 +44,7 @@ export function createEnsureAAAccountDeployment({
       bundlerReceiptPollIntervalMs: KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS
     });
     const accountAddress = await sdk.resolveAccountAddress(normalizedOwner, salt);
-    const provider = backendSigner.provider || new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+    const provider = backendSigner.provider || createKiteRpcProvider(ethers, BACKEND_RPC_URL);
     const beforeCode = await provider.getCode(accountAddress);
     const alreadyDeployed = Boolean(beforeCode && beforeCode !== '0x');
 

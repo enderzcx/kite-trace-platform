@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+interface IIdentityRegistry {
+    function getAgentWallet(uint256 agentId) external view returns (address);
+}
+
 contract TrustPublicationAnchorV1 {
     address public owner;
+    address public identityRegistry;
     uint256 private _nextAnchorId = 1;
 
     struct Publication {
@@ -36,11 +41,13 @@ contract TrustPublicationAnchorV1 {
     );
 
     error NotOwner();
+    error NotAgentWallet();
     error InvalidOwner();
 
-    constructor(address initialOwner) {
+    constructor(address initialOwner, address _identityRegistry) {
         if (initialOwner == address(0)) revert InvalidOwner();
         owner = initialOwner;
+        identityRegistry = _identityRegistry;
         emit OwnershipTransferred(address(0), initialOwner);
     }
 
@@ -56,15 +63,26 @@ contract TrustPublicationAnchorV1 {
         emit OwnershipTransferred(previousOwner, newOwner);
     }
 
+    function setIdentityRegistry(address _identityRegistry) external onlyOwner {
+        identityRegistry = _identityRegistry;
+    }
+
     function publishTrustPublication(
         string calldata publicationType,
         string calldata sourceId,
         string calldata agentId,
+        uint256 agentIdNum,
         string calldata referenceId,
         string calldata traceId,
         bytes32 payloadHash,
         string calldata detailsURI
-    ) external onlyOwner returns (uint256 anchorId) {
+    ) external returns (uint256 anchorId) {
+        if (identityRegistry != address(0)) {
+            address expectedWallet = IIdentityRegistry(identityRegistry).getAgentWallet(agentIdNum);
+            if (msg.sender != expectedWallet) revert NotAgentWallet();
+        } else {
+            if (msg.sender != owner) revert NotOwner();
+        }
         anchorId = _nextAnchorId;
         _nextAnchorId += 1;
 

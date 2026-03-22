@@ -19,6 +19,7 @@ export function createCommandExecutor({ createConfigEnvelope, createNotImplement
     ['buy:request', handlers.handleBuyRequest],
     ['buy:direct', handlers.handleBuyDirect],
     ['agent:invoke', handlers.handleAgentInvoke],
+    ['mcp:bridge', handlers.handleMcpBridge],
     ['template:list', handlers.handleTemplateList],
     ['template:resolve', handlers.handleTemplateResolve],
     ['template:show', handlers.handleTemplateShow],

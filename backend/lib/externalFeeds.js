@@ -352,9 +352,36 @@ function extractCoinSymbols(item = {}) {
   return [...new Set([...directSymbols, ...nestedSymbols])];
 }
 
+const COIN_ALIASES = {
+  bitcoin: ['btc', 'bitcoin', 'xbt'],
+  btc: ['btc', 'bitcoin', 'xbt'],
+  xbt: ['btc', 'bitcoin', 'xbt'],
+  ethereum: ['eth', 'ethereum', 'ether'],
+  eth: ['eth', 'ethereum', 'ether'],
+  solana: ['sol', 'solana'],
+  sol: ['sol', 'solana'],
+  dogecoin: ['doge', 'dogecoin'],
+  doge: ['doge', 'dogecoin'],
+  ripple: ['xrp', 'ripple'],
+  xrp: ['xrp', 'ripple'],
+  cardano: ['ada', 'cardano'],
+  ada: ['ada', 'cardano'],
+  polkadot: ['dot', 'polkadot'],
+  dot: ['dot', 'polkadot'],
+  avalanche: ['avax', 'avalanche'],
+  avax: ['avax', 'avalanche'],
+  chainlink: ['link', 'chainlink'],
+  link: ['link', 'chainlink'],
+  litecoin: ['ltc', 'litecoin'],
+  ltc: ['ltc', 'litecoin'],
+  bnb: ['bnb', 'binancecoin'],
+  binancecoin: ['bnb', 'binancecoin']
+};
+
 function filterByCoin(item, coin) {
   const normalizedCoin = normalizeLower(coin);
   if (!normalizedCoin) return true;
+  const aliases = COIN_ALIASES[normalizedCoin] || [normalizedCoin];
   const haystack = [
     ...extractCoinSymbols(item),
     normalizeText(item?.title),
@@ -366,7 +393,7 @@ function filterByCoin(item, coin) {
     .map((value) => normalizeLower(value))
     .filter(Boolean)
     .join(' ');
-  return haystack.includes(normalizedCoin);
+  return aliases.some((alias) => haystack.includes(alias));
 }
 
 async function fetchJsonWithTimeout(url, timeoutMs = DEFAULT_TIMEOUT_MS, options = {}) {

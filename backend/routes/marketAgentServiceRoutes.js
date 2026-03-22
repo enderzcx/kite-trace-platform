@@ -382,6 +382,50 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     };
   }
 
+  function resolveAgentManagedTaskPath(action = '') {
+    const normalizedAction = normalizeText(action).toLowerCase();
+    if (normalizedAction === 'btc-price-feed') return '/api/a2a/tasks/btc-price';
+    if (normalizedAction === 'risk-score-feed' || normalizedAction === 'technical-analysis-feed') {
+      return '/api/a2a/tasks/risk-score';
+    }
+    if (normalizedAction === 'info-analysis-feed') return '/api/a2a/tasks/info';
+    return '';
+  }
+
+  function buildAgentManagedTaskPayload({
+    action = '',
+    traceId = '',
+    payer = '',
+    sourceAgentId = '',
+    targetAgentId = '',
+    input = {},
+    requestId = '',
+    paymentProof = null
+  } = {}) {
+    const payload = {
+      traceId,
+      payer,
+      sourceAgentId,
+      targetAgentId,
+      task: input && typeof input === 'object' && !Array.isArray(input) ? input : {}
+    };
+    if (requestId) payload.requestId = requestId;
+    if (paymentProof && typeof paymentProof === 'object' && !Array.isArray(paymentProof)) {
+      payload.paymentProof = paymentProof;
+    }
+    if (normalizeText(action).toLowerCase() === 'technical-analysis-feed') {
+      payload.action = 'technical-analysis-feed';
+    }
+    return payload;
+  }
+
+  function workflowHasStep(workflow = {}, stepName = '') {
+    const normalizedStepName = normalizeText(stepName).toLowerCase();
+    return Array.isArray(workflow?.steps)
+      ? workflow.steps.some((step) => normalizeText(step?.name || '').toLowerCase() === normalizedStepName)
+      : false;
+  }
+
   function buildAuthorityErrorResponse(result = {}) {
     return {
       ok: false,
@@ -1348,25 +1392,27 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     let evidenceWorkflow = null;
     let evidenceRequest = null;
     let externalResult = null;
-    let clientAborted = false;
+    const markClientDisconnected = () => {
+      if (invocationPersisted) {
+        const aborted = {
+          ...invocation,
+          state: 'failed',
+          error: 'client_disconnected',
+          updatedAt: new Date().toISOString()
+        };
+        upsertServiceInvocation(aborted);
+      }
+      if (evidenceWorkflow && evidenceWorkflow.state === 'running') {
+        evidenceWorkflow.state = 'failed';
+        evidenceWorkflow.error = 'client_disconnected';
+        evidenceWorkflow.updatedAt = new Date().toISOString();
+        upsertWorkflow(evidenceWorkflow);
+      }
+    };
+    req.on('aborted', markClientDisconnected);
     req.on('close', () => {
-      if (!res.headersSent) {
-        clientAborted = true;
-        if (invocationPersisted) {
-          const aborted = {
-            ...invocation,
-            state: 'failed',
-            error: 'client_disconnected',
-            updatedAt: new Date().toISOString()
-          };
-          upsertServiceInvocation(aborted);
-        }
-        if (evidenceWorkflow && evidenceWorkflow.state === 'running') {
-          evidenceWorkflow.state = 'failed';
-          evidenceWorkflow.error = 'client_disconnected';
-          evidenceWorkflow.updatedAt = new Date().toISOString();
-          upsertWorkflow(evidenceWorkflow);
-        }
+      if (req.aborted && !res.writableEnded) {
+        markClientDisconnected();
       }
     });
 
@@ -1376,6 +1422,14 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       if (internalApiKey) headers['x-api-key'] = internalApiKey;
       const isTechnicalServiceAction = effectiveAction === 'risk-score-feed' || effectiveAction === 'technical-analysis-feed';
       const isInfoServiceAction = effectiveAction === 'info-analysis-feed';
+      const agentManagedPayment =
+        normalizeText(body.x402Mode || body.paymentMode || '').toLowerCase() === 'agent' ||
+        Boolean(body?.paymentProof && body?.requestId);
+      const suppliedRequestId = normalizeText(body.requestId || '');
+      const suppliedPaymentProof =
+        body?.paymentProof && typeof body.paymentProof === 'object' && !Array.isArray(body.paymentProof)
+          ? body.paymentProof
+          : null;
       if (isExternalFeedCapability) {
         const INVOKE_TOTAL_TIMEOUT_MS = Math.max(30_000, Number(process.env.INVOKE_TOTAL_TIMEOUT_MS || 90_000));
         const invokeAbortController = new AbortController();
@@ -1383,14 +1437,6 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         const invokeSignal = invokeAbortController.signal;
         try {
         persistInvocation(invocation);
-        const agentManagedPayment =
-          normalizeText(body.x402Mode || body.paymentMode || '').toLowerCase() === 'agent' ||
-          Boolean(body?.paymentProof && body?.requestId);
-        const suppliedRequestId = normalizeText(body.requestId || '');
-        const suppliedPaymentProof =
-          body?.paymentProof && typeof body.paymentProof === 'object' && !Array.isArray(body.paymentProof)
-            ? body.paymentProof
-            : null;
         evidenceRequest =
           (suppliedRequestId
             ? readX402Requests().find((item) => normalizeText(item?.requestId || '') === suppliedRequestId) || null
@@ -1827,6 +1873,24 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             updatedAt: new Date().toISOString()
           };
           upsertServiceInvocation(next);
+          const trustResultPayload =
+            externalResult && typeof externalResult === 'object' ? externalResult : {};
+          const responseHash =
+            typeof buildResponseHash === 'function'
+              ? normalizeText(buildResponseHash(next.requestId, capabilityId || effectiveAction, trustResultPayload)?.responseHash || '')
+              : '';
+          const trust = await appendInvokeTrustArtifacts({
+            consumerSubject: resolveConsumerTrustSubject(body, next, evidenceRequest),
+            service,
+            sourceLane: 'buy',
+            sourceKind: normalizeText(body.authSource || '') === 'connector-grant' ? 'x402-mcp' : 'x402-invoke',
+            referenceId: next.requestId || next.invocationId,
+            traceId: next.traceId,
+            paymentRequestId: next.requestId,
+            summary: normalizeText(next.summary || `${capabilityId || effectiveAction} settled by x402 payment.`),
+            evaluator: normalizeText(sourceAgentId || payer || ''),
+            responseHash
+          });
           finalizeConsumerIntent?.(intentId, {
             status: 'completed',
             resultRef: normalizeText(next.invocationId),
@@ -1849,10 +1913,186 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             },
             result: externalResult,
             serviceId,
-            invocationId
+            invocationId,
+            trust
           });
         }
       } finally { clearTimeout(invokeTimer); }
+      }
+      const agentManagedTaskPath = agentManagedPayment ? resolveAgentManagedTaskPath(effectiveAction) : '';
+      if (agentManagedTaskPath) {
+        persistInvocation(invocation);
+        evidenceRequest =
+          (suppliedRequestId
+            ? readX402Requests().find((item) => normalizeText(item?.requestId || '') === suppliedRequestId) || null
+            : null) || null;
+        evidenceWorkflow =
+          readWorkflows().find((item) => normalizeText(item?.traceId || '') === traceId) ||
+          buildExternalFeedWorkflow({
+            service,
+            invocation,
+            traceId,
+            input,
+            request: evidenceRequest || {}
+          });
+        evidenceWorkflow.authority = authoritySnapshot;
+        evidenceWorkflow.authorityPublic = authorityPublic;
+        evidenceWorkflow.policySnapshotHash = policySnapshotHash;
+        evidenceWorkflow.intentId = intentId;
+
+        const taskPayload = buildAgentManagedTaskPayload({
+          action: effectiveAction,
+          traceId,
+          payer,
+          sourceAgentId,
+          targetAgentId,
+          input,
+          requestId: suppliedRequestId,
+          paymentProof: suppliedPaymentProof
+        });
+        const { resp, payload } = await postInternalWorkflowWithRetry(agentManagedTaskPath, headers, taskPayload);
+        const payloadRequestId = normalizeText(payload?.requestId || payload?.x402?.requestId || '');
+        const storedRequest =
+          (payloadRequestId
+            ? readX402Requests().find((item) => normalizeText(item?.requestId || '') === payloadRequestId) || null
+            : null) ||
+          evidenceRequest;
+        if (storedRequest) {
+          evidenceRequest = upsertX402RequestRecord({
+            ...storedRequest,
+            intentId,
+            identity:
+              invocation.consumerAgentId && invocation.consumerIdentityRegistry
+                ? {
+                    agentId: normalizeText(invocation.consumerAgentId),
+                    registry: normalizeText(invocation.consumerIdentityRegistry)
+                  }
+                : storedRequest?.identity || null,
+            authority: authoritySnapshot,
+            authorityPublic,
+            policySnapshotHash,
+            actionParams: input && typeof input === 'object' && !Array.isArray(input) ? input : {},
+            a2a: {
+              sourceAgentId,
+              targetAgentId,
+              capability: capabilityId,
+              taskType: effectiveAction,
+              traceId
+            }
+          });
+          evidenceWorkflow.requestId = normalizeText(evidenceRequest?.requestId || evidenceWorkflow.requestId || '');
+        }
+
+        if (resp.status === 402) {
+          if (!workflowHasStep(evidenceWorkflow, 'challenge_issued')) {
+            appendServiceWorkflowStep(evidenceWorkflow, 'challenge_issued', 'ok', {
+              requestId: evidenceRequest?.requestId || payloadRequestId || '',
+              amount: evidenceRequest?.amount || payload?.x402?.accepts?.[0]?.amount || '',
+              recipient: evidenceRequest?.recipient || payload?.x402?.accepts?.[0]?.recipient || ''
+            });
+          }
+          evidenceWorkflow.state = 'running';
+          evidenceWorkflow.updatedAt = new Date().toISOString();
+          upsertWorkflow(evidenceWorkflow);
+          upsertServiceInvocation({
+            ...invocation,
+            requestId: normalizeText(evidenceRequest?.requestId || payloadRequestId || ''),
+            state: 'payment_pending',
+            summary: 'Waiting for agent-first x402 payment.',
+            updatedAt: new Date().toISOString()
+          });
+          return res.status(402).json({
+            ...payload,
+            traceId,
+            serviceId,
+            invocationId,
+            workflow: evidenceWorkflow
+          });
+        }
+
+        if (resp.ok && payload?.ok !== false) {
+          const txHash = normalizeText(
+            payload?.payment?.txHash ||
+            suppliedPaymentProof?.txHash ||
+            evidenceRequest?.paymentTxHash ||
+            evidenceRequest?.paymentProof?.txHash ||
+            ''
+          );
+          const userOpHash = normalizeText(payload?.payment?.userOpHash || body?.paymentUserOpHash || '');
+          if (txHash && !workflowHasStep(evidenceWorkflow, 'payment_sent')) {
+            appendServiceWorkflowStep(evidenceWorkflow, 'payment_sent', 'ok', { txHash, userOpHash });
+          }
+          if (!workflowHasStep(evidenceWorkflow, 'proof_submitted')) {
+            appendServiceWorkflowStep(evidenceWorkflow, 'proof_submitted', 'ok', { verified: true });
+          }
+          if (!workflowHasStep(evidenceWorkflow, 'unlocked')) {
+            appendServiceWorkflowStep(evidenceWorkflow, 'unlocked', 'ok', {
+              result: normalizeText(payload?.receipt?.result?.summary || payload?.result?.summary || '')
+            });
+          }
+          evidenceWorkflow.state = 'unlocked';
+          evidenceWorkflow.txHash = txHash;
+          evidenceWorkflow.userOpHash = userOpHash;
+          evidenceWorkflow.result =
+            payload?.receipt?.result && typeof payload.receipt.result === 'object'
+              ? payload.receipt.result
+              : payload?.result && typeof payload.result === 'object'
+                ? payload.result
+                : null;
+          evidenceWorkflow.updatedAt = new Date().toISOString();
+          upsertWorkflow(evidenceWorkflow);
+
+          const next = {
+            ...invocation,
+            traceId: normalizeText(payload?.traceId || traceId),
+            requestId: normalizeText(payloadRequestId || evidenceRequest?.requestId || ''),
+            state: 'success',
+            summary: normalizeText(payload?.receipt?.result?.summary || payload?.result?.summary || ''),
+            error: '',
+            txHash,
+            userOpHash,
+            updatedAt: new Date().toISOString()
+          };
+          upsertServiceInvocation(next);
+
+          const trustResultPayload =
+            payload?.receipt?.result && typeof payload.receipt.result === 'object'
+              ? payload.receipt.result
+              : payload?.result && typeof payload.result === 'object'
+                ? payload.result
+                : {};
+          const responseHash =
+            typeof buildResponseHash === 'function'
+              ? normalizeText(buildResponseHash(next.requestId, effectiveAction, trustResultPayload)?.responseHash || '')
+              : '';
+          const trust = await appendInvokeTrustArtifacts({
+            consumerSubject: resolveConsumerTrustSubject(body, next, evidenceRequest),
+            service,
+            sourceLane: 'buy',
+            sourceKind: normalizeText(body.authSource || '') === 'connector-grant' ? 'x402-mcp' : 'x402-invoke',
+            referenceId: next.requestId || next.invocationId,
+            traceId: next.traceId,
+            paymentRequestId: next.requestId,
+            summary: normalizeText(next.summary || `${effectiveAction} settled by x402 payment.`),
+            evaluator: normalizeText(sourceAgentId || payer || ''),
+            responseHash
+          });
+          finalizeConsumerIntent?.(intentId, {
+            status: 'completed',
+            resultRef: normalizeText(next.invocationId),
+            requestId: normalizeText(next.requestId),
+            traceId: normalizeText(next.traceId),
+            failureReason: ''
+          });
+          return res.status(resp.status).json({
+            ...payload,
+            traceId: next.traceId,
+            serviceId,
+            invocationId,
+            workflow: evidenceWorkflow,
+            trust
+          });
+        }
       }
       const invokePayload =
         isTechnicalServiceAction

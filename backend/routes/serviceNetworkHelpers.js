@@ -326,7 +326,7 @@
         allowlistPayers: [],
         exampleInput: { pair: 'BTCUSDT', source: 'hyperliquid' },
         paymentMode: 'agent',
-        active: true,
+        active: false,
         createdAt: now,
         updatedAt: now,
         publishedBy: 'system'
@@ -351,7 +351,7 @@
         allowlistPayers: [],
         exampleInput: { symbol: 'BTCUSDT', horizonMin: 60, source: 'hyperliquid' },
         paymentMode: 'agent',
-        active: true,
+        active: false,
         createdAt: now,
         updatedAt: now,
         publishedBy: 'system'
@@ -376,7 +376,7 @@
         allowlistPayers: [],
         exampleInput: { symbol: 'BTCUSDT', horizonMin: 60, source: 'hyperliquid' },
         paymentMode: 'agent',
-        active: true,
+        active: false,
         createdAt: now,
         updatedAt: now,
         publishedBy: 'system'
@@ -402,7 +402,7 @@
         allowlistPayers: [],
         exampleInput: { topic: 'BTC market sentiment today', mode: 'auto', maxChars: X_READER_MAX_CHARS_DEFAULT },
         paymentMode: 'agent',
-        active: true,
+        active: false,
         createdAt: now,
         updatedAt: now,
         publishedBy: 'system'
@@ -426,7 +426,7 @@
         allowlistPayers: [],
         exampleInput: { symbol: 'BTCUSDT', side: 'buy', orderType: 'limit', tif: 'Gtc', size: 0.001 },
         paymentMode: 'agent',
-        active: true,
+        active: false,
         createdAt: now,
         updatedAt: now,
         publishedBy: 'system'

@@ -59,6 +59,8 @@
     "verify:mcp:trust-boundary": "node .\\scripts\\verify-mcp-trust-boundary.mjs",
     "verify:mcp:ktrace-live": "node .\\scripts\\verify-mcp-ktrace-live.mjs",
     "verify:mcp:paid": "node .\\scripts\\verify-mcp-paid.mjs",
+    "verify:mcp:bridge-paid": "node .\\scripts\\verify-mcp-bridge-paid.mjs",
+    "verify:mcp:bridge-paid:live": "node .\\scripts\\verify-mcp-bridge-paid-live.mjs",
     "verify:mcp:release": "node .\\scripts\\verify-mcp-release.mjs",
     "verify:a2a:trust-smoke": "node .\\scripts\\verify-a2a-trust-smoke.mjs",
     "demo:btc-job:seed": "node ./scripts/seed-demo-btc-job.js",

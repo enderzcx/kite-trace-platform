@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { createKiteRpcProvider } from '../../lib/kiteRpc.js';
 import { trustPublicationAnchorAbi } from '../../lib/contracts/trustPublicationAnchorAbi.js';
 import { createPlatformV1Shared } from './platformV1Shared.js';
 
@@ -40,7 +41,7 @@ export function registerTrustV1Routes(app, deps) {
       };
     }
     try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const provider = createKiteRpcProvider(ethers, rpcUrl);
       const contract = new ethers.Contract(registryAddress, trustPublicationAnchorAbi, provider);
       const events = await contract.queryFilter(contract.filters.TrustPublicationAnchored(), 0, 'latest');
       const anchors = events

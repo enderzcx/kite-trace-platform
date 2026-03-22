@@ -1,3 +1,5 @@
+import { createKiteRpcProvider } from '../lib/kiteRpc.js';
+
 export function createIdentityVerificationHelpers(deps = {}) {
   const {
     BACKEND_RPC_URL,
@@ -31,9 +33,7 @@ export function createIdentityVerificationHelpers(deps = {}) {
   }
 
   function createIdentityRpcProvider() {
-    const request = new ethers.FetchRequest(BACKEND_RPC_URL);
-    request.timeout = 120_000;
-    return new ethers.JsonRpcProvider(request);
+    return createKiteRpcProvider(ethers, BACKEND_RPC_URL, { timeoutMs: 120_000 });
   }
 
   function isRetryableIdentityRpcError(error = null) {

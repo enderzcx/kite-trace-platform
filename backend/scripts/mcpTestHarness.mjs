@@ -184,21 +184,93 @@ export async function startMcpTestHarness({
     const targetAgentId = normalizeText(body.targetAgentId || service.providerAgentId || '') || service.providerAgentId || 'stub-node';
     const payer = normalizeText(body.payer || '') || '0x1111111111111111111111111111111111111111';
     const paid = serviceId === 'cap-paid-demo';
+    const x402Mode = normalizeText(body.x402Mode || '').toLowerCase();
+    const paymentProof =
+      body.paymentProof && typeof body.paymentProof === 'object' && !Array.isArray(body.paymentProof)
+        ? body.paymentProof
+        : null;
     const summary = paid
       ? 'Paid demo capability completed via hosted MCP auto-payment.'
       : 'Example query capability completed successfully.';
+    const challengeRequestId = createTraceId('x402');
+    const paidTokenAddress = '0x000000000000000000000000000000000000c0de';
+    const paidRecipient = '0x000000000000000000000000000000000000beef';
+    const paidAmount = '0.00005';
+
+    if (paid && x402Mode === 'agent' && !paymentProof) {
+      const invocation = {
+        invocationId,
+        serviceId,
+        traceId,
+        requestId: challengeRequestId,
+        state: 'payment_required',
+        sourceAgentId,
+        targetAgentId,
+        payer,
+        amount: paidAmount,
+        tokenAddress: paidTokenAddress,
+        recipient: paidRecipient,
+        summary: 'Payment required before producing a fresh paid result.',
+        error: 'payment_required',
+        txHash: '',
+        userOpHash: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      state.invocations.unshift(invocation);
+      return res.status(402).json({
+        ok: false,
+        error: 'payment_required',
+        reason: 'payment required',
+        traceId,
+        requestId: challengeRequestId,
+        invocationId,
+        serviceId,
+        state: 'payment_required',
+        x402: {
+          requestId: challengeRequestId,
+          accepts: [
+            {
+              tokenAddress: paidTokenAddress,
+              recipient: paidRecipient,
+              amount: paidAmount
+            }
+          ]
+        }
+      });
+    }
+
+    if (paid && x402Mode === 'agent' && paymentProof) {
+      if (
+        normalizeText(paymentProof.requestId || '') !== normalizeText(body.requestId || '') ||
+        normalizeText(paymentProof.tokenAddress || '') !== paidTokenAddress ||
+        normalizeText(paymentProof.recipient || '') !== paidRecipient ||
+        normalizeText(paymentProof.amount || '') !== paidAmount
+      ) {
+        return res.status(409).json({
+          ok: false,
+          error: 'request_mismatch',
+          reason: 'payment proof did not match the original challenge',
+          traceId,
+          requestId: normalizeText(body.requestId || ''),
+          invocationId,
+          serviceId
+        });
+      }
+    }
+
     const invocation = {
       invocationId,
       serviceId,
       traceId,
-      requestId,
+      requestId: normalizeText(body.requestId || '') || requestId,
       state: 'success',
       sourceAgentId,
       targetAgentId,
       payer,
-      amount: paid ? '0.00005' : '0',
-      tokenAddress: paid ? '0x000000000000000000000000000000000000c0de' : '',
-      recipient: paid ? '0x000000000000000000000000000000000000beef' : '',
+      amount: paid ? paidAmount : '0',
+      tokenAddress: paid ? paidTokenAddress : '',
+      recipient: paid ? paidRecipient : '',
       summary,
       error: '',
       txHash: paid ? '0xtxhashdemo' : '',
@@ -212,7 +284,7 @@ export async function startMcpTestHarness({
     return res.json({
       ok: true,
       traceId,
-      requestId,
+      requestId: invocation.requestId,
       invocationId,
       serviceId,
       state: 'success',

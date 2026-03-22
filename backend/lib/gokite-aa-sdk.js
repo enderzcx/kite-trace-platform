@@ -5,11 +5,17 @@
  */
 
 import { ethers } from 'ethers';
+import { Agent, ProxyAgent, fetch as undiciFetch } from 'undici';
 import {
   DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION,
   DEFAULT_KITE_AA_FACTORY_ADDRESS
 } from './aaConfig.js';
-import { applyNodeEnvProxyPreference, getEnvProxyDiagnostics } from './envProxy.js';
+import { createKiteRpcProvider } from './kiteRpc.js';
+import {
+  applyNodeEnvProxyPreference,
+  getEnvProxyDiagnostics,
+  shouldRouteKiteBundlerViaProxy
+} from './envProxy.js';
 
 applyNodeEnvProxyPreference();
 
@@ -21,6 +27,8 @@ const NETWORKS = {
     accountImplementation: DEFAULT_KITE_AA_ACCOUNT_IMPLEMENTATION
   }
 };
+const bundlerDirectDispatcher = new Agent();
+let bundlerProxyDispatcher = null;
 
 const DEFAULT_FACTORY_ABI = [
   'function createAccount(address owner, uint256 salt) returns (address)',
@@ -35,6 +43,33 @@ function toBoundedInt(value, fallback, min, max) {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
   return Math.max(min, Math.min(Math.round(num), max));
+}
+
+function resolveBundlerDispatcher() {
+  if (!shouldRouteKiteBundlerViaProxy()) {
+    return bundlerDirectDispatcher;
+  }
+  const proxyUrl =
+    String(process.env.HTTPS_PROXY || '').trim() ||
+    String(process.env.HTTP_PROXY || '').trim() ||
+    String(process.env.ALL_PROXY || '').trim();
+  if (!proxyUrl) {
+    return bundlerDirectDispatcher;
+  }
+  if (!bundlerProxyDispatcher) {
+    bundlerProxyDispatcher = new ProxyAgent(proxyUrl);
+  }
+  return bundlerProxyDispatcher;
+}
+
+function parseBigIntEnv(value, fallback) {
+  try {
+    const raw = String(value ?? '').trim();
+    if (!raw) return fallback;
+    return BigInt(raw);
+  } catch {
+    return fallback;
+  }
 }
 
 const ERC1967_PROXY_CREATION_CODE =
@@ -74,19 +109,11 @@ export class GokiteAASDK {
       5_000,
       300_000
     );
-    const rpcRequest = new ethers.FetchRequest(config.rpcUrl);
-    rpcRequest.timeout = providerRpcTimeoutMs;
-    const staticNetwork = ethers.Network.from({
+    this.provider = createKiteRpcProvider(ethers, config.rpcUrl, {
+      timeoutMs: providerRpcTimeoutMs,
       chainId: networkConfig.chainId,
-      name: this.config.network
+      networkName: this.config.network
     });
-    this.provider = new ethers.JsonRpcProvider(
-      rpcRequest,
-      staticNetwork,
-      {
-        staticNetwork
-      }
-    );
     this.config.rpcTimeoutMs = providerRpcTimeoutMs;
     
     this.entryPointAbi = [
@@ -702,15 +729,24 @@ export class GokiteAASDK {
 
   async getSuggestedGasFees() {
     const feeData = await this.provider.getFeeData();
-    const fallbackPriority = 2_000_000_000n;
-    const priority = feeData.maxPriorityFeePerGas ?? fallbackPriority;
+    const fallbackPriority = parseBigIntEnv(
+      process.env.KITE_MIN_PRIORITY_FEE_PER_GAS_WEI,
+      1_000_000_000n
+    );
+    const minMaxFee = parseBigIntEnv(
+      process.env.KITE_MIN_MAX_FEE_PER_GAS_WEI,
+      fallbackPriority * 2n
+    );
+    const priorityCandidate = feeData.maxPriorityFeePerGas ?? fallbackPriority;
+    const priority = priorityCandidate > fallbackPriority ? priorityCandidate : fallbackPriority;
     let maxFee = feeData.maxFeePerGas;
     if (!maxFee || maxFee < priority) {
       const gasPrice = feeData.gasPrice ?? 3_000_000_000n;
       maxFee = gasPrice * 2n;
     }
-    if (maxFee < priority * 2n) {
-      maxFee = priority * 2n;
+    const minRequiredMaxFee = priority * 2n > minMaxFee ? priority * 2n : minMaxFee;
+    if (maxFee < minRequiredMaxFee) {
+      maxFee = minRequiredMaxFee;
     }
     return {
       maxPriorityFeePerGas: priority,
@@ -829,10 +865,11 @@ export class GokiteAASDK {
           method,
           params
         });
-        const response = await fetch(this.config.bundlerUrl, {
+        const response = await undiciFetch(this.config.bundlerUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body,
+          dispatcher: resolveBundlerDispatcher(),
           signal: controller.signal
         });
         const raw = await response.text();

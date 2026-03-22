@@ -1,3 +1,5 @@
+import { createKiteRpcProvider } from '../lib/kiteRpc.js';
+
 export function registerAutomationX402Routes(app, deps) {
   const {
     requireRole,
@@ -511,9 +513,9 @@ export function registerAutomationX402Routes(app, deps) {
         });
       }
   
-      const rpcRequest = new ethers.FetchRequest(BACKEND_RPC_URL);
-      rpcRequest.timeout = Math.min(30_000, Math.max(15_000, Number(KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 4));
-      const provider = new ethers.JsonRpcProvider(rpcRequest);
+      const provider = createKiteRpcProvider(ethers, BACKEND_RPC_URL, {
+        timeoutMs: Math.min(90_000, Math.max(15_000, Number(KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 4))
+      });
       const sessionWallet = new ethers.Wallet(runtime.sessionPrivateKey, provider);
       const sessionSignerAddress = await sessionWallet.getAddress();
       const serviceProvider = getServiceProviderBytes32(action);

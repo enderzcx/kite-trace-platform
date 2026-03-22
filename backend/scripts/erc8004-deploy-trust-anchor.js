@@ -12,6 +12,7 @@ const RPC_URL = process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/';
 const PRIVATE_KEY =
   process.env.ERC8004_REGISTRAR_PRIVATE_KEY || process.env.KITECLAW_BACKEND_SIGNER_PRIVATE_KEY || '';
 const DEPLOY_OWNER = process.env.ERC8004_DEPLOY_OWNER || '';
+const IDENTITY_REGISTRY = process.env.ERC8004_IDENTITY_REGISTRY || '';
 const RPC_TIMEOUT_MS = Number(process.env.KITE_RPC_TIMEOUT_MS || 45000);
 
 function requireEnv(name, value) {
@@ -29,8 +30,12 @@ async function main() {
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
   const initialOwner = DEPLOY_OWNER && ethers.isAddress(DEPLOY_OWNER) ? DEPLOY_OWNER : wallet.address;
 
+  const identityRegistryAddress = IDENTITY_REGISTRY && ethers.isAddress(IDENTITY_REGISTRY)
+    ? IDENTITY_REGISTRY
+    : ethers.ZeroAddress;
+
   const factory = new ethers.ContractFactory(compiled.abi, compiled.bytecode, wallet);
-  const contract = await factory.deploy(initialOwner);
+  const contract = await factory.deploy(initialOwner, identityRegistryAddress);
   const deploymentTx = contract.deploymentTransaction();
   await contract.waitForDeployment();
 
@@ -42,6 +47,7 @@ async function main() {
         chainId: String(network.chainId),
         deployer: wallet.address,
         owner: initialOwner,
+        identityRegistry: identityRegistryAddress,
         txHash: deploymentTx?.hash || '',
         address
       },

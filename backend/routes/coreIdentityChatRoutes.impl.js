@@ -3,6 +3,7 @@ import { registerCoreIdentityApprovalRoutes } from './coreIdentityApprovalRoutes
 import { registerCoreIdentityIdentityRoutes } from './coreIdentityIdentityRoutes.js';
 import { registerCoreIdentitySessionRoutes } from './coreIdentitySessionRoutes.js';
 import { deriveAaAccountCapabilities } from '../lib/aaConfig.js';
+import { createKiteRpcProvider } from '../lib/kiteRpc.js';
 
 export function registerCoreIdentityChatRoutes(app, deps) {
   const {
@@ -89,13 +90,13 @@ export function registerCoreIdentityChatRoutes(app, deps) {
   );
 
   function createBackendRpcProvider() {
-    const rpcRequest = new ethers.FetchRequest(BACKEND_RPC_URL);
-    rpcRequest.timeout = Math.max(
-      60_000,
-      Number(process.env.KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 4,
-      15_000
-    );
-    return new ethers.JsonRpcProvider(rpcRequest);
+    return createKiteRpcProvider(ethers, BACKEND_RPC_URL, {
+      timeoutMs: Math.max(
+        60_000,
+        Number(process.env.KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 4,
+        15_000
+      )
+    });
   }
 
   function normalizeSessionGrantText(value = '', fallback = '') {
@@ -1810,6 +1811,14 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     }
 
     const fallbackRuntime = resolveSessionRuntime({ owner: prepared.owner });
+    const sanitizedRuntime =
+      runtime && typeof runtime === 'object' && !Array.isArray(runtime)
+        ? {
+            ...runtime,
+            sessionPrivateKey: '',
+            authorizationSignature: ''
+          }
+        : {};
     const runtimeBase = buildSessionRuntimeBase(fallbackRuntime, {
       owner: prepared.owner,
       aaWallet: prepared.aaWallet,
@@ -1820,21 +1829,22 @@ export function registerCoreIdentityChatRoutes(app, deps) {
       accountVersion: prepared.accountVersion || (prepared.deployed ? 'unknown_or_legacy' : ''),
       maxPerTx: Number(prepared.singleLimit || fallbackRuntime.maxPerTx || 0),
       dailyLimit: Number(prepared.dailyLimit || fallbackRuntime.dailyLimit || 0),
-      runtimePurpose: normalizeSessionGrantText(runtime.runtimePurpose, fallbackRuntime.runtimePurpose || 'consumer'),
-      source: normalizeSessionGrantText(runtime.source, 'self_serve_wallet'),
+      runtimePurpose: normalizeSessionGrantText(sanitizedRuntime.runtimePurpose, fallbackRuntime.runtimePurpose || 'consumer'),
+      source: normalizeSessionGrantText(sanitizedRuntime.source, 'self_serve_wallet'),
       updatedAt: Date.now()
     });
     const verifiedRuntime = await verifyExternalSessionRuntime({
       runtime: {
         ...runtimeBase,
-        ...runtime,
+        ...sanitizedRuntime,
         owner: prepared.owner,
         aaWallet: prepared.aaWallet,
         gatewayRecipient: prepared.gatewayRecipient,
         maxPerTx: prepared.singleLimit,
         dailyLimit: prepared.dailyLimit,
-        runtimePurpose: normalizeSessionGrantText(runtime.runtimePurpose, fallbackRuntime.runtimePurpose || 'consumer'),
-        source: normalizeSessionGrantText(runtime.source, 'self_serve_wallet')
+        runtimePurpose: normalizeSessionGrantText(sanitizedRuntime.runtimePurpose, fallbackRuntime.runtimePurpose || 'consumer'),
+        source: normalizeSessionGrantText(sanitizedRuntime.source, 'self_serve_wallet'),
+        sessionPrivateKey: ''
       },
       payload: {
         payerAaWallet: prepared.aaWallet,
@@ -1849,13 +1859,14 @@ export function registerCoreIdentityChatRoutes(app, deps) {
     const nextRuntime = writeSessionRuntime({
       ...runtimeBase,
       ...verifiedRuntime,
+      sessionPrivateKey: '',
       tokenAddress: prepared.tokenAddress,
       gatewayRecipient: prepared.gatewayRecipient,
       accountFactoryAddress: ACTIVE_ACCOUNT_FACTORY_ADDRESS,
       accountImplementationAddress: ACTIVE_ACCOUNT_IMPLEMENTATION_ADDRESS,
       maxPerTx: Number(prepared.singleLimit || verifiedRuntime.maxPerTx || 0),
       dailyLimit: Number(prepared.dailyLimit || verifiedRuntime.dailyLimit || 0),
-      runtimePurpose: normalizeSessionGrantText(runtime.runtimePurpose, verifiedRuntime.runtimePurpose || 'consumer') || 'consumer',
+      runtimePurpose: normalizeSessionGrantText(sanitizedRuntime.runtimePurpose, verifiedRuntime.runtimePurpose || 'consumer') || 'consumer',
       source: 'self_serve_wallet',
       runtimeHealth: deriveRuntimeHealth({
         ...runtimeBase,

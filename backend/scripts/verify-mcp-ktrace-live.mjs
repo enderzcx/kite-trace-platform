@@ -469,14 +469,16 @@ function pickPaidCapability(capabilities = []) {
 }
 
 function sortPaidCapabilities(capabilities = []) {
+  // Prefer svc_btcusd_minute (Hyperliquid) first — reliable in CN; CoinGecko-based cap-market-price-feed
+  // is consistently unreachable even through proxy, so move it to the end of the preferred list.
   const preferred = [
-    'cap-market-price-feed',
-    'cap-weather-context',
-    'cap-tech-buzz-signal',
     'svc_btcusd_minute',
     'svc-live-btc-feed',
     'svc-compare-btc',
-    'cap-dex-market'
+    'cap-weather-context',
+    'cap-tech-buzz-signal',
+    'cap-dex-market',
+    'cap-market-price-feed'
   ];
   const rank = new Map(preferred.map((item, index) => [item, index]));
   return [...(Array.isArray(capabilities) ? capabilities : [])].sort((left, right) => {

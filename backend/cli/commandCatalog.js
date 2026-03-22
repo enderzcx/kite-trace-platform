@@ -48,6 +48,12 @@ export const COMMAND_CATALOG = {
       invoke: { batch: 'CLI-Only Agent Integration', implemented: true }
     }
   },
+  mcp: {
+    description: 'Local stdio bridge for Claude Code and other MCP clients',
+    actions: {
+      bridge: { batch: 'Local-Only Session Paid MCP', implemented: true }
+    }
+  },
   template: {
     description: 'Reusable direct-buy templates',
     actions: {

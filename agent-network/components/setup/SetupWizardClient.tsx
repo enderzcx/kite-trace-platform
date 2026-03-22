@@ -1,8 +1,8 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { BrowserProvider, Contract, Wallet, getAddress, isAddress, keccak256, parseUnits, toUtf8Bytes } from "ethers";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BrowserProvider, Contract, JsonRpcProvider, Wallet, getAddress, getBytes, isAddress, keccak256, parseUnits, toBeHex, toUtf8Bytes, zeroPadValue } from "ethers";
 import {
   AlertCircle,
   Check,
@@ -113,6 +113,26 @@ interface AccountStatus {
   eoaBalance: number;    // native KITE in EOA wallet
   aaTokenBalance: number;
   eoaTokenBalance: number;
+  aaBalanceKnown?: boolean;
+  eoaBalanceKnown?: boolean;
+  aaTokenBalanceKnown?: boolean;
+  eoaTokenBalanceKnown?: boolean;
+}
+
+interface SetupSnapshot {
+  ownerEoa: string;
+  aaWallet: string;
+  aaDeployed: boolean;
+  isDefaultFactoryRuntime: boolean;
+  hasIdentity: boolean;
+  agentId: string;
+  identityRegistry: string;
+  agentWalletMatchesAa: boolean;
+  hasLocalSessionExport: boolean;
+  sessionAuthorized: boolean;
+  kiteBalanceReady: boolean;
+  settlementBalanceReady: boolean;
+  sessionRuntimeReady: boolean;
 }
 
 interface ApiKeyMeta {
@@ -121,6 +141,29 @@ interface ApiKeyMeta {
   role: string;
   createdAt: string;
   revokedAt?: string | null;
+}
+
+interface LocalSessionRuntimeExport {
+  schema: "ktrace-local-session-runtime-v1";
+  createdAt: number;
+  runtime: {
+    owner: string;
+    aaWallet: string;
+    sessionAddress: string;
+    sessionPrivateKey: string;
+    sessionId: string;
+    sessionTxHash: string;
+    tokenAddress: string;
+    gatewayRecipient: string;
+    maxPerTx: number;
+    dailyLimit: number;
+    agentId: string;
+    agentWallet: string;
+    identityRegistry: string;
+    chainId: string;
+    runtimePurpose: "consumer";
+    source: string;
+  };
 }
 
 interface Props {
@@ -135,6 +178,7 @@ type EthProvider = {
 
 const KITE_TESTNET_CHAIN_ID = 2368;
 const AA_SESSION_ABI = [
+  "function addSupportedToken(address token) external",
   "function createSession(bytes32 sessionId, address agent, tuple(uint256 timeWindow,uint160 budget,uint96 initialWindowStartTime,bytes32[] targetProviders)[] rules) external",
 ];
 const AA_SESSION_PERMISSION_ABI = [
@@ -167,9 +211,11 @@ const SUGGEST_SETTLEMENT = "0.5";
 const KTRACE_SETUP_MODE = process.env.NEXT_PUBLIC_KTRACE_SETUP_MODE?.trim().toLowerCase() === "remote"
   ? "remote"
   : "local";
+const KITE_READ_RPC_URL = process.env.NEXT_PUBLIC_KITE_RPC_URL?.trim() || "";
 const LOCAL_CONNECTOR_CLIENT = "inspector";
 const LOCAL_CONNECTOR_CLIENT_ID = "local-setup";
 const LOCAL_BACKEND_BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://127.0.0.1:3217").replace(/\/+$/, "");
+const LOCAL_SESSION_RUNTIME_STORAGE_KEY = "ktrace.localSessionRuntime.v1";
 
 function getEthereum(): EthProvider | undefined {
   return (window as unknown as { ethereum?: EthProvider }).ethereum;
@@ -179,6 +225,16 @@ function getBrowserProvider() {
   const eth = getEthereum();
   if (!eth) return null;
   return new BrowserProvider(eth as never);
+}
+
+let cachedReadOnlyProvider: JsonRpcProvider | null = null;
+
+function getReadOnlyProvider() {
+  if (!KITE_READ_RPC_URL) return null;
+  if (!cachedReadOnlyProvider) {
+    cachedReadOnlyProvider = new JsonRpcProvider(KITE_READ_RPC_URL, "any");
+  }
+  return cachedReadOnlyProvider;
 }
 
 function normalizeAccountAddress(value = ""): string {
@@ -231,6 +287,103 @@ function randomHex(bytes = 16): string {
   return "0x" + Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function readStoredLocalSessionRuntime(): LocalSessionRuntimeExport | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(LOCAL_SESSION_RUNTIME_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LocalSessionRuntimeExport;
+    if (!parsed || parsed.schema !== "ktrace-local-session-runtime-v1" || !parsed.runtime) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistLocalSessionRuntime(value: LocalSessionRuntimeExport | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (!value) {
+      window.sessionStorage.removeItem(LOCAL_SESSION_RUNTIME_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(LOCAL_SESSION_RUNTIME_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // ignore storage failures on locked-down browsers
+  }
+}
+
+function downloadJsonFile(filename: string, payload: unknown) {
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function buildLocalSessionRuntimeExport(
+  runtime: SessionRuntime,
+  sessionPrivateKey: string,
+  {
+    owner,
+    sessionAddress,
+    sessionId,
+    sessionTxHash,
+    singleLimit,
+    dailyLimit,
+  }: {
+    owner: string;
+    sessionAddress: string;
+    sessionId: string;
+    sessionTxHash: string;
+    singleLimit: string;
+    dailyLimit: string;
+  }
+): LocalSessionRuntimeExport {
+  return {
+    schema: "ktrace-local-session-runtime-v1",
+    createdAt: Date.now(),
+    runtime: {
+      owner,
+      aaWallet: runtime.aaWallet ?? runtime.payerAaWallet ?? "",
+      sessionAddress,
+      sessionPrivateKey,
+      sessionId,
+      sessionTxHash,
+      tokenAddress: runtime.tokenAddress ?? "",
+      gatewayRecipient: runtime.gatewayRecipient ?? "",
+      maxPerTx: Number(singleLimit || "0"),
+      dailyLimit: Number(dailyLimit || "0"),
+      agentId: runtime.agentId ?? "",
+      agentWallet: runtime.agentWallet ?? "",
+      identityRegistry: runtime.identityRegistry ?? "",
+      chainId: runtime.chainId ?? "kite-testnet",
+      runtimePurpose: "consumer",
+      source: "browser_setup_local_only",
+    },
+  };
+}
+
 async function ensureKiteTestnet(eth: EthProvider) {
   const chainHex = `0x${KITE_TESTNET_CHAIN_ID.toString(16)}`;
   const current = (await eth.request({ method: "eth_chainId" })) as string;
@@ -245,15 +398,20 @@ async function ensureKiteTestnet(eth: EthProvider) {
   }
 }
 
-async function getBalance(eth: EthProvider, address: string): Promise<number> {
+async function getBalance(eth: EthProvider, address: string): Promise<number | null> {
   try {
+    const readOnlyProvider = getReadOnlyProvider();
+    if (readOnlyProvider && address) {
+      const balance = await readOnlyProvider.getBalance(address);
+      return Number(balance) / 1e18;
+    }
     const hex = (await eth.request({
       method: "eth_getBalance",
       params: [address, "latest"],
     })) as string;
     return parseInt(hex, 16) / 1e18;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -397,8 +555,79 @@ function hasAuthorizedSessionRuntime(runtime: SessionRuntime | null | undefined)
   return Boolean(sessionId && sessionAddress && authorizationSignature && authorizationPayloadHash);
 }
 
+function hasUsableLocalSessionRuntime(
+  value: LocalSessionRuntimeExport | null | undefined,
+  runtime: SessionRuntime | null | undefined,
+  ownerEoa = ""
+): boolean {
+  if (!value?.runtime) return false;
+  const localOwner = normalizeAccountAddress(value.runtime.owner || "");
+  const requestedOwner = normalizeAccountAddress(ownerEoa || runtime?.owner || "");
+  if (!localOwner || !requestedOwner || localOwner !== requestedOwner) return false;
+  const localAaWallet = normalizeAccountAddress(value.runtime.aaWallet || "");
+  const runtimeAaWallet = normalizeAccountAddress(runtime?.aaWallet || runtime?.payerAaWallet || "");
+  if (runtimeAaWallet && localAaWallet && runtimeAaWallet !== localAaWallet) return false;
+  return Boolean(
+    value.runtime.sessionAddress &&
+      value.runtime.sessionId &&
+      value.runtime.sessionPrivateKey
+  );
+}
+
+function buildSetupSnapshot({
+  ownerEoa = "",
+  runtime,
+  accountStatus,
+  localSessionRuntimeExport,
+}: {
+  ownerEoa?: string;
+  runtime: SessionRuntime | null | undefined;
+  accountStatus: AccountStatus | null | undefined;
+  localSessionRuntimeExport: LocalSessionRuntimeExport | null | undefined;
+}): SetupSnapshot {
+  const normalizedOwner = normalizeAccountAddress(ownerEoa || runtime?.owner || "");
+  const aaWallet = String(runtime?.aaWallet || runtime?.payerAaWallet || "").trim();
+  const runtimeHealth = String(runtime?.runtimeHealth || "").trim().toLowerCase() || "active_default";
+  const isDefaultFactoryRuntime =
+    runtime?.isDefaultFactoryRuntime === true && runtimeHealth === "active_default";
+  const hasIdentity = Boolean(runtime && hasRuntimeIdentity(runtime));
+  const agentWalletMatchesAa =
+    Boolean(
+      runtime?.agentWallet &&
+        aaWallet &&
+        normalizeAccountAddress(runtime.agentWallet) === normalizeAccountAddress(aaWallet)
+    );
+  const sessionRuntimeReady = Boolean(
+    aaWallet && runtime && supportsSessionGenericExecution(runtime) && isDefaultFactoryRuntime
+  );
+
+  return {
+    ownerEoa: normalizedOwner,
+    aaWallet,
+    aaDeployed: Boolean(runtime?.aaDeployed),
+    isDefaultFactoryRuntime,
+    hasIdentity,
+    agentId: String(runtime?.agentId || "").trim(),
+    identityRegistry: String(runtime?.identityRegistry || "").trim(),
+    agentWalletMatchesAa,
+    hasLocalSessionExport: hasUsableLocalSessionRuntime(localSessionRuntimeExport, runtime, normalizedOwner),
+    sessionAuthorized: hasAuthorizedSessionRuntime(runtime),
+    kiteBalanceReady: Boolean((accountStatus?.aaBalance || 0) > 0),
+    settlementBalanceReady: Boolean((accountStatus?.aaTokenBalance || 0) > 0),
+    sessionRuntimeReady,
+  };
+}
+
+function resolveInitialWizardStep(snapshot: SetupSnapshot): Step {
+  if (!snapshot.ownerEoa) return 0;
+  if (!snapshot.aaWallet || !snapshot.sessionRuntimeReady) return 1;
+  if (!snapshot.hasIdentity || !snapshot.agentWalletMatchesAa) return 2;
+  if (!snapshot.sessionAuthorized || !snapshot.hasLocalSessionExport) return 3;
+  return 4;
+}
+
 async function getTokenMeta(tokenAddress: string): Promise<{ symbol: string; decimals: number }> {
-  const provider = getBrowserProvider();
+  const provider = getReadOnlyProvider() ?? getBrowserProvider();
   if (!provider || !tokenAddress) return { symbol: "USDT", decimals: 6 };
   try {
     const token = new Contract(tokenAddress, ERC20_ABI, provider);
@@ -415,9 +644,9 @@ async function getTokenMeta(tokenAddress: string): Promise<{ symbol: string; dec
   }
 }
 
-async function getTokenBalance(tokenAddress: string, address: string): Promise<number> {
-  const provider = getBrowserProvider();
-  if (!provider || !tokenAddress || !address) return 0;
+async function getTokenBalance(tokenAddress: string, address: string): Promise<number | null> {
+  const provider = getReadOnlyProvider() ?? getBrowserProvider();
+  if (!provider || !tokenAddress || !address) return null;
   try {
     const token = new Contract(tokenAddress, ERC20_ABI, provider);
     const [rawBalance, decimals] = await Promise.all([
@@ -426,7 +655,7 @@ async function getTokenBalance(tokenAddress: string, address: string): Promise<n
     ]);
     return Number(rawBalance) / 10 ** Number(decimals || 6);
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -440,26 +669,11 @@ async function fetchSetupRuntime(ownerEoa: string): Promise<SessionRuntime> {
     cache: "no-store",
   });
   const runtimeJson = (await runtimeRes.json()) as Record<string, unknown>;
-  const fetchedRuntime =
+  const currentRuntime =
     runtimeRes.ok && runtimeJson.ok ? parseRuntime(runtimeJson) : ({} as SessionRuntime);
-  const currentRuntime = hasRuntimeIdentity(fetchedRuntime)
-    ? fetchedRuntime
-    : mergeRuntimeIdentity(fetchedRuntime, await fetchCurrentIdentity().catch(() => null));
   const requestedOwner = normalizeAccountAddress(ownerEoa);
   const runtimeOwner = normalizeAccountAddress(currentRuntime.owner ?? "");
-  const runtimeIsReady =
-    !currentRuntime.aaDeployed ||
-    supportsSessionGenericExecution(currentRuntime);
-  const runtimeIsDefaultFactory =
-    currentRuntime.isDefaultFactoryRuntime === true &&
-    (currentRuntime.runtimeHealth || "active_default") === "active_default";
-  if (
-    currentRuntime.aaWallet &&
-    runtimeOwner &&
-    runtimeOwner === requestedOwner &&
-    runtimeIsReady &&
-    runtimeIsDefaultFactory
-  ) {
+  if (runtimeOwner && runtimeOwner === requestedOwner) {
     return currentRuntime;
   }
 
@@ -476,10 +690,7 @@ async function fetchSetupRuntime(ownerEoa: string): Promise<SessionRuntime> {
         "AA bootstrap prepare failed."
     );
   }
-  const preparedRuntime = parseRuntime(prepareJson);
-  return hasRuntimeIdentity(preparedRuntime)
-    ? preparedRuntime
-    : mergeRuntimeIdentity(preparedRuntime, await fetchCurrentIdentity().catch(() => null));
+  return parseRuntime(prepareJson);
 }
 
 function buildSignMessage(
@@ -555,6 +766,10 @@ function hasRuntimeIdentity(runtime: SessionRuntime): boolean {
   return Boolean(runtime.agentId && runtime.agentWallet && runtime.identityRegistry);
 }
 
+function deriveUserType(runtime: SessionRuntime | null | undefined): UserType {
+  return runtime?.aaWallet || runtime?.sessionId || hasRuntimeIdentity(runtime || {}) ? "returning" : "new";
+}
+
 function supportsSessionGenericExecution(runtime: SessionRuntime): boolean {
   return (
     runtime.accountCapabilities?.sessionGenericExecute === true ||
@@ -602,7 +817,11 @@ function buildRequiredSessionPermissionUpdates(runtime: SessionRuntime) {
   return updates;
 }
 
-async function ensureSessionSelectorPermissions(runtime: SessionRuntime, signer: Awaited<ReturnType<BrowserProvider["getSigner"]>>) {
+async function ensureSessionSelectorPermissions(
+  runtime: SessionRuntime,
+  signer: Awaited<ReturnType<BrowserProvider["getSigner"]>>,
+  provider?: BrowserProvider | JsonRpcProvider | null
+) {
   if (!runtime.aaWallet || !runtime.sessionId || !supportsSessionGenericExecution(runtime)) {
     return { changed: false };
   }
@@ -610,10 +829,11 @@ async function ensureSessionSelectorPermissions(runtime: SessionRuntime, signer:
   if (requiredUpdates.length === 0) {
     return { changed: false };
   }
-  const account = new Contract(runtime.aaWallet, AA_SESSION_PERMISSION_ABI, signer);
+  const readRunner = provider ?? signer.provider ?? signer;
+  const readAccount = new Contract(runtime.aaWallet, AA_SESSION_PERMISSION_ABI, readRunner);
   const missingUpdates: typeof requiredUpdates = [];
   for (const update of requiredUpdates) {
-    const permission = await account.getSessionSelectorPermission(update.sessionId, update.target, update.selector);
+    const permission = await readAccount.getSessionSelectorPermission(update.sessionId, update.target, update.selector);
     const enabled = Boolean(Array.isArray(permission) ? permission[0] : permission?.enabled);
     if (!enabled) {
       missingUpdates.push(update);
@@ -622,12 +842,56 @@ async function ensureSessionSelectorPermissions(runtime: SessionRuntime, signer:
   if (missingUpdates.length === 0) {
     return { changed: false };
   }
-  const tx = await account.setSessionSelectorPermissions(missingUpdates);
+  const writeAccount = new Contract(runtime.aaWallet, AA_SESSION_PERMISSION_ABI, signer);
+  const tx = await writeAccount.setSessionSelectorPermissions(missingUpdates);
   await tx.wait();
   return {
     changed: true,
     txHash: String(tx.hash || ""),
     updates: missingUpdates.length,
+  };
+}
+
+const AA_SUPPORTED_TOKEN_MAPPING_SLOT = BigInt(2);
+
+async function hasSupportedSettlementToken(
+  aaWallet: string,
+  tokenAddress: string,
+  provider: BrowserProvider | JsonRpcProvider
+): Promise<boolean> {
+  if (!aaWallet || !tokenAddress || !isAddress(aaWallet) || !isAddress(tokenAddress)) {
+    return false;
+  }
+  const slotKey = keccak256(
+    new Uint8Array([
+      ...getBytes(zeroPadValue(getAddress(tokenAddress), 32)),
+      ...getBytes(zeroPadValue(toBeHex(AA_SUPPORTED_TOKEN_MAPPING_SLOT), 32)),
+    ])
+  );
+  const raw = await provider.getStorage(getAddress(aaWallet), slotKey);
+  return BigInt(raw || "0x0") !== BigInt(0);
+}
+
+async function ensureSupportedSettlementToken(
+  runtime: SessionRuntime,
+  signer: Awaited<ReturnType<BrowserProvider["getSigner"]>>,
+  provider: BrowserProvider | JsonRpcProvider
+) {
+  const aaWallet = String(runtime.aaWallet || runtime.payerAaWallet || "").trim();
+  const tokenAddress = String(runtime.tokenAddress || runtime.activeSettlementTokenAddress || "").trim();
+  if (!aaWallet || !tokenAddress || !isAddress(aaWallet) || !isAddress(tokenAddress)) {
+    return { changed: false };
+  }
+  const alreadySupported = await hasSupportedSettlementToken(aaWallet, tokenAddress, provider).catch(() => false);
+  if (alreadySupported) {
+    return { changed: false };
+  }
+  const account = new Contract(getAddress(aaWallet), AA_SESSION_ABI, signer);
+  const tx = await account.addSupportedToken(getAddress(tokenAddress));
+  await tx.wait();
+  return {
+    changed: true,
+    txHash: String(tx.hash || ""),
   };
 }
 
@@ -1047,6 +1311,7 @@ function FundStep({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const doneRef = useRef(false);
   const [isDeployed, setIsDeployed] = useState(Boolean(runtime.aaDeployed));
+  const [aaBalanceKnown, setAaBalanceKnown] = useState(false);
 
   useEffect(() => {
     setIsDeployed(Boolean(runtime.aaDeployed));
@@ -1127,27 +1392,36 @@ function FundStep({
   useEffect(() => {
     if (!aaWallet) return;
     const eth = getEthereum();
-    if (!eth) return;
+    const readOnlyProvider = getReadOnlyProvider();
+    if (!eth && !readOnlyProvider) return;
 
     const poll = async () => {
+      const browserProvider = getBrowserProvider();
+      const chainReader = readOnlyProvider ?? browserProvider;
       const [bal, tokenBal, eoaTokenBal, meta, codeHex] = await Promise.all([
-        getBalance(eth, aaWallet),
-        tokenAddress ? getTokenBalance(tokenAddress, aaWallet) : Promise.resolve(0),
-        tokenAddress ? getTokenBalance(tokenAddress, address) : Promise.resolve(0),
+        eth ? getBalance(eth, aaWallet) : Promise.resolve(null),
+        tokenAddress ? getTokenBalance(tokenAddress, aaWallet) : Promise.resolve(null),
+        tokenAddress ? getTokenBalance(tokenAddress, address) : Promise.resolve(null),
         tokenAddress ? getTokenMeta(tokenAddress) : Promise.resolve({ symbol: "USDT", decimals: 6 }),
-        eth.request({ method: "eth_getCode", params: [aaWallet, "latest"] }).catch(() => "0x"),
+        chainReader ? chainReader.getCode(aaWallet).catch(() => "0x") : Promise.resolve("0x"),
       ]);
-      setAaBalance(bal);
-      setAaTokenBalance(tokenBal);
-      setEoaTokenBalance(eoaTokenBal);
+      if (bal !== null) {
+        setAaBalance(bal);
+        setAaBalanceKnown(true);
+      }
+      if (tokenBal !== null) {
+        setAaTokenBalance(tokenBal);
+      }
+      if (eoaTokenBal !== null) {
+        setEoaTokenBalance(eoaTokenBal);
+      }
       setTokenMeta(meta);
       const deployed = Boolean(codeHex && codeHex !== "0x");
       let detectedVersion = runtime.accountVersion ?? "";
       if (deployed) {
         try {
-          const provider = getBrowserProvider();
-          if (provider) {
-            const account = new Contract(aaWallet, ACCOUNT_VERSION_ABI, provider);
+          if (chainReader) {
+            const account = new Contract(aaWallet, ACCOUNT_VERSION_ABI, chainReader);
             detectedVersion = String(await account.version().catch(() => detectedVersion || "")).trim() || detectedVersion;
           }
         } catch {
@@ -1167,9 +1441,11 @@ function FundStep({
           accountVersion: detectedVersion,
         });
       }
+      const effectiveAaBalance = bal ?? aaBalance;
+      const effectiveAaTokenBalance = tokenBal ?? aaTokenBalance;
       const ready =
-        bal > 0 &&
-        tokenBal > 0 &&
+        effectiveAaBalance > 0 &&
+        effectiveAaTokenBalance > 0 &&
         deployed &&
         supportsSessionGenericExecution({
           ...runtime,
@@ -1236,6 +1512,8 @@ function FundStep({
   const isKnownBadFactoryRuntime = runtimeHealth === "known_bad_factory";
   const isHistoricalRuntime = runtimeHealth !== "active_default";
   const isDefaultFactoryRuntime = runtime.isDefaultFactoryRuntime === true && !isHistoricalRuntime;
+  const missingBootstrap =
+    !aaWallet || !runtime.accountFactoryAddress || !runtime.owner || !runtime.salt;
   const funded =
     aaBalance > 0 && aaTokenBalance > 0 && isDeployed && !requiresNewWallet && isDefaultFactoryRuntime;
 
@@ -1293,7 +1571,13 @@ function FundStep({
                   Settlement balance: {aaTokenBalance.toFixed(2)} {tokenMeta.symbol}
                 </p>
               )}
-              {aaBalance === 0 && (
+              {!aaBalanceKnown && (
+                <div className="flex items-center gap-1.5 text-[11px] text-[#9e8e76]">
+                  <Loader2 className="size-3 animate-spin" />
+                  Checking current balance...
+                </div>
+              )}
+              {aaBalanceKnown && aaBalance === 0 && (
                 <div className="flex items-center gap-1.5 text-[11px] text-[#9e8e76]">
                   <Loader2 className="size-3 animate-spin" />
                   Watching for incoming balance...
@@ -1330,14 +1614,20 @@ function FundStep({
                     : "Deploy your AA wallet from the current KTrace factory, then continue with funding."}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {(isDeployed && !isDefaultFactoryRuntime) || requiresNewWallet ? (
+                  {missingBootstrap || (isDeployed && !isDefaultFactoryRuntime) || requiresNewWallet ? (
                     <PrimaryBtn
                       onClick={prepareFreshWallet}
                       disabled={runtimeRefreshState !== "idle"}
                       loading={runtimeRefreshState === "refreshing"}
                     >
                       <RefreshCw className="size-3.5" />
-                      {runtimeRefreshState === "refreshing" ? "Preparing new wallet..." : "Prepare new wallet"}
+                      {runtimeRefreshState === "refreshing"
+                        ? missingBootstrap
+                          ? "Preparing wallet..."
+                          : "Preparing new wallet..."
+                        : missingBootstrap
+                          ? "Prepare wallet"
+                          : "Prepare new wallet"}
                     </PrimaryBtn>
                   ) : (
                   <PrimaryBtn
@@ -1479,16 +1769,22 @@ const DEFAULT_CAPS = ["cap_dex_market", "cap_defi_yield", "cap_onchain_data", "c
 function AuthorizeStep({
   address,
   runtime,
+  accountStatus,
   availableCaps,
   mode = "new",
   onRuntimeUpdate,
+  hasLocalSessionRuntime = false,
+  onLocalSessionRuntimeReady,
   onDone,
 }: {
   address: string;
   runtime: SessionRuntime;
+  accountStatus?: AccountStatus | null;
   availableCaps: string[];
   mode?: "new" | "renew";
   onRuntimeUpdate: (runtime: SessionRuntime) => void;
+  hasLocalSessionRuntime?: boolean;
+  onLocalSessionRuntimeReady?: (runtimeExport: LocalSessionRuntimeExport) => void;
   onDone: () => void;
 }) {
   const capList = availableCaps.length > 0 ? availableCaps : DEFAULT_CAPS;
@@ -1496,7 +1792,9 @@ function AuthorizeStep({
   const [singleLimit, setSingleLimit] = useState("0.01");
   const [dailyLimit, setDailyLimit] = useState("0.10");
   const [sessionValidityHours, setSessionValidityHours] = useState("24");
-  const [state, setState] = useState<"idle" | "creatingSession" | "signing" | "submitting" | "done">("idle");
+  const [state, setState] = useState<
+    "idle" | "checkingWallet" | "preparingToken" | "creatingSession" | "updatingPermissions" | "signing" | "submitting" | "done"
+  >("idle");
   const [error, setError] = useState("");
 
   function toggleCap(cap: string) {
@@ -1518,12 +1816,24 @@ function AuthorizeStep({
     if (!eth) { setError("Wallet not available."); return; }
 
     try {
-      await ensureKiteTestnet(eth);
+      setState("checkingWallet");
+      await withTimeout(
+        ensureKiteTestnet(eth),
+        15000,
+        "Wallet network check timed out. If your wallet has a pending popup, finish or cancel it and retry."
+      );
       const provider = getBrowserProvider();
       if (!provider) throw new Error("Wallet provider unavailable.");
-      const signer = await provider.getSigner();
-      const activeAccounts = (await eth.request({ method: "eth_accounts" })) as string[];
-      const activeUserEoa = activeAccounts[0] ?? "";
+      const signer = await withTimeout(
+        provider.getSigner(),
+        15000,
+        "Wallet signer request timed out. Open your wallet extension and finish any pending approval."
+      );
+      const activeUserEoa = await withTimeout(
+        signer.getAddress(),
+        15000,
+        "Wallet account check timed out. Open your wallet extension and finish any pending approval."
+      );
       if (
         !activeUserEoa ||
         normalizeAccountAddress(activeUserEoa) !== normalizeAccountAddress(address)
@@ -1532,25 +1842,34 @@ function AuthorizeStep({
           `Wallet account changed before authorization. Connected ${address}, but active signer is ${activeUserEoa || "unknown"}. Switch back to the same account and retry.`
         );
       }
-      const identityProfile = await fetchCurrentIdentity().catch(() => null);
-      let effectiveRuntime = mergeRuntimeIdentity(runtime, identityProfile);
+      const identityProfile = hasRuntimeIdentity(runtime)
+        ? null
+        : await fetchCurrentIdentity().catch(() => null);
+      let effectiveRuntime = hasRuntimeIdentity(runtime)
+        ? runtime
+        : mergeRuntimeIdentity(runtime, identityProfile);
       if (!hasRuntimeIdentity(effectiveRuntime)) {
-        throw new Error("Current ERC-8004 identity configuration is incomplete.");
+        throw new Error("Agent identity is not ready yet. Complete the Register Identity step first.");
       }
       if (!effectiveRuntime.aaWallet) {
-          throw new Error("AA wallet bootstrap is missing. Restart setup from step 1.");
-        }
+        throw new Error("AA wallet is missing from this runtime.");
+      }
       const runtimeHealth = String(effectiveRuntime.runtimeHealth || "").trim().toLowerCase();
       if (runtimeHealth && runtimeHealth !== "active_default") {
         throw new Error(
-          "This AA wallet is historical and can no longer be used for new KTrace onboarding. Go back to step 2 and prepare a replacement wallet."
+          "This AA wallet is historical and can no longer be used for new session authorization."
         );
       }
       if (effectiveRuntime.isDefaultFactoryRuntime !== true) {
-        throw new Error("This AA wallet is not from the current KTrace factory. Prepare a replacement wallet in step 2 first.");
+        throw new Error("This AA wallet is not from the current KTrace factory.");
       }
-      if (!effectiveRuntime.aaDeployed) {
-        const providerForCodeCheck = provider;
+      const runtimeImpliesDeployed = Boolean(
+        effectiveRuntime.aaDeployed ||
+        supportsSessionGenericExecution(effectiveRuntime) ||
+        (effectiveRuntime.aaWallet && runtimeHealth === "active_default")
+      );
+      if (!runtimeImpliesDeployed) {
+        const providerForCodeCheck = getReadOnlyProvider() ?? provider;
         const codeHex = effectiveRuntime.aaWallet
           ? String(await providerForCodeCheck.getCode(effectiveRuntime.aaWallet).catch(() => "0x"))
           : "0x";
@@ -1561,7 +1880,7 @@ function AuthorizeStep({
           };
           onRuntimeUpdate(effectiveRuntime);
         } else {
-          throw new Error("AA wallet is not deployed yet. Finish step 2 first.");
+          throw new Error("AA wallet is not deployed yet.");
         }
       }
       if (!supportsSessionGenericExecution(effectiveRuntime)) {
@@ -1569,10 +1888,54 @@ function AuthorizeStep({
           `AA wallet is not ready for session-based task execution. current=${effectiveRuntime.accountVersion || effectiveRuntime.accountVersionTag || "unknown_or_legacy"}`
         );
       }
+      const chainReader = getReadOnlyProvider() ?? provider;
+      const preparedAaWallet = String(effectiveRuntime.aaWallet || effectiveRuntime.payerAaWallet || "").trim();
+      const knownAaBalance =
+        accountStatus?.aaBalanceKnown && preparedAaWallet ? Number(accountStatus?.aaBalance ?? 0) : null;
+      const knownTokenBalance =
+        accountStatus?.aaTokenBalanceKnown && effectiveRuntime.tokenAddress
+          ? Number(accountStatus?.aaTokenBalance ?? 0)
+          : null;
+      const currentAaBalance =
+        knownAaBalance !== null
+          ? knownAaBalance
+          : preparedAaWallet
+            ? await getBalance(eth, preparedAaWallet).catch(() => null)
+            : null;
+      const currentTokenBalance =
+        knownTokenBalance !== null
+          ? knownTokenBalance
+          : effectiveRuntime.tokenAddress
+            ? await getTokenBalance(effectiveRuntime.tokenAddress, preparedAaWallet).catch(() => null)
+            : null;
+      if (currentAaBalance === null) {
+        throw new Error("AA balance is temporarily unavailable. Go back to Prepare AA Wallet once to refresh, then retry.");
+      }
+      if (currentAaBalance <= 0) {
+        throw new Error("AA has no KITE balance for gas.");
+      }
+      if (effectiveRuntime.tokenAddress && currentTokenBalance === null) {
+        throw new Error("Settlement balance is temporarily unavailable. Go back to Prepare AA Wallet once to refresh, then retry.");
+      }
+      const checkedTokenBalance = currentTokenBalance ?? 0;
+      if (effectiveRuntime.tokenAddress && checkedTokenBalance <= 0) {
+        throw new Error("AA has no settlement balance.");
+      }
+      setState("preparingToken");
+      const supportedTokenSync = await ensureSupportedSettlementToken(effectiveRuntime, signer, chainReader).catch((error) => {
+        const message = error instanceof Error ? error.message : "Settlement token setup failed.";
+        throw new Error(`Unable to prepare the settlement token automatically. ${message}`);
+      });
+      if (supportedTokenSync.changed) {
+        onRuntimeUpdate({
+          ...effectiveRuntime,
+          aaDeployed: true,
+        });
+      }
 
-      if (!effectiveRuntime.sessionId || !effectiveRuntime.sessionAddress) {
+      if (!effectiveRuntime.sessionId || !effectiveRuntime.sessionAddress || !hasLocalSessionRuntime) {
         if (!effectiveRuntime.aaWallet) {
-          throw new Error("AA wallet is missing from the prepared runtime. Re-run step 2 first.");
+          throw new Error("AA wallet is missing from the prepared runtime.");
         }
         setState("creatingSession");
         const sessionWallet = Wallet.createRandom();
@@ -1610,6 +1973,19 @@ function AuthorizeStep({
         );
         await createTx.wait();
 
+        const localRuntimeExport = buildLocalSessionRuntimeExport(
+          effectiveRuntime,
+          sessionWallet.privateKey,
+          {
+            owner: activeUserEoa,
+            sessionAddress: sessionWallet.address,
+            sessionId,
+            sessionTxHash: createTx.hash,
+            singleLimit,
+            dailyLimit,
+          }
+        );
+
         const finalizeRes = await fetch("/api/setup/runtime/finalize", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1625,7 +2001,6 @@ function AuthorizeStep({
                 owner: activeUserEoa,
                 aaWallet: effectiveRuntime.aaWallet,
                 sessionAddress: sessionWallet.address,
-                sessionPrivateKey: sessionWallet.privateKey,
                 sessionId,
                 sessionTxHash: createTx.hash,
                 source: "self_serve_wallet",
@@ -1641,16 +2016,17 @@ function AuthorizeStep({
           parseRuntime(finalizeJson),
           identityProfile
         );
+        onLocalSessionRuntimeReady?.(localRuntimeExport);
         onRuntimeUpdate(effectiveRuntime);
       }
 
       effectiveRuntime = mergeRuntimeIdentity(effectiveRuntime, identityProfile);
       if (!hasRuntimeIdentity(effectiveRuntime)) {
-        throw new Error("Current ERC-8004 identity configuration is incomplete.");
+        throw new Error("Agent identity is not ready yet. Complete the Register Identity step first.");
       }
 
-      setState("creatingSession");
-      const permissionSync = await ensureSessionSelectorPermissions(effectiveRuntime, signer);
+      setState("updatingPermissions");
+      const permissionSync = await ensureSessionSelectorPermissions(effectiveRuntime, signer, chainReader);
       if (permissionSync.changed) {
         effectiveRuntime = {
           ...effectiveRuntime,
@@ -1778,7 +2154,13 @@ function AuthorizeStep({
     }
   }
 
-  const loading = state === "creatingSession" || state === "signing" || state === "submitting";
+  const loading =
+    state === "checkingWallet" ||
+    state === "preparingToken" ||
+    state === "creatingSession" ||
+    state === "updatingPermissions" ||
+    state === "signing" ||
+    state === "submitting";
   const done = state === "done";
   const isRenew = mode === "renew";
 
@@ -1813,7 +2195,7 @@ function AuthorizeStep({
             {isRenew && (
               <InfoBanner msg="Your account and funds are intact. You only need to re-sign the session key - no new deposit required." />
             )}
-            <InfoBanner msg="Wallet may ask for up to two confirmations here: first an on-chain AA permission update if required, then the KTRACE session authorization signature. After permissions are in place, renewals usually only need the signature." />
+              <InfoBanner msg="Sign & Renew is the only action in this step. KTrace will quietly prepare any missing settlement-token or session permissions first, then ask for the final session authorization signature." />
             {String(runtime.runtimeHealth || "").trim().toLowerCase() !== "active_default" && (
               <ErrorBanner msg="This runtime points to a historical AA wallet. Prepare a replacement wallet in step 2 before creating or renewing a session key." />
             )}
@@ -1909,20 +2291,26 @@ function AuthorizeStep({
                 loading={loading}
                 disabled={loading || String(runtime.runtimeHealth || "").trim().toLowerCase() === "known_bad_factory" || runtime.isDefaultFactoryRuntime !== true}
               >
-                <ShieldCheck className="size-3.5" />
-                {state === "creatingSession"
-                  ? "Checking session permissions..."
-                  : state === "signing"
-                    ? "Waiting for wallet signature..."
-                    : state === "submitting"
-                      ? "Submitting..."
-                      : isRenew
-                        ? "Sign & Renew"
-                        : "Sign & Authorize"}
+                  <ShieldCheck className="size-3.5" />
+                  {state === "checkingWallet"
+                    ? "Checking wallet..."
+                    : state === "preparingToken"
+                    ? "Preparing settlement token..."
+                    : state === "creatingSession"
+                      ? "Creating session..."
+                    : state === "updatingPermissions"
+                      ? "Updating permissions..."
+                      : state === "signing"
+                        ? "Waiting for wallet signature..."
+                        : state === "submitting"
+                          ? "Submitting..."
+                          : isRenew
+                            ? "Sign & Renew"
+                            : "Sign & Authorize"}
               </PrimaryBtn>
               {!loading && (
                 <p className="text-[11px] text-[#9e8e76]">
-                  Usually one signature. If AA permissions are missing, your wallet may ask for one on-chain confirmation first.
+                  Usually one signature. On first-time or repaired setups, your wallet may ask for one or two on-chain confirmations first.
                 </p>
               )}
             </div>
@@ -2574,7 +2962,13 @@ function ClaudeConnectorPanel({
   );
 }
 
-function DeveloperSetupPanel() {
+function DeveloperSetupPanel({
+  localSessionRuntimeExport,
+  onOpenSessionStep,
+}: {
+  localSessionRuntimeExport: LocalSessionRuntimeExport | null;
+  onOpenSessionStep?: () => void;
+}) {
   const [state, setState] = useState<"idle" | "generating" | "done">("idle");
   const [revoking, setRevoking] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -2661,11 +3055,11 @@ function DeveloperSetupPanel() {
     }
   }
 
-  const mcpEndpoint = `${LOCAL_BACKEND_BASE_URL}/mcp`;
   const hasFullKey = Boolean(apiKey);
   const keyDisplay = hasFullKey ? apiKey : "<generate_a_new_ktrace_sk_key>";
+  const sessionRuntimePath = "<path-to-ktrace-session-runtime.json>";
   const claudeCodeCommands = [
-    `claude mcp add --transport http ktrace ${mcpEndpoint} --header "x-api-key: ${keyDisplay}"`,
+    `claude mcp add --transport stdio ktrace "ktrace" "mcp" "bridge" --base-url ${LOCAL_BACKEND_BASE_URL} --api-key "${keyDisplay}" --session-runtime "${sessionRuntimePath}"`,
     "claude mcp list",
     "claude mcp get ktrace",
   ].join("\n");
@@ -2675,7 +3069,7 @@ function DeveloperSetupPanel() {
       <div className="flex items-start gap-3 rounded-2xl border border-[rgba(90,80,50,0.12)] bg-[rgba(58,66,32,0.04)] px-4 py-3">
         <Terminal className="mt-0.5 size-4 shrink-0 text-[#7a6e56]" />
         <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-          Use a normal HTTP MCP connection. Below is the shortest path using <strong>Claude Code</strong>.
+          Use the local <strong>ktrace mcp bridge</strong> so paid tools settle with your self-custodial session key on this machine. Direct MCP calls to the backend are only recommended for free tools.
         </p>
       </div>
 
@@ -2749,6 +3143,41 @@ function DeveloperSetupPanel() {
           </div>
 
           <div className="flex flex-col gap-4 border-t border-[rgba(90,80,50,0.1)] pt-4">
+            <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="size-4 text-[#7a6e56]" />
+                <span className="text-[13px] font-semibold text-[#18180e]">Local Session Runtime</span>
+              </div>
+              {localSessionRuntimeExport ? (
+                <>
+                  <p className="text-[12px] leading-relaxed text-[#7a6e56]">
+                    Download this JSON and keep it on your machine. It contains your session key and is required for paid MCP replay through the local bridge.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <PrimaryBtn
+                      onClick={() => downloadJsonFile("ktrace-session-runtime.json", localSessionRuntimeExport)}
+                    >
+                      <ShieldCheck className="size-3.5" />
+                      Download Local Session Runtime
+                    </PrimaryBtn>
+                    <p className="text-[11px] text-[#9e8e76]">
+                      Suggested filename: <code className="font-mono">ktrace-session-runtime.json</code>
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <ErrorBanner msg="Paid MCP needs a local session runtime file. Open the Session step on this device, authorize or renew once, then return here to download it." />
+                  {onOpenSessionStep && (
+                    <GhostBtn onClick={onOpenSessionStep}>
+                      <RefreshCw className="size-3.5" />
+                      Open Session Step
+                    </GhostBtn>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-2">
               <Terminal className="size-4 text-[#7a6e56]" />
               <span className="text-[13px] font-semibold text-[#18180e]">Claude Code Example</span>
@@ -2762,9 +3191,10 @@ function DeveloperSetupPanel() {
             <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
               <p className="text-[12px] font-medium text-[#18180e]">What to run next</p>
               <ol className="flex flex-col gap-2 text-[11px] text-[#7a6e56]">
-                <li>1. Add your local KTrace backend as an HTTP MCP server in Claude Code.</li>
-                <li>2. Check that Claude Code lists the `ktrace` server.</li>
-                <li>3. Inspect the saved entry to confirm the endpoint and header were stored correctly.</li>
+                <li>1. Download your local session runtime JSON and keep it private.</li>
+                <li>2. Add `ktrace mcp bridge` as a stdio MCP server in Claude Code.</li>
+                <li>3. Check that Claude Code lists the `ktrace` server and saved the command arguments correctly.</li>
+                <li>4. Use the bridge for paid tools; only free tools should call the backend MCP endpoint directly.</li>
               </ol>
             </div>
           </div>
@@ -2785,29 +3215,34 @@ function DeveloperSetupPanel() {
 function ConnectStep4({
   address: _address,
   runtime: _runtime,
+  localSessionRuntimeExport,
   sessionValid: _sessionValid,
-  onOpenSessionStep: _onOpenSessionStep,
+  onOpenSessionStep,
 }: {
   address: string;
   runtime: SessionRuntime;
+  localSessionRuntimeExport: LocalSessionRuntimeExport | null;
   sessionValid: boolean;
   onOpenSessionStep?: () => void;
 }) {
   return (
-    <Card>
+      <Card>
       <CardHeader>
           <div className="flex items-center gap-3">
-            <StepBadge n={4} active done={false} />
+            <StepBadge n={5} active done={false} />
             <div>
               <h2 className="text-[15px] font-semibold text-[#18180e]">Connect via MCP</h2>
               <p className="mt-0.5 text-[12px] text-[#9e8e76]">
-                Your wallet and session are ready. Generate an API key, then add KTrace as a normal HTTP MCP server.
+                Generate an API key, download your local session runtime, then connect Claude Code to the local KTrace bridge.
               </p>
             </div>
           </div>
         </CardHeader>
         <CardBody>
-          <DeveloperSetupPanel />
+          <DeveloperSetupPanel
+            localSessionRuntimeExport={localSessionRuntimeExport}
+            onOpenSessionStep={onOpenSessionStep}
+          />
         </CardBody>
       </Card>
   );
@@ -2848,8 +3283,17 @@ function RegisterIdentityStep({
     setAgentId(runtime.agentId || "");
     setRegisterTxHash(runtime.identityRegisterTxHash || "");
     setWalletTxHash(runtime.identityBindTxHash || "");
-    setState("done");
+    if (
+      runtime.aaWallet &&
+      runtime.agentWallet &&
+      normalizeAccountAddress(runtime.agentWallet) === normalizeAccountAddress(runtime.aaWallet)
+    ) {
+      setState("done");
+      return;
+    }
+    setState("idle");
   }, [
+    runtime.aaWallet,
     runtime.agentId,
     runtime.agentWallet,
     runtime.identityBindTxHash,
@@ -2857,49 +3301,45 @@ function RegisterIdentityStep({
     runtime.identityRegistry,
   ]);
 
-  // Check existing identity on mount during forward onboarding only
-  useEffect(() => {
-    if (reviewMode) return;
-    if (!registryAddress || !isAddress(registryAddress)) return;
-    checkExistingIdentity();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryAddress, reviewMode]);
-
   async function checkExistingIdentity() {
     setState("checking");
     setError("");
     try {
       // Try fetching current identity from backend
-      const identityProfile = await fetchCurrentIdentity().catch(() => null);
+      const identityProfile = await withTimeout(
+        fetchCurrentIdentity().catch(() => null),
+        4000,
+        "Identity lookup timed out."
+      );
       if (identityProfile && hasRuntimeIdentity(mergeRuntimeIdentity(runtime, identityProfile))) {
         const merged = mergeRuntimeIdentity(runtime, identityProfile);
         setExistingAgentId(merged.agentId || "");
-        // Check if agentWallet matches aaWallet
-        const provider = getBrowserProvider();
-        if (provider && registryAddress) {
-          const registry = new Contract(registryAddress, IDENTITY_REGISTRY_ABI, provider);
-          const onChainWallet = await registry.getAgentWallet(BigInt(merged.agentId || "0")).catch(() => "");
-          if (onChainWallet && normalizeAccountAddress(onChainWallet) === normalizeAccountAddress(aaWallet)) {
-            // All good — identity exists and wallet bound
-            onRuntimeUpdate(merged);
-            setState("done");
-            return;
-          }
+        if (
+          merged.aaWallet &&
+          merged.agentWallet &&
+          normalizeAccountAddress(merged.agentWallet) === normalizeAccountAddress(merged.aaWallet)
+        ) {
+          onRuntimeUpdate(merged);
+          setState("done");
+          return;
         }
-        // Identity exists but wallet not bound
         setExistingAgentId(merged.agentId || "");
         onRuntimeUpdate(merged);
         setState("idle");
         return;
       }
       // No identity — read fees
-      const provider = getBrowserProvider();
+      const provider = getReadOnlyProvider() ?? getBrowserProvider();
       if (provider && registryAddress) {
         const registry = new Contract(registryAddress, IDENTITY_REGISTRY_ABI, provider);
-        const [regFee, metaFee] = await Promise.all([
-          registry.registerFee().catch(() => BigInt(0)),
-          registry.metadataUpdateFee().catch(() => BigInt(0)),
-        ]);
+        const [regFee, metaFee] = await withTimeout(
+          Promise.all([
+            registry.registerFee().catch(() => BigInt(0)),
+            registry.metadataUpdateFee().catch(() => BigInt(0)),
+          ]),
+          4000,
+          "Identity fee lookup timed out."
+        );
         setRegisterFee(regFee.toString());
         setWalletFee(metaFee.toString());
       }
@@ -3000,6 +3440,7 @@ function RegisterIdentityStep({
       }
 
       setState("done");
+      onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed.");
       setState("idle");
@@ -3008,14 +3449,6 @@ function RegisterIdentityStep({
 
   const effectiveAgentId = existingAgentId || agentId;
   const isDone = state === "done";
-
-  // Auto-advance if already done on mount check
-  useEffect(() => {
-    if (!reviewMode && isDone && effectiveAgentId) {
-      const t = setTimeout(() => onDone(), 600);
-      return () => clearTimeout(t);
-    }
-  }, [effectiveAgentId, isDone, onDone, reviewMode]);
 
   return (
     <div className="rounded-2xl border border-[rgba(90,80,50,0.12)] bg-white p-6 shadow-sm">
@@ -3099,22 +3532,28 @@ function RegisterIdentityStep({
               Registration fee: {(Number(BigInt(registerFee)) / 1e18).toFixed(6)} KITE
             </p>
           )}
-          <button
-            type="button"
-            onClick={registerIdentity}
-            disabled={state === "registering" || state === "settingWallet" || !registryAddress}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3a4220] py-3 text-[13px] font-semibold text-[#faf7f1] transition hover:bg-[#4a5530] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {state === "registering" ? (
-              <><Loader2 className="size-4 animate-spin" /> Registering on-chain...</>
-            ) : state === "settingWallet" ? (
-              <><Loader2 className="size-4 animate-spin" /> Binding AA wallet...</>
-            ) : existingAgentId ? (
-              <><Link2 className="size-4" /> Bind AA Wallet to Agent #{existingAgentId}</>
-            ) : (
-              <><ShieldCheck className="size-4" /> Register Agent Identity</>
-            )}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={registerIdentity}
+              disabled={state === "registering" || state === "settingWallet" || !registryAddress}
+              className="flex min-w-[240px] items-center justify-center gap-2 rounded-xl bg-[#3a4220] px-5 py-3 text-[13px] font-semibold text-[#faf7f1] transition hover:bg-[#4a5530] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {state === "registering" ? (
+                <><Loader2 className="size-4 animate-spin" /> Registering on-chain...</>
+              ) : state === "settingWallet" ? (
+                <><Loader2 className="size-4 animate-spin" /> Binding AA wallet...</>
+              ) : existingAgentId ? (
+                <><Link2 className="size-4" /> Bind AA Wallet to Agent #{existingAgentId}</>
+              ) : (
+                <><ShieldCheck className="size-4" /> Register Agent Identity</>
+              )}
+            </button>
+            <GhostBtn onClick={() => void checkExistingIdentity()} disabled={state !== "idle" || !registryAddress}>
+              <RefreshCw className="size-3.5" />
+              Re-sync from chain
+            </GhostBtn>
+          </div>
         </>
       )}
 
@@ -3198,6 +3637,7 @@ export default function SetupWizardClient({ capabilities }: Props) {
   const [manualStep, setManualStep] = useState<Step | null>(null);
   const [address, setAddress] = useState("");
   const [runtime, setRuntime] = useState<SessionRuntime>({});
+  const [localSessionRuntimeExport, setLocalSessionRuntimeExport] = useState<LocalSessionRuntimeExport | null>(null);
   const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
   const [sessionStepCompleted, setSessionStepCompleted] = useState(false);
   const [detecting, setDetecting] = useState(false);
@@ -3209,55 +3649,114 @@ export default function SetupWizardClient({ capabilities }: Props) {
     setManualStep(null);
     setAddress("");
     setRuntime({});
+    setLocalSessionRuntimeExport(null);
     setAccountStatus(null);
     setSessionStepCompleted(false);
     setDetecting(false);
     setDetectError("");
+    persistLocalSessionRuntime(null);
   }, []);
 
-  // 鈹€鈹€ Post-wallet detection: get runtime, check balances, route 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  useEffect(() => {
+    setLocalSessionRuntimeExport(readStoredLocalSessionRuntime());
+  }, []);
+
+  const handleLocalSessionRuntimeReady = useCallback((value: LocalSessionRuntimeExport) => {
+    setLocalSessionRuntimeExport(value);
+    persistLocalSessionRuntime(value);
+  }, []);
+
+  const setupSnapshot = useMemo(
+    () =>
+      buildSetupSnapshot({
+        ownerEoa: address,
+        runtime,
+        accountStatus,
+        localSessionRuntimeExport,
+      }),
+    [accountStatus, address, localSessionRuntimeExport, runtime]
+  );
+
+  const refreshAccountStatus = useCallback(async (addr: string, rt: SessionRuntime) => {
+    const eth = getEthereum();
+    try {
+      const [aaBalance, eoaBalance, aaTokenBalance, eoaTokenBalance] = await Promise.all([
+        rt.aaWallet && eth ? getBalance(eth, rt.aaWallet) : Promise.resolve(null),
+        eth ? getBalance(eth, addr) : Promise.resolve(null),
+        rt.aaWallet && rt.tokenAddress ? getTokenBalance(rt.tokenAddress, rt.aaWallet) : Promise.resolve(null),
+        rt.tokenAddress ? getTokenBalance(rt.tokenAddress, addr) : Promise.resolve(null),
+      ]);
+      setAccountStatus((current) => {
+        const userType = deriveUserType(rt);
+        const sessionValid = hasAuthorizedSessionRuntime(rt);
+        return {
+          userType,
+          sessionValid,
+          aaBalance: aaBalance ?? current?.aaBalance ?? 0,
+          eoaBalance: eoaBalance ?? current?.eoaBalance ?? 0,
+          aaTokenBalance: aaTokenBalance ?? current?.aaTokenBalance ?? 0,
+          eoaTokenBalance: eoaTokenBalance ?? current?.eoaTokenBalance ?? 0,
+          aaBalanceKnown: aaBalance !== null || current?.aaBalanceKnown === true,
+          eoaBalanceKnown: eoaBalance !== null || current?.eoaBalanceKnown === true,
+          aaTokenBalanceKnown: aaTokenBalance !== null || current?.aaTokenBalanceKnown === true,
+          eoaTokenBalanceKnown: eoaTokenBalance !== null || current?.eoaTokenBalanceKnown === true,
+        };
+      });
+    } catch {
+      const userType = deriveUserType(rt);
+      const sessionValid = hasAuthorizedSessionRuntime(rt);
+      setAccountStatus((current) => ({
+        userType,
+        sessionValid,
+        aaBalance: current?.aaBalance ?? 0,
+        eoaBalance: current?.eoaBalance ?? 0,
+        aaTokenBalance: current?.aaTokenBalance ?? 0,
+        eoaTokenBalance: current?.eoaTokenBalance ?? 0,
+        aaBalanceKnown: current?.aaBalanceKnown ?? false,
+        eoaBalanceKnown: current?.eoaBalanceKnown ?? false,
+        aaTokenBalanceKnown: current?.aaTokenBalanceKnown ?? false,
+        eoaTokenBalanceKnown: current?.eoaTokenBalanceKnown ?? false,
+      }));
+    }
+  }, []);
+
+  // 鈹€鈹€ Post-wallet detection: get runtime, route immediately, refresh balances in background 鈹€鈹€鈹€鈹€鈹€
   const detectAndRoute = useCallback(async (addr: string) => {
     setDetecting(true);
     setDetectError("");
     setManualStep(null);
-    const eth = getEthereum();
     try {
       const rt = await fetchSetupRuntime(addr);
       setRuntime(rt);
-
-      const [aaBalance, eoaBalance, aaTokenBalance, eoaTokenBalance] = await Promise.all([
-        rt.aaWallet && eth ? getBalance(eth, rt.aaWallet) : Promise.resolve(0),
-        eth ? getBalance(eth, addr) : Promise.resolve(0),
-        rt.aaWallet && rt.tokenAddress ? getTokenBalance(rt.tokenAddress, rt.aaWallet) : Promise.resolve(0),
-        rt.tokenAddress ? getTokenBalance(rt.tokenAddress, addr) : Promise.resolve(0),
-      ]);
-
-      const userType: UserType = rt.sessionId ? "returning" : "new";
+      const userType = deriveUserType(rt);
       const sessionValid = hasAuthorizedSessionRuntime(rt);
-      const status: AccountStatus = { userType, sessionValid, aaBalance, eoaBalance, aaTokenBalance, eoaTokenBalance };
-      setAccountStatus(status);
+      setAccountStatus((current) => ({
+        userType,
+        sessionValid,
+        aaBalance: current?.aaBalance ?? 0,
+        eoaBalance: current?.eoaBalance ?? 0,
+        aaTokenBalance: current?.aaTokenBalance ?? 0,
+        eoaTokenBalance: current?.eoaTokenBalance ?? 0,
+        aaBalanceKnown: current?.aaBalanceKnown ?? false,
+        eoaBalanceKnown: current?.eoaBalanceKnown ?? false,
+        aaTokenBalanceKnown: current?.aaTokenBalanceKnown ?? false,
+        eoaTokenBalanceKnown: current?.eoaTokenBalanceKnown ?? false,
+      }));
       setSessionStepCompleted(false);
-      const isRuntimeReady =
-        !rt.aaDeployed || rt.accountCapabilities?.sessionGenericExecute === true;
-      const isDefaultFactoryRuntime = rt.isDefaultFactoryRuntime === true;
-
-      // Routing logic
-      if (hasRuntimeIdentity(rt) && aaBalance > 0 && aaTokenBalance > 0 && isRuntimeReady && isDefaultFactoryRuntime) {
-        // Identity + funds ready: go straight to MCP setup. Session renew is optional.
-        setStep(4);
-      } else if (aaBalance > 0 && aaTokenBalance > 0 && isRuntimeReady && isDefaultFactoryRuntime) {
-        // Has funds - Register Identity
-        setStep(2);
-      } else {
-        // No AA balance - needs to fund
-        setStep(1);
-      }
+      const snapshot = buildSetupSnapshot({
+        ownerEoa: addr,
+        runtime: rt,
+        accountStatus: null,
+        localSessionRuntimeExport,
+      });
+      setStep(resolveInitialWizardStep(snapshot));
+      void refreshAccountStatus(addr, rt);
     } catch (err) {
       setDetectError(err instanceof Error ? err.message : "Account detection failed.");
     } finally {
       setDetecting(false);
     }
-  }, []);
+  }, [localSessionRuntimeExport, refreshAccountStatus]);
 
   function onWalletDone(addr: string) {
     setAddress(addr);
@@ -3285,7 +3784,7 @@ export default function SetupWizardClient({ capabilities }: Props) {
   }
 
   const authorizeMode =
-    accountStatus?.userType === "returning" && !accountStatus.sessionValid
+    accountStatus?.userType === "returning" && !setupSnapshot.sessionAuthorized
       ? "renew"
       : accountStatus?.userType === "returning"
         ? "renew"
@@ -3429,7 +3928,7 @@ export default function SetupWizardClient({ capabilities }: Props) {
               onRuntimeUpdate={setRuntime}
               onDone={() => {
                 setManualStep(null);
-                setStep(4);
+                setStep(3);
               }}
             />
           )}
@@ -3451,9 +3950,12 @@ export default function SetupWizardClient({ capabilities }: Props) {
               <AuthorizeStep
                 address={address}
                 runtime={runtime}
+                accountStatus={accountStatus}
                 availableCaps={capabilities}
                 mode={authorizeMode}
                 onRuntimeUpdate={setRuntime}
+                hasLocalSessionRuntime={setupSnapshot.hasLocalSessionExport}
+                onLocalSessionRuntimeReady={handleLocalSessionRuntimeReady}
                 onDone={() => {
                   setManualStep(null);
                   setSessionStepCompleted(true);
@@ -3470,16 +3972,16 @@ export default function SetupWizardClient({ capabilities }: Props) {
                     ? authorizeMode === "renew"
                       ? "Session Key Renewed"
                       : "Session Authorized"
-                    : accountStatus?.sessionValid
+                    : setupSnapshot.sessionAuthorized && setupSnapshot.hasLocalSessionExport
                       ? "Session Ready"
-                      : "Session Key (Optional)"
+                      : "Session Authorization Needed"
                 }
                 sub={
                   sessionStepCompleted
                     ? "Authority recorded on Kite Testnet"
-                    : accountStatus?.sessionValid
-                      ? "Authorized session already available."
-                      : "Click to expand this step and renew or authorize a fresh session key."
+                    : setupSnapshot.sessionAuthorized && setupSnapshot.hasLocalSessionExport
+                      ? "Authorized session and local runtime already available."
+                      : "Click to expand this step and authorize a fresh local session runtime."
                 }
                 onClick={() => openStep(3)}
               />
@@ -3490,7 +3992,8 @@ export default function SetupWizardClient({ capabilities }: Props) {
             <ConnectStep4
               address={address}
               runtime={runtime}
-              sessionValid={Boolean(accountStatus?.sessionValid)}
+              localSessionRuntimeExport={localSessionRuntimeExport}
+              sessionValid={setupSnapshot.sessionAuthorized}
               onOpenSessionStep={() => openStep(3)}
             />
           )}

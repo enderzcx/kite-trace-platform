@@ -1,12 +1,30 @@
+import { createKiteRpcProvider } from './kiteRpc.js';
+
 export function createOnchainAnchorHelpers({
   backendSigner,
   backendRpcUrl = '',
   digestStableObject,
   erc8004TrustAnchorRegistry,
+  erc8004IdentityRegistry = '',
   erc8183JobAnchorRegistry,
   ethers,
   jobLifecycleAnchorAbi,
-  trustPublicationAnchorAbi
+  trustPublicationAnchorAbi,
+  resolveSessionRuntime,
+  resolveSessionOwnerByAaWallet,
+  resolveSessionOwnerPrivateKey,
+  GokiteAASDK,
+  bundlerUrl = '',
+  entryPointAddress = '',
+  accountFactoryAddress = '',
+  accountImplementationAddress = '',
+  bundlerRpcTimeoutMs = 15000,
+  bundlerRpcRetries = 3,
+  bundlerRpcBackoffBaseMs = 650,
+  bundlerRpcBackoffMaxMs = 6000,
+  bundlerRpcBackoffFactor = 2,
+  bundlerRpcBackoffJitterMs = 250,
+  bundlerReceiptPollIntervalMs = 1000
 }) {
   function normalizeText(value = '') {
     return String(value || '').trim();
@@ -74,13 +92,130 @@ export function createOnchainAnchorHelpers({
     if (backendSigner?.provider) return backendSigner.provider;
     const rpcUrl = normalizeText(backendRpcUrl);
     if (!rpcUrl) return null;
-    return new ethers.JsonRpcProvider(rpcUrl);
+    return createKiteRpcProvider(ethers, rpcUrl);
+  }
+
+  function normalizeAddress(value = '') {
+    return normalizeText(value).toLowerCase();
+  }
+
+  const identityRegistryReadAbi = [
+    'function getAgentWallet(uint256 agentId) view returns (address)'
+  ];
+  const accountPermissionReadAbi = [
+    'function getSessionSelectorPermission(bytes32 sessionId, address target, bytes4 selector) view returns (bool enabled, uint256 maxAmount)'
+  ];
+  const accountPermissionWriteAbi = [
+    'function setSessionSelectorPermissions(tuple(bytes32 sessionId, address target, bytes4 selector, bool enabled, uint256 maxAmount)[] permissions)'
+  ];
+
+  function selectorFromCallData(data = '') {
+    const hex = normalizeText(data);
+    return hex.length >= 10 ? hex.slice(0, 10).toLowerCase() : '';
+  }
+
+  async function resolveAgentAaWallet(agentId = '') {
+    const agentIdNum = parseInt(agentId, 10);
+    if (!agentIdNum || agentIdNum <= 0) return null;
+    const identityAddr = normalizeText(erc8004IdentityRegistry);
+    if (!identityAddr || !ethers.isAddress(identityAddr)) return null;
+    const provider = getReadProvider();
+    if (!provider) return null;
+    try {
+      const registry = new ethers.Contract(identityAddr, identityRegistryReadAbi, provider);
+      const wallet = await runWithOnchainRetry(
+        () => registry.getAgentWallet(agentIdNum),
+        { timeoutMs: 15000 }
+      );
+      const addr = normalizeAddress(wallet);
+      return addr && addr !== ethers.ZeroAddress.toLowerCase() ? addr : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function ensureTrustAnchorSessionPermission(context, registryAddress, callData) {
+    const provider = getReadProvider();
+    if (!context?.runtimeAddress || !context?.sessionId || !provider) return null;
+    const target = normalizeAddress(registryAddress);
+    const selector = selectorFromCallData(callData);
+    if (!target || !selector) return null;
+    const readContract = new ethers.Contract(context.runtimeAddress, accountPermissionReadAbi, provider);
+    const [enabled] = await withTimeout(
+      runWithOnchainRetry(() => readContract.getSessionSelectorPermission(context.sessionId, target, selector)),
+      15000,
+      'getSessionSelectorPermission'
+    );
+    if (enabled) return { configured: false, selector, target };
+    const ownerKey = normalizeText(resolveSessionOwnerPrivateKey?.(context.runtimeOwner) || '');
+    if (!ownerKey) return null;
+    const ownerWallet = new ethers.Wallet(ownerKey, provider);
+    const writeContract = new ethers.Contract(context.runtimeAddress, accountPermissionWriteAbi, ownerWallet);
+    const tx = await withTimeout(
+      runWithOnchainRetry(() =>
+        writeContract.setSessionSelectorPermissions([
+          { sessionId: context.sessionId, target, selector, enabled: true, maxAmount: 0n }
+        ])
+      ),
+      30000,
+      'setSessionSelectorPermissions'
+    );
+    await withTimeout(tx.wait(), 60000, 'wait permission bootstrap tx');
+    return { configured: true, selector, target, txHash: normalizeText(tx?.hash) };
+  }
+
+  async function publishViaAaSession(registryAddress, callData, agentAaWallet) {
+    const provider = getReadProvider();
+    if (!provider || !resolveSessionRuntime || !GokiteAASDK) return null;
+    const inferredOwner = normalizeAddress(resolveSessionOwnerByAaWallet?.(agentAaWallet) || '');
+    const runtime = resolveSessionRuntime({ owner: inferredOwner, aaWallet: agentAaWallet });
+    if (!runtime?.sessionPrivateKey || !runtime?.sessionId) return null;
+    const runtimeAaWallet = normalizeAddress(runtime.aaWallet || '');
+    if (runtimeAaWallet !== normalizeAddress(agentAaWallet)) return null;
+    const runtimeOwner = normalizeAddress(runtime.owner || inferredOwner);
+    const sessionId = normalizeText(runtime.sessionId);
+
+    const context = { runtimeAddress: runtimeAaWallet, runtimeOwner, sessionId };
+    await ensureTrustAnchorSessionPermission(context, registryAddress, callData);
+
+    const sdk = new GokiteAASDK({
+      network: 'kite_testnet',
+      rpcUrl: normalizeText(backendRpcUrl),
+      bundlerUrl: normalizeText(bundlerUrl),
+      entryPointAddress: normalizeText(entryPointAddress),
+      accountFactoryAddress: normalizeText(accountFactoryAddress),
+      accountImplementationAddress: normalizeText(accountImplementationAddress),
+      proxyAddress: runtimeAaWallet,
+      bundlerRpcTimeoutMs,
+      bundlerRpcRetries,
+      bundlerRpcBackoffBaseMs,
+      bundlerRpcBackoffMaxMs,
+      bundlerRpcBackoffFactor,
+      bundlerRpcBackoffJitterMs,
+      bundlerReceiptPollIntervalMs
+    });
+    if (runtimeOwner && ethers.isAddress(runtimeOwner)) {
+      sdk.config.ownerAddress = runtimeOwner;
+    }
+    const sessionWallet = new ethers.Wallet(runtime.sessionPrivateKey, provider);
+    const signFunction = async (hash) => sessionWallet.signMessage(ethers.getBytes(hash));
+
+    const actionId = ethers.keccak256(ethers.toUtf8Bytes(`trust_publication:${registryAddress}`));
+    const result = await sdk.sendSessionGenericExecute(
+      { sessionId, target: registryAddress, value: 0n, data: callData, actionId, authz: '0x' },
+      signFunction
+    );
+    const txHash = normalizeText(result?.transactionHash || result?.receipt?.transactionHash || '');
+    const receipt = result?.receipt || (txHash ? await runWithOnchainRetry(
+      () => provider.getTransactionReceipt(txHash),
+      { timeoutMs: 30000 }
+    ) : null);
+    return { txHash, receipt, publishedVia: 'aa-session', publisherWallet: runtimeAaWallet };
   }
 
   async function publishTrustPublicationOnChain(input = {}) {
-    const signer = backendSigner;
     const registryAddress = String(erc8004TrustAnchorRegistry || '').trim();
-    if (!signer || !ethers.isAddress(registryAddress)) {
+    if (!ethers.isAddress(registryAddress)) {
       return {
         configured: false,
         published: false,
@@ -93,6 +228,7 @@ export function createOnchainAnchorHelpers({
     const publicationType = String(input?.publicationType || '').trim().toLowerCase();
     const sourceId = String(input?.sourceId || '').trim();
     const agentId = String(input?.agentId || '').trim();
+    const agentIdNum = parseInt(agentId, 10) || 0;
     const referenceId = String(input?.referenceId || '').trim();
     const traceId = String(input?.traceId || '').trim();
     const detailsURI = String(input?.detailsURI || input?.publicationRef || '').trim();
@@ -109,22 +245,64 @@ export function createOnchainAnchorHelpers({
       ? `0x${String(digest.value).trim()}`
       : ethers.ZeroHash;
 
-    const anchorTimeoutMs = 30000;
-    const contract = new ethers.Contract(registryAddress, trustPublicationAnchorAbi, signer);
-    const tx = await runWithOnchainRetry(() =>
-      contract.publishTrustPublication(
-        publicationType,
-        sourceId,
-        agentId,
-        referenceId,
-        traceId,
-        payloadHash,
-        detailsURI
-      ),
-      { timeoutMs: anchorTimeoutMs }
-    );
-    const receipt = await runWithOnchainRetry(() => tx.wait(), { timeoutMs: anchorTimeoutMs });
     const anchorInterface = new ethers.Interface(trustPublicationAnchorAbi);
+    const callData = anchorInterface.encodeFunctionData('publishTrustPublication', [
+      publicationType, sourceId, agentId, agentIdNum,
+      referenceId, traceId, payloadHash, detailsURI
+    ]);
+
+    let txHash = '';
+    let receipt = null;
+    let publishedVia = 'backend-signer';
+
+    // Try AA session execution first (provider's own AA wallet)
+    if (agentIdNum > 0) {
+      try {
+        const agentAaWallet = await resolveAgentAaWallet(agentId);
+        console.log('[trust-anchor] agentId=' + agentId + ' → aaWallet=' + (agentAaWallet || 'null'));
+        if (agentAaWallet) {
+          const aaResult = await publishViaAaSession(registryAddress, callData, agentAaWallet);
+          if (aaResult?.txHash) {
+            txHash = aaResult.txHash;
+            receipt = aaResult.receipt;
+            publishedVia = aaResult.publishedVia;
+          }
+        }
+      } catch (aaError) {
+        // AA path failed, fall back to backendSigner
+        console.error('[trust-anchor] AA session path failed for agentId=' + agentId + ':', aaError?.message || String(aaError));
+        txHash = '';
+        receipt = null;
+      }
+    }
+
+    // Fallback: backendSigner direct call (legacy path)
+    if (!txHash && backendSigner) {
+      const anchorTimeoutMs = 30000;
+      const contract = new ethers.Contract(registryAddress, trustPublicationAnchorAbi, backendSigner);
+      const tx = await runWithOnchainRetry(() =>
+        contract.publishTrustPublication(
+          publicationType, sourceId, agentId, agentIdNum,
+          referenceId, traceId, payloadHash, detailsURI
+        ),
+        { timeoutMs: anchorTimeoutMs }
+      );
+      receipt = await runWithOnchainRetry(() => tx.wait(), { timeoutMs: anchorTimeoutMs });
+      txHash = String(tx?.hash || '').trim();
+      publishedVia = 'backend-signer';
+    }
+
+    if (!txHash) {
+      return {
+        configured: true,
+        published: false,
+        registryAddress,
+        anchorId: '',
+        anchorTxHash: '',
+        payloadHash
+      };
+    }
+
     const anchorLog = receipt?.logs
       ?.filter((log) => String(log?.address || '').toLowerCase() === registryAddress.toLowerCase())
       .map((log) => {
@@ -141,8 +319,9 @@ export function createOnchainAnchorHelpers({
       published: true,
       registryAddress,
       anchorId: String(anchorLog?.args?.anchorId || '').trim(),
-      anchorTxHash: String(tx?.hash || '').trim(),
-      payloadHash
+      anchorTxHash: txHash,
+      payloadHash,
+      publishedVia
     };
   }
 

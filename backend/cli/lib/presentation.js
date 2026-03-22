@@ -22,6 +22,13 @@ Usage:
 Recommended external-agent entrypoint:
   ktrace agent invoke --capability <capability-id> --input <json-or-path>
 
+Recommended Claude Code paid-MCP entrypoint:
+  ktrace mcp bridge --session-runtime <path-to-local-runtime-json>
+
+Paid MCP note:
+  Use the local bridge for paid tools so payment stays self-custodial on the user's machine.
+  Direct HTTP MCP calls to the backend are only recommended for free/read-only tools.
+
 Families:
 ${familyLines.join('\n')}
 
@@ -56,6 +63,7 @@ Implemented:
   buy request            Resolve a service and invoke the negotiated-buy lane
   buy direct             Buy from a published template without renegotiation (capability id or action)
   agent invoke           Discover, buy, and fetch evidence in one CLI-only call
+  mcp bridge             Run a local stdio MCP bridge with self-custodial paid replay
   template list          List reusable templates
   template resolve       Resolve the active template for a provider/capability pair
   template show          Show template detail
@@ -116,6 +124,7 @@ Examples:
   ktrace --base-url http://127.0.0.1:3102 approval list --kind job --state pending
   ktrace --base-url http://127.0.0.1:3102 approval show apr_123
   ktrace --base-url http://127.0.0.1:3102 approval approve apr_123 --note "approved by operator"
+  ktrace --base-url http://127.0.0.1:3399 --api-key ktrace_sk_xxx mcp bridge --session-runtime C:\\Users\\you\\.ktrace\\session-runtime.json
   ktrace --base-url http://127.0.0.1:3102 provider list --role provider --verified true --q external
   ktrace --base-url http://127.0.0.1:3102 provider identity-challenge --input data/provider-identity-challenge.json
   ktrace --base-url http://127.0.0.1:3102 provider register-identity --input data/provider-register-identity.json

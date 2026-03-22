@@ -166,19 +166,9 @@ export function createTrustLayerHelpers({
     const artifacts = [];
     const createdAt = new Date().toISOString();
 
-    const consumerArtifact = await appendSubjectTrustSignal(consumerSubject || {}, {
-      sourceLane,
-      sourceKind,
-      referenceId,
-      traceId,
-      paymentRequestId,
-      summary,
-      evaluator,
-      responseHash,
-      detailsURI,
-      createdAt
-    });
-    if (consumerArtifact) artifacts.push({ subject: 'consumer', ...consumerArtifact });
+    // Consumer publication removed: payment txHash IS the consumer's attestation.
+    // The on-chain USDC transfer signed by the consumer's AA wallet serves as
+    // verifiable proof of the consumer's participation — no separate publication needed.
 
     const providerArtifact = await appendSubjectTrustSignal(providerSubject || {}, {
       sourceLane,

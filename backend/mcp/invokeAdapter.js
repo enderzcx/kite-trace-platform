@@ -56,10 +56,10 @@ function classifyError(payload = {}, status = 500, fallbackReason = '') {
 function pickTraceId(args = {}, extra = {}) {
   return normalizeText(
     extra?._meta?.traceId ||
-    extra?.requestInfo?.meta?.traceId ||
-    args?._meta?.traceId ||
-    args?.traceId ||
-    ''
+      extra?.requestInfo?.meta?.traceId ||
+      args?._meta?.traceId ||
+      args?.traceId ||
+      ''
   );
 }
 
@@ -93,13 +93,12 @@ function buildInvokePayload(tool = {}, args = {}, extra = {}, paymentMode = '', 
   const payer = normalizeText(normalizedArgs?.payer || '');
   const targetAgentId = normalizeText(normalizedArgs?.targetAgentId || '');
   const requestId = normalizeText(normalizedArgs?.requestId || '');
-  // hosted (connector-grant) always wins; otherwise tool-level paymentMode takes precedence over request-level
   const x402Mode = normalizeText(
     (paymentMode === 'hosted' ? 'hosted' : null) ||
-    tool?.paymentMode ||
-    paymentMode ||
-    normalizedArgs?.x402Mode ||
-    ''
+      tool?.paymentMode ||
+      paymentMode ||
+      normalizedArgs?.x402Mode ||
+      ''
   );
   const paymentProof = isPlainObject(normalizedArgs?.paymentProof) ? normalizedArgs.paymentProof : null;
 
@@ -124,6 +123,14 @@ function buildInvokePayload(tool = {}, args = {}, extra = {}, paymentMode = '', 
 
 function buildSuccessResult(tool = {}, payload = {}, traceId = '') {
   const effectiveTraceId = normalizeText(payload?.traceId || traceId || '');
+  const paymentSettled = Boolean(
+    normalizeText(payload?.requestId || payload?.workflow?.requestId || '') &&
+      (
+        normalizeText(payload?.txHash || payload?.workflow?.txHash || '') ||
+        normalizeText(payload?.userOpHash || payload?.workflow?.userOpHash || '') ||
+        payload?.receipt
+      )
+  );
   const summary =
     normalizeText(payload?.receipt?.result?.summary || '') ||
     normalizeText(payload?.workflow?.result?.summary || '') ||
@@ -144,12 +151,51 @@ function buildSuccessResult(tool = {}, payload = {}, traceId = '') {
       invocationId: normalizeText(payload?.invocationId || ''),
       serviceId: normalizeText(payload?.serviceId || tool?.serviceId || tool?.capabilityId || ''),
       state: normalizeText(payload?.state || payload?.workflow?.state || 'success') || 'success',
+      paymentStatus: paymentSettled ? 'payment_settled_result' : 'success',
       summary,
       txHash: normalizeText(payload?.txHash || payload?.workflow?.txHash || ''),
       userOpHash: normalizeText(payload?.userOpHash || payload?.workflow?.userOpHash || ''),
       result: payload?.result ?? null,
       receipt: payload?.receipt ?? null,
+      trust: payload?.trust ?? null,
       evidenceRef: encodeEvidenceRef(effectiveTraceId)
+    }
+  };
+}
+
+function buildPaymentRequiredPreviewResult(tool = {}, payload = {}, traceId = '') {
+  const effectiveTraceId = normalizeText(payload?.traceId || traceId || '');
+  const x402 = payload?.x402 && typeof payload.x402 === 'object' ? payload.x402 : {};
+  const accepts = Array.isArray(x402?.accepts) ? x402.accepts : [];
+  const quote = accepts[0] && typeof accepts[0] === 'object' ? accepts[0] : {};
+  const reason =
+    normalizeText(payload?.reason || payload?.error || '') ||
+    'Payment is required before this tool can produce a fresh result.';
+
+  return {
+    isError: true,
+    content: [
+      {
+        type: 'text',
+        text: reason
+      }
+    ],
+    structuredContent: {
+      error: 'payment_required_preview',
+      paymentStatus: 'payment_required_preview',
+      reason,
+      status: 402,
+      traceId: effectiveTraceId,
+      requestId: normalizeText(payload?.requestId || x402?.requestId || ''),
+      invocationId: normalizeText(payload?.invocationId || ''),
+      serviceId: normalizeText(payload?.serviceId || tool?.serviceId || tool?.capabilityId || ''),
+      state:
+        normalizeText(payload?.state || payload?.workflow?.state || 'payment_required') ||
+        'payment_required',
+      tokenAddress: normalizeText(quote?.tokenAddress || ''),
+      recipient: normalizeText(quote?.recipient || ''),
+      amount: normalizeText(quote?.amount || ''),
+      x402
     }
   };
 }
@@ -232,7 +278,9 @@ export function createMcpInvokeAdapter({ fetchLoopbackJson }) {
 
     try {
       const { status, payload } = await fetchLoopbackJson({
-        pathname: `/api/services/${encodeURIComponent(normalizeText(tool?.serviceId || tool?.capabilityId || ''))}/invoke`,
+        pathname: `/api/services/${encodeURIComponent(
+          normalizeText(tool?.serviceId || tool?.capabilityId || '')
+        )}/invoke`,
         method: 'POST',
         body: invokePayload,
         apiKey,
@@ -243,23 +291,17 @@ export function createMcpInvokeAdapter({ fetchLoopbackJson }) {
         return buildSuccessResult(tool, payload, effectiveTraceId);
       }
 
-      // Handle 402 payment-required responses based on payment mode:
-      // - hosted: server-side payment failed → return error with details
-      // - agent:  x402 protocol preview → return data as success if available
       if (status === 402) {
-        const hasPreviewData = payload?.result && typeof payload.result === 'object';
         if (normalizeText(paymentMode) === 'hosted') {
-          // Hosted mode tried to pay on-chain but failed; report as error
-          // but still include any preview data in the response for debugging
-          return hasPreviewData
-            ? buildErrorResult(tool, payload, status, effectiveTraceId,
-                normalizeText(payload?.reason || 'Server-side payment failed. Check AA wallet balance and session.'))
-            : buildErrorResult(tool, payload, status, effectiveTraceId, `HTTP ${status}`);
+          return buildErrorResult(
+            tool,
+            payload,
+            status,
+            effectiveTraceId,
+            normalizeText(payload?.reason || 'Server-side payment failed. Check AA wallet balance and session.')
+          );
         }
-        // Agent mode: return preview data as success (x402 protocol)
-        if (hasPreviewData) {
-          return buildSuccessResult(tool, payload, effectiveTraceId);
-        }
+        return buildPaymentRequiredPreviewResult(tool, payload, effectiveTraceId);
       }
 
       return buildErrorResult(tool, payload, status, effectiveTraceId, `HTTP ${status}`);

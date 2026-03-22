@@ -31,6 +31,7 @@ import {
   normalizeBtcPriceParams
 } from './lib/priceFeed.js';
 import { GokiteAASDK } from './lib/gokite-aa-sdk.js';
+import { createKiteRpcProvider } from './lib/kiteRpc.js';
 import { createSessionPayHelpers } from './lib/sessionPay.js';
 import { createEnsureAAAccountDeployment } from './lib/aaAccount.js';
 import { createOnboardingSetupHelpers } from './lib/onboardingSetupHelpers.js';
@@ -676,6 +677,18 @@ const sessionOwnerByAaWallet = (() => {
     if (!normalizedAaWallet || !normalizedOwner) continue;
     pairs.set(normalizedAaWallet, normalizedOwner);
   }
+  // Also include service agent AA wallets from session_runtimes.json
+  try {
+    const runtimesData = JSON.parse(require('fs').readFileSync(
+      require('path').resolve(require('path').dirname(require('url').fileURLToPath(import.meta.url)), 'data', 'session_runtimes.json'), 'utf8'
+    ));
+    const runtimes = runtimesData?.runtimes || {};
+    for (const [ownerKey, runtime] of Object.entries(runtimes)) {
+      const aa = normalizeAddress(runtime?.aaWallet || '');
+      const ow = normalizeAddress(runtime?.owner || ownerKey || '');
+      if (aa && ow && !pairs.has(aa)) pairs.set(aa, ow);
+    }
+  } catch { /* ignore if file missing */ }
   return pairs;
 })();
 
@@ -722,7 +735,10 @@ const apiRateLimit = createApiRateLimit({
 let backendSigner = null;
 if (BACKEND_SIGNER_PRIVATE_KEY) {
   try {
-    backendSigner = new ethers.Wallet(BACKEND_SIGNER_PRIVATE_KEY, new ethers.JsonRpcProvider(BACKEND_RPC_URL));
+    backendSigner = new ethers.Wallet(
+      BACKEND_SIGNER_PRIVATE_KEY,
+      createKiteRpcProvider(ethers, BACKEND_RPC_URL)
+    );
   } catch {
     backendSigner = null;
   }
@@ -823,7 +839,7 @@ async function ensureManagedRoleSessionRuntime({
   if (!normalizedOwner || !ownerKey) {
     return null;
   }
-  const provider = backendSigner?.provider || new ethers.JsonRpcProvider(BACKEND_RPC_URL);
+  const provider = backendSigner?.provider || createKiteRpcProvider(ethers, BACKEND_RPC_URL);
   const ownerWallet = new ethers.Wallet(ownerKey, provider);
   const salt = parseManagedAaSalt();
   const currentRuntime = resolveSessionRuntime({ owner: normalizedOwner, strictOwnerMatch: true });
@@ -1291,10 +1307,19 @@ const { checkAnchorExistsOnChain, publishTrustPublicationOnChain, publishJobLife
   backendRpcUrl: BACKEND_RPC_URL,
   digestStableObject,
   erc8004TrustAnchorRegistry: ERC8004_TRUST_ANCHOR_REGISTRY,
+  erc8004IdentityRegistry: ERC8004_IDENTITY_REGISTRY,
   erc8183JobAnchorRegistry: ERC8183_JOB_ANCHOR_REGISTRY,
   ethers,
   jobLifecycleAnchorAbi: jobLifecycleAnchorV2Abi,
-  trustPublicationAnchorAbi
+  trustPublicationAnchorAbi,
+  resolveSessionRuntime,
+  resolveSessionOwnerByAaWallet,
+  resolveSessionOwnerPrivateKey,
+  GokiteAASDK,
+  bundlerUrl: BACKEND_BUNDLER_URL,
+  entryPointAddress: BACKEND_ENTRYPOINT_ADDRESS,
+  accountFactoryAddress: KITE_AA_FACTORY_ADDRESS,
+  accountImplementationAddress: KITE_AA_ACCOUNT_IMPLEMENTATION
 });
 const {
   beginConsumerIntent,
@@ -2165,4 +2190,3 @@ const { startServer, shutdownServer } = createRuntimeServerLifecycle({
 });
 
 export { shutdownServer, startServer };
-

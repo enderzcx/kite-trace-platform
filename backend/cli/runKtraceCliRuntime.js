@@ -23,6 +23,7 @@ import {
 } from './parsers/approvalParsers.js';
 import { parseBuyRequestArgs, parseBuyDirectArgs } from './parsers/buyParsers.js';
 import { parseAgentInvokeArgs } from './parsers/agentParsers.js';
+import { parseMcpBridgeArgs } from './parsers/mcpParsers.js';
 import { parseTemplateListArgs, parseTemplateResolveArgs, parseTemplatePublishArgs } from './parsers/templateParsers.js';
 import {
   parseProviderListArgs,
@@ -62,6 +63,7 @@ import { createAuthCommandHandlers } from './commands/authCommands.js';
 import { createApprovalCommandHandlers } from './commands/approvalCommands.js';
 import { createBuyCommandHandlers } from './commands/buyCommands.js';
 import { createAgentCommandHandlers } from './commands/agentCommands.js';
+import { createMcpCommandHandlers } from './commands/mcpCommands.js';
 import { createCommandExecutor } from './lib/commandDispatcher.js';
 import { createCliError } from './lib/errors.js';
 import {
@@ -341,6 +343,12 @@ const { handleAgentInvoke } = createAgentCommandHandlers({
   ensureUsableSession
 });
 
+const { handleMcpBridge } = createMcpCommandHandlers({
+  parseMcpBridgeArgs,
+  sendLocalSessionPayment,
+  createCliError
+});
+
 const executeCommand = createCommandExecutor({
   createConfigEnvelope,
   createNotImplementedEnvelope,
@@ -363,6 +371,7 @@ const executeCommand = createCommandExecutor({
     handleBuyRequest,
     handleBuyDirect,
     handleAgentInvoke,
+    handleMcpBridge,
     handleTemplateList,
     handleTemplateResolve,
     handleTemplateShow,
@@ -453,7 +462,9 @@ async function runParsedKtraceCli({ options = {}, passthrough = [] } = {}) {
     }
   }
 
-  writeEnvelope(envelope, helpText);
+  if (!envelope?.suppressOutput) {
+    writeEnvelope(envelope, helpText);
+  }
   return envelope;
 }
 

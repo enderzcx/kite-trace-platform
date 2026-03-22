@@ -1,14 +1,14 @@
 [
   {
     "id": "svc_btcusd_minute",
-    "name": "BTCUSD Quote (ATAPI)",
-    "description": "Agent-to-API BTCUSD quote via ERC8004 + x402 payment.",
+    "name": "BTC Price Quote (Primary)",
+    "description": "Primary tool for the latest BTC/BTCUSDT price quote via Hyperliquid. Use this for a single BTC price request instead of the generic market-price-feed tool.",
     "action": "btc-price-feed",
     "pair": "BTCUSDT",
     "source": "hyperliquid",
     "sourceRequested": "hyperliquid",
     "providerAgentId": "2",
-    "recipient": "0xed335560178b85f0524ffff3372e9bf45ab42ac8",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
@@ -27,7 +27,7 @@
     },
     "active": true,
     "createdAt": "2026-02-26T14:06:02.061Z",
-    "updatedAt": "2026-03-03T11:50:30.865Z",
+    "updatedAt": "2026-03-21T17:33:35.390Z",
     "publishedBy": "system"
   },
   {
@@ -40,7 +40,7 @@
     "sourceRequested": "hyperliquid",
     "horizonMin": 60,
     "providerAgentId": "3",
-    "recipient": "0xed335560178b85f0524ffff3372e9bf45ab42ac8",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
@@ -106,7 +106,7 @@
     "sourceRequested": "hyperliquid",
     "horizonMin": 60,
     "providerAgentId": "technical-agent",
-    "recipient": "0xed335560178b85f0524ffff3372e9bf45ab42ac8",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
@@ -139,7 +139,7 @@
     "resourceUrl": "",
     "maxChars": 1200,
     "providerAgentId": "message-agent",
-    "recipient": "0xed335560178b85f0524ffff3372e9bf45ab42ac8",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
@@ -160,6 +160,110 @@
     "active": true,
     "createdAt": "2026-02-27T02:59:23.942Z",
     "updatedAt": "2026-03-03T11:50:30.865Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "cap-weather-context",
+    "name": "Weather Context Data Node",
+    "description": "Low-cost weather context primitive via Open-Meteo + x402 payment.",
+    "action": "weather-context",
+    "pair": "",
+    "source": "open-meteo",
+    "sourceRequested": "open-meteo",
+    "providerAgentId": "data-node-real",
+    "providerKey": "data-node-real",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
+    "price": "0.00005",
+    "tags": [
+      "atapi",
+      "x402",
+      "data-primitive",
+      "weather",
+      "open-meteo"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 20,
+    "budgetPerDay": 0.03,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "latitude": 40.7128,
+      "longitude": -74.006,
+      "forecastDays": 3,
+      "timezone": "auto"
+    },
+    "paymentMode": "agent",
+    "active": true,
+    "createdAt": "2026-03-21T17:33:35.390Z",
+    "updatedAt": "2026-03-21T17:33:35.390Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "cap-tech-buzz-signal",
+    "name": "Tech Buzz Signal Data Node",
+    "description": "Low-cost Hacker News top-story primitive via x402 payment.",
+    "action": "tech-buzz-signal",
+    "pair": "",
+    "source": "hackernews",
+    "sourceRequested": "hackernews",
+    "providerAgentId": "data-node-real",
+    "providerKey": "data-node-real",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
+    "price": "0.00005",
+    "tags": [
+      "atapi",
+      "x402",
+      "data-primitive",
+      "news",
+      "hackernews"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 20,
+    "budgetPerDay": 0.03,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "limit": 10
+    },
+    "paymentMode": "agent",
+    "active": true,
+    "createdAt": "2026-03-21T17:33:35.390Z",
+    "updatedAt": "2026-03-21T17:33:35.390Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "cap-market-price-feed",
+    "name": "Market Snapshot Data Node",
+    "description": "Generic CoinGecko market snapshot for baskets and ranked watchlists. Not the primary tool for a single BTC price quote; prefer the dedicated BTC price tool instead.",
+    "action": "market-price-feed",
+    "pair": "",
+    "source": "coingecko",
+    "sourceRequested": "coingecko",
+    "providerAgentId": "data-node-real",
+    "providerKey": "data-node-real",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
+    "price": "0.00005",
+    "tags": [
+      "atapi",
+      "x402",
+      "data-primitive",
+      "market",
+      "coingecko"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 20,
+    "budgetPerDay": 0.03,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "vsCurrency": "usd",
+      "ids": "bitcoin,ethereum",
+      "limit": 10
+    },
+    "paymentMode": "agent",
+    "active": true,
+    "createdAt": "2026-03-21T17:33:35.390Z",
+    "updatedAt": "2026-03-21T17:33:35.390Z",
     "publishedBy": "system"
   }
 ]
