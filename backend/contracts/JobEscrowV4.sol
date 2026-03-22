@@ -45,10 +45,17 @@ contract JobEscrowV4 is ReentrancyGuard {
     address public owner;
     address public traceAnchorGuard;
 
+    // Timelock for trace anchor guard changes (48 hours)
+    uint256 public constant GUARD_CHANGE_DELAY = 48 hours;
+    address public pendingTraceAnchorGuard;
+    uint256 public guardChangeReadyAt;
+
     mapping(string => Job) private jobs;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event TraceAnchorGuardSet(address indexed guard);
+    event TraceAnchorGuardChangeProposed(address indexed currentGuard, address indexed proposedGuard, uint256 readyAt);
+    event TraceAnchorGuardChangeCancelled(address indexed proposedGuard);
     event JobFundsLocked(
         string indexed jobId,
         address indexed requester,
@@ -96,6 +103,35 @@ contract JobEscrowV4 is ReentrancyGuard {
         owner = newOwner;
     }
 
+    /// @notice Propose a new trace anchor guard. Takes effect after 48h delay.
+    function proposeTraceAnchorGuard(address guard) external onlyOwner {
+        pendingTraceAnchorGuard = guard;
+        guardChangeReadyAt = block.timestamp + GUARD_CHANGE_DELAY;
+        emit TraceAnchorGuardChangeProposed(traceAnchorGuard, guard, guardChangeReadyAt);
+    }
+
+    /// @notice Execute a pending guard change after the timelock expires.
+    function executeTraceAnchorGuardChange() external onlyOwner {
+        require(guardChangeReadyAt > 0, "no_pending_change");
+        require(block.timestamp >= guardChangeReadyAt, "timelock_not_expired");
+        address newGuard = pendingTraceAnchorGuard;
+        traceAnchorGuard = newGuard;
+        pendingTraceAnchorGuard = address(0);
+        guardChangeReadyAt = 0;
+        emit TraceAnchorGuardSet(newGuard);
+    }
+
+    /// @notice Cancel a pending guard change.
+    function cancelTraceAnchorGuardChange() external onlyOwner {
+        require(guardChangeReadyAt > 0, "no_pending_change");
+        address cancelled = pendingTraceAnchorGuard;
+        pendingTraceAnchorGuard = address(0);
+        guardChangeReadyAt = 0;
+        emit TraceAnchorGuardChangeCancelled(cancelled);
+    }
+
+    /// @notice Emergency: owner can set guard immediately. Use proposeTraceAnchorGuard for normal changes.
+    /// @dev Retained for initial setup only. Consider removing after first guard is set.
     function setTraceAnchorGuard(address guard) external onlyOwner {
         traceAnchorGuard = guard;
         emit TraceAnchorGuardSet(guard);

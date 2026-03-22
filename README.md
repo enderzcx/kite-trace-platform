@@ -48,7 +48,7 @@ AA Wallet  ->  session-key constrained payments
 |----------|---------|
 | IdentityRegistryV1 (ERC-8004) | `0x60BF18964FCB1B2E987732B0477E51594B3659B1` |
 | TrustPublicationAnchorV1 | `0xAcdcF151F4A28fFd07e45c62FfE9DAEDe9556823` |
-| JobEscrowV4 (ERC-8183) | `0x72DA6Ec78D8b58021D816EC8eC2307c3adFafeDC` |
+| JobEscrowV4 (ERC-8183) | `0x95260b27c509Bf624B33702C09CdD37098a6967D` |
 | JobLifecycleAnchorV2 | `0xE7833a5D6378A8699e81abaaab77bf924deA172e` |
 
 Testnet USDT: `0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63` · [Faucet](https://faucet.gokite.ai/)

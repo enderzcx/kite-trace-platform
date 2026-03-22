@@ -292,12 +292,63 @@
       {
         "indexed": true,
         "internalType": "address",
+        "name": "proposedGuard",
+        "type": "address"
+      }
+    ],
+    "name": "TraceAnchorGuardChangeCancelled",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "currentGuard",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "proposedGuard",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "readyAt",
+        "type": "uint256"
+      }
+    ],
+    "name": "TraceAnchorGuardChangeProposed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "guard",
         "type": "address"
       }
     ],
     "name": "TraceAnchorGuardSet",
     "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "GUARD_CHANGE_DELAY",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
     "inputs": [
@@ -313,6 +364,13 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "cancelTraceAnchorGuardChange",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "string",
@@ -321,6 +379,13 @@
       }
     ],
     "name": "claimJob",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "executeTraceAnchorGuardChange",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -418,6 +483,19 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "guardChangeReadyAt",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "string",
@@ -471,6 +549,32 @@
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pendingTraceAnchorGuard",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "guard",
+        "type": "address"
+      }
+    ],
+    "name": "proposeTraceAnchorGuard",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {

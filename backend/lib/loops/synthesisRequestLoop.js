@@ -168,10 +168,14 @@ export function createSynthesisRequestLoop({
 
     // Fund the escrow
     const fund = await postInternal(`/api/jobs/${jobId}/fund`, { async: false });
+    const fundError = fund.data?.error;
     return {
       ok: fund.ok,
       txHash: normalizeText(fund.data?.fundingTxHash || fund.data?.txHash || ''),
-      error: normalizeText(fund.data?.error || fund.data?.reason || '')
+      error: fund.ok ? '' : normalizeText(
+        (typeof fundError === 'object' ? (fundError?.message || fundError?.code || JSON.stringify(fundError)) : fundError) ||
+        fund.data?.reason || 'fund_failed'
+      )
     };
   }
 
