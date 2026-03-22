@@ -658,7 +658,10 @@ async function invokeJobMutation(fetchLoopbackJson, tool = {}, args = {}, traceI
   }
 
   const body = {};
-  if (builtinId === 'job_prepare_funding') {
+  if (builtinId === 'job_claim') {
+    if (normalizeText(args?.executor || '')) body.executor = normalizeText(args.executor);
+    if (normalizeText(args?.executorAddress || '')) body.executorAddress = normalizeText(args.executorAddress);
+  } else if (builtinId === 'job_prepare_funding') {
     if (normalizeText(args?.intentId || '')) body.intentId = normalizeText(args.intentId);
   } else if (builtinId === 'job_fund') {
     if (typeof args?.async === 'boolean') body.async = args.async;
