@@ -78,3 +78,7 @@ docs/kite-erc8004-v1-design.md
 # Internal product briefs
 KITE_TRACE_PLATFORM_PRODUCT_BRIEF.zh-en.md
 AGENT_COMMERCE_STRATEGY.zh-en.md
+
+# Keep docs local only
+docs/
+backend/docs/
