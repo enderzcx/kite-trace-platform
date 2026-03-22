@@ -278,7 +278,7 @@ export function createPaymentPolicyHelpers(deps = {}) {
     }
 
     const recipientLc = normalizeAddress(recipient);
-    if (!policy.allowedRecipients.includes(recipientLc)) {
+    if (policy.allowedRecipients.length > 0 && !policy.allowedRecipients.includes(recipientLc)) {
       return {
         ok: false,
         code: 'scope_violation',

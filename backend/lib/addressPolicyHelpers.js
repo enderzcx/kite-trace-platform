@@ -117,7 +117,10 @@ export function createPolicyConfigHelpers({
       merchantAddress,
       kiteAgent2AaAddress,
       resolveTechnicalSettlementRecipient(),
-      resolveInfoSettlementRecipient()
+      resolveInfoSettlementRecipient(),
+      process.env.KITE_FUNDAMENTAL_AGENT_WALLET || '',
+      process.env.KITE_TECHNICAL_AGENT_WALLET || '',
+      process.env.KITE_DATA_NODE_WALLET || ''
     ]);
   }
 
@@ -132,11 +135,15 @@ export function createPolicyConfigHelpers({
   function sanitizePolicy(input = {}) {
     const maxPerTx = Number(input.maxPerTx);
     const dailyLimit = Number(input.dailyLimit);
-    const allowedRecipients = mergeAllowedRecipients(
-      normalizeRecipients(input.allowedRecipients).length > 0
-        ? input.allowedRecipients
-        : policyAllowedRecipientsDefault
-    );
+    // Empty allowedRecipients = any address accepted (open policy).
+    // Only enforce whitelist when the user explicitly configured recipients.
+    const explicitRecipients = normalizeRecipients(input.allowedRecipients);
+    const defaultRecipients = normalizeRecipients(policyAllowedRecipientsDefault);
+    const allowedRecipients = explicitRecipients.length > 0
+      ? mergeAllowedRecipients(explicitRecipients)
+      : defaultRecipients.length > 0
+        ? mergeAllowedRecipients(defaultRecipients)
+        : [];
     const revokedPayers = normalizeAddresses(input.revokedPayers);
     return {
       maxPerTx: Number.isFinite(maxPerTx) && maxPerTx > 0 ? maxPerTx : policyMaxPerTxDefault,

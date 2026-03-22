@@ -530,6 +530,8 @@ function hasOnchainosConfig() {
 
 function buildOnchainosEnv() {
   const { apiKey, secretKey, passphrase } = getOnchainosConfig();
+  const proxyUrl =
+    process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY || '';
   return {
     ...process.env,
     OKX_API_KEY: apiKey,
@@ -541,7 +543,15 @@ function buildOnchainosEnv() {
     ONCHAINOS_Secret_Key: secretKey,
     ONCHAINOS_PASSPHRASE: passphrase,
     ONCHAINOS_PASSPHRASE_Key: passphrase,
-    ONCHAINOS_PASSHASE_Key: passphrase
+    ONCHAINOS_PASSHASE_Key: passphrase,
+    // Pass proxy to onchainos CLI (Rust reqwest reads these)
+    ...(proxyUrl ? {
+      https_proxy: proxyUrl,
+      http_proxy: proxyUrl,
+      HTTPS_PROXY: proxyUrl,
+      HTTP_PROXY: proxyUrl,
+      ALL_PROXY: proxyUrl
+    } : {})
   };
 }
 
