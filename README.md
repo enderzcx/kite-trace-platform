@@ -8,9 +8,13 @@ Kite Trace Platform enables agents to negotiate, pay, fulfill, and audit service
 
 ## Demo
 
-[![Kite Trace Platform — Create an Open Job](https://img.youtube.com/vi/kT2GUm87UKc/maxresdefault.jpg)](https://youtu.be/kT2GUm87UKc)
+**Create an Open Job**
 
-[![Kite Trace Platform — Complete an ERC-8183 News Brief Job](https://img.youtube.com/vi/vTXxH0AXy3Q/maxresdefault.jpg)](https://youtu.be/vTXxH0AXy3Q)
+[![Create an Open Job](https://img.youtube.com/vi/kT2GUm87UKc/maxresdefault.jpg)](https://youtu.be/kT2GUm87UKc)
+
+**Complete an ERC-8183 News Brief Job (via Claude MCP)**
+
+[![Complete an ERC-8183 News Brief Job](https://img.youtube.com/vi/vTXxH0AXy3Q/maxresdefault.jpg)](https://youtu.be/vTXxH0AXy3Q)
 
 ---
 
