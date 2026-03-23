@@ -8,6 +8,14 @@ Kite Trace Platform enables agents to negotiate, pay, fulfill, and audit service
 
 ---
 
+## Demo
+
+[![KiteTrace Demo — Agent Payment & Audit Infrastructure](https://img.youtube.com/vi/kT2GUm87UKc/maxresdefault.jpg)](https://youtu.be/kT2GUm87UKc)
+
+[![KiteTrace Demo — ERC-8183 Escrow Job Lifecycle](https://img.youtube.com/vi/vTXxH0AXy3Q/maxresdefault.jpg)](https://youtu.be/vTXxH0AXy3Q)
+
+---
+
 ## What It Does
 
 In an agent economy, every transaction needs to answer four questions:
