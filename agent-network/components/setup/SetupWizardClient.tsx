@@ -215,6 +215,7 @@ const KITE_READ_RPC_URL = process.env.NEXT_PUBLIC_KITE_RPC_URL?.trim() || "";
 const LOCAL_CONNECTOR_CLIENT = "inspector";
 const LOCAL_CONNECTOR_CLIENT_ID = "local-setup";
 const LOCAL_BACKEND_BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://127.0.0.1:3217").replace(/\/+$/, "");
+const PUBLIC_MCP_URL = (process.env.NEXT_PUBLIC_MCP_URL?.trim() || `${LOCAL_BACKEND_BASE_URL}/mcp/stream`);
 const LOCAL_SESSION_RUNTIME_STORAGE_KEY = "ktrace.localSessionRuntime.v1";
 
 function getEthereum(): EthProvider | undefined {
@@ -3090,12 +3091,19 @@ function DeveloperSetupPanel({
   }
 
   const hasFullKey = Boolean(apiKey);
-  const keyDisplay = hasFullKey ? apiKey : "<generate_a_new_ktrace_sk_key>";
-  const sessionRuntimePath = "<path-to-ktrace-session-runtime.json>";
+  const keyDisplay = hasFullKey ? apiKey : "<your-ktrace-api-key>";
+  const mcpSettingsJson = JSON.stringify({
+    mcpServers: {
+      ktrace: {
+        type: "streamable-http",
+        url: PUBLIC_MCP_URL,
+        headers: { "x-api-key": keyDisplay },
+      },
+    },
+  }, null, 2);
   const claudeCodeCommands = [
-    `claude mcp add --transport stdio ktrace "ktrace" "mcp" "bridge" --base-url ${LOCAL_BACKEND_BASE_URL} --api-key "${keyDisplay}" --session-runtime "${sessionRuntimePath}"`,
-    "claude mcp list",
-    "claude mcp get ktrace",
+    `# Add to .claude/settings.json (or settings.local.json):`,
+    mcpSettingsJson,
   ].join("\n");
 
   return (
@@ -3103,7 +3111,7 @@ function DeveloperSetupPanel({
       <div className="flex items-start gap-3 rounded-2xl border border-[rgba(90,80,50,0.12)] bg-[rgba(58,66,32,0.04)] px-4 py-3">
         <Terminal className="mt-0.5 size-4 shrink-0 text-[#7a6e56]" />
         <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-          Use the local <strong>ktrace mcp bridge</strong> so paid tools settle with your self-custodial session key on this machine. Direct MCP calls to the backend are only recommended for free tools.
+          Add the MCP server to your Claude Code config. Payment is handled automatically by your session key on the backend — no local bridge required.
         </p>
       </div>
 
@@ -3223,12 +3231,12 @@ function DeveloperSetupPanel({
             )}
             <CodeBlock lang="bash" code={claudeCodeCommands} />
             <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
-              <p className="text-[12px] font-medium text-[#18180e]">What to run next</p>
+              <p className="text-[12px] font-medium text-[#18180e]">What to do next</p>
               <ol className="flex flex-col gap-2 text-[11px] text-[#7a6e56]">
-                <li>1. Download your local session runtime JSON and keep it private.</li>
-                <li>2. Add `ktrace mcp bridge` as a stdio MCP server in Claude Code.</li>
-                <li>3. Check that Claude Code lists the `ktrace` server and saved the command arguments correctly.</li>
-                <li>4. Use the bridge for paid tools; only free tools should call the backend MCP endpoint directly.</li>
+                <li>1. Copy your API key above — it is shown only once.</li>
+                <li>2. Paste the config into <code className="font-mono">.claude/settings.json</code> (or <code className="font-mono">settings.local.json</code>).</li>
+                <li>3. Restart Claude Code — it will discover all ktrace tools automatically.</li>
+                <li>4. Ask Claude to call any tool. Payment is settled automatically via your session.</li>
               </ol>
             </div>
           </div>
