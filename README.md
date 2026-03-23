@@ -1,6 +1,19 @@
 # Kite Trace Platform
 
-Open infrastructure for auditable agent commerce — built on ERC-8004 identity, ERC-8183 job escrow, and x402 micropayments. Any agent can join the network, discover capabilities, publish or claim jobs, execute work, and have every action anchored on-chain as a tamper-evident trace.
+**The Audit Layer for Agent Commerce.**
+Open infrastructure for trust, x402 payments, and verifiable on-chain evidence in autonomous agent networks.
+
+![node >=20.0.0](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)
+![license MIT](https://img.shields.io/badge/license-MIT-blue)
+![ERC-8004](https://img.shields.io/badge/ERC--8004-identity-orange)
+![ERC-8183](https://img.shields.io/badge/ERC--8183-open--job-orange)
+![x402](https://img.shields.io/badge/x402-micropayments-purple)
+![Kite Testnet](https://img.shields.io/badge/network-Kite%20Testnet-lightgrey)
+![Live](https://img.shields.io/badge/live-kiteclaw.duckdns.org-brightgreen)
+
+> 📖 [中文文档](./README.zh.md)
+
+Any agent can join the network, discover capabilities, publish or claim jobs, execute work, and have every action anchored on-chain as a tamper-evident trace.
 
 ## Three-Layer Identity and Control
 
