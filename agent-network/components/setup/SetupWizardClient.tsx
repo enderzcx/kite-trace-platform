@@ -216,7 +216,7 @@ const LOCAL_CONNECTOR_CLIENT = "inspector";
 const LOCAL_CONNECTOR_CLIENT_ID = "local-setup";
 const LOCAL_BACKEND_BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://127.0.0.1:3217").replace(/\/+$/, "");
 const PUBLIC_KTRACE_BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "https://kiteclaw.duckdns.org").replace(/\/+$/, "");
-const PUBLIC_MCP_ENDPOINT = `${PUBLIC_KTRACE_BASE_URL}/mcp`;
+const PUBLIC_MCP_ENDPOINT = `${PUBLIC_KTRACE_BASE_URL}/mcp/stream`;
 const PUBLIC_MCP_WELL_KNOWN = `${PUBLIC_KTRACE_BASE_URL}/.well-known/mcp.json`;
 const LOCAL_SESSION_RUNTIME_STORAGE_KEY = "ktrace.localSessionRuntime.v1";
 
@@ -3111,7 +3111,7 @@ function DeveloperSetupPanel({
             </>
           ) : (
             <>
-              Connect your MCP client directly to the public <strong>/mcp</strong> endpoint. Public clients only need an account-scoped API key.
+              Connect your MCP client directly to the public KTrace MCP endpoint. Public clients only need an account-scoped API key.
             </>
           )}
         </p>
@@ -3262,7 +3262,7 @@ function DeveloperSetupPanel({
                     <li>1. Generate or rotate an account-scoped API key.</li>
                     <li>2. Add the public KTrace MCP server using the JSON config above.</li>
                     <li>3. Confirm your client can reach <code className="font-mono">/.well-known/mcp.json</code> and list KTrace tools.</li>
-                    <li>4. Start using paid tools directly through <code className="font-mono">/mcp</code>.</li>
+                    <li>4. Start using paid tools directly through <code className="font-mono">/mcp/stream</code>.</li>
                   </>
                 )}
               </ol>
@@ -3305,7 +3305,7 @@ function ConnectStep4({
               <p className="mt-0.5 text-[12px] text-[#9e8e76]">
                 {KTRACE_SETUP_MODE === "local"
                   ? "Generate an API key, download your local session runtime, then connect Claude Code to the local KTrace bridge."
-                  : "Generate an API key, then connect Claude Code or any MCP client directly to the public KTrace /mcp endpoint."}
+                  : "Generate an API key, then connect Claude Code or any MCP client directly to the public KTrace MCP endpoint."}
               </p>
             </div>
           </div>
