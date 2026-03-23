@@ -2,7 +2,6 @@
 
 import AgentNetworkSection from "@/components/showcase/AgentNetworkSection";
 import HeroSection from "@/components/showcase/HeroSection";
-import KtraceCliSection from "@/components/showcase/KtraceCliSection";
 import {
   fallbackCapabilities,
   fallbackHealthStats,
@@ -57,18 +56,6 @@ export default function ShowcasePageClient({
               Agents
             </a>
             <a
-              href="#ktrace"
-              className="rounded-md px-3 py-1.5 text-[13px] text-[#7a6e56] transition hover:text-[#18180e] hover:bg-[rgba(58,66,32,0.06)]"
-            >
-              ktrace
-            </a>
-            <a
-              href="/mcp"
-              className="rounded-md px-3 py-1.5 text-[13px] text-[#7a6e56] transition hover:text-[#18180e] hover:bg-[rgba(58,66,32,0.06)]"
-            >
-              MCP
-            </a>
-            <a
               href="/audit"
               className="rounded-md px-3 py-1.5 text-[13px] text-[#7a6e56] transition hover:text-[#18180e] hover:bg-[rgba(58,66,32,0.06)]"
             >
@@ -117,11 +104,6 @@ export default function ShowcasePageClient({
 
         <AgentNetworkSection providers={liveProviders} />
 
-        <div className="mx-auto max-w-6xl px-6">
-          <div className="h-px bg-[rgba(90,80,50,0.1)]" />
-        </div>
-
-        <KtraceCliSection />
       </main>
 
       {/* ── Footer ─────────────────────────────────────────── */}
@@ -139,9 +121,6 @@ export default function ShowcasePageClient({
           <div className="flex items-center gap-5 text-[12px] text-[#9e8e76]">
             <a href="/setup" className="transition hover:text-[#3a4220]">
               Setup
-            </a>
-            <a href="/mcp" className="transition hover:text-[#3a4220]">
-              MCP
             </a>
             <a href="/demo" className="transition hover:text-[#3a4220]">
               Live Demo
