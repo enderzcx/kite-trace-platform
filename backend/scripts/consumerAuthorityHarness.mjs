@@ -221,7 +221,8 @@ export async function createConsumerAuthorityHarness(options = {}) {
   const keys = {
     admin: authEnabled ? 'consumer-authority-admin-key' : '',
     agent: authEnabled ? 'consumer-authority-agent-key' : '',
-    viewer: authEnabled ? 'consumer-authority-viewer-key' : ''
+    viewer: authEnabled ? 'consumer-authority-viewer-key' : '',
+    accountAgent: authEnabled ? 'ktrace_sk_harness_account_agent' : ''
   };
 
   const { authConfigured, extractApiKey, resolveRoleByApiKey, resolveAuthRequest, requireRole } = createAuthHelpers({
@@ -229,6 +230,16 @@ export async function createConsumerAuthorityHarness(options = {}) {
     API_KEY_ADMIN: keys.admin,
     API_KEY_AGENT: keys.agent,
     API_KEY_VIEWER: keys.viewer,
+    resolveAccountApiKey: (secret = '') => {
+      const normalized = String(secret || '').trim();
+      if (normalized !== keys.accountAgent) return null;
+      return {
+        role: 'agent',
+        ownerEoa: wallet,
+        authSource: 'account-api-key',
+        keyId: 'harness-account-agent'
+      };
+    },
     ROLE_RANK: {
       viewer: 1,
       agent: 2,
@@ -901,6 +912,11 @@ export async function createConsumerAuthorityHarness(options = {}) {
       extractApiKey,
       resolveAuthRequest,
       resolveRoleByApiKey,
+      readSessionRuntime,
+      readSessionRuntimeByOwner: (owner = '') => {
+        const runtime = readSessionRuntime();
+        return normalizeAddress(owner || '') === normalizeAddress(runtime?.owner || '') ? runtime : {};
+      },
       getInternalAgentApiKey: () => normalizeText(keys.agent || keys.admin || ''),
       resolveClaudeConnectorToken: claudeConnectorHelpers.resolveConnectorToken,
       claimClaudeConnectorInstallCode: claudeConnectorHelpers.claimInstallCode,

@@ -1,18 +1,14 @@
 #!/usr/bin/env node
 /**
- * Synthesis Hackathon Demo Script
+ * Synthesis Demo Script
  *
- * Creates 3 open BTC trade plan jobs via the autonomous request loop.
- * After creation, an external agent (e.g. Claude + ktrace MCP) can:
- *   1. job_claim → claim a job
- *   2. Use cap abilities to gather BTC data
- *   3. job_submit → submit trade plan + evidence
- *   4. Auto-validator checks and completes
+ * Triggers the hourly news brief requester loop so the backend creates and
+ * funds open ERC-8183 jobs for external agents.
  *
  * Usage:
  *   node scripts/synthesisDemo.mjs
- *   node scripts/synthesisDemo.mjs --rounds 1    # single job
- *   node scripts/synthesisDemo.mjs --interval 30  # 30s between rounds
+ *   node scripts/synthesisDemo.mjs --rounds 1
+ *   node scripts/synthesisDemo.mjs --interval 30
  */
 
 import { config as loadEnv } from 'dotenv';
@@ -33,7 +29,7 @@ function log(msg) {
 }
 
 function divider() {
-  console.log('\n' + '='.repeat(80) + '\n');
+  console.log(`\n${'='.repeat(80)}\n`);
 }
 
 async function postJson(pathname, body = {}) {
@@ -60,117 +56,88 @@ function sleep(ms) {
 
 async function main() {
   divider();
-  log('🚀 Synthesis Hackathon Demo — Kite Trace Platform');
-  log(`   Rounds: ${ROUNDS} | Interval: ${INTERVAL_SEC}s | Backend: ${BASE_URL}`);
+  log(`Synthesis Demo | rounds=${ROUNDS} interval=${INTERVAL_SEC}s backend=${BASE_URL}`);
   divider();
 
-  // Step 0: Health check
   const health = await getJson('/health');
   if (!health?.ok) {
-    log('❌ Backend not reachable. Start it first: cd backend && node server.js');
+    log('Backend not reachable. Start it first: cd backend && npm start');
     process.exit(1);
   }
-  log('✅ Backend healthy (uptime: ' + health.uptime + 's)');
-
-  // Step 1: Show agent.json
-  log('\n📋 Agent Manifest (/.well-known/agent.json):');
-  const agentCard = await getJson('/.well-known/agent.json');
-  console.log(JSON.stringify({
-    name: agentCard.name,
-    protocols: agentCard.protocols,
-    agents: agentCard.agents?.length + ' agents',
-    safety: agentCard.safety,
-    endpoints: agentCard.endpoints
-  }, null, 2));
-
-  divider();
-  log('📝 Creating ' + ROUNDS + ' open BTC trade plan jobs...\n');
+  log(`Backend healthy (uptime=${health.uptime}s)`);
 
   const createdJobs = [];
+  divider();
+  log(`Creating ${ROUNDS} hourly news brief jobs...`);
 
-  for (let round = 1; round <= ROUNDS; round++) {
-    log(`--- Round ${round}/${ROUNDS} ---`);
-
-    // Trigger synthesis loop
+  for (let round = 1; round <= ROUNDS; round += 1) {
+    log(`Round ${round}/${ROUNDS}`);
     const trigger = await postJson('/api/synthesis/loop/trigger');
     const status = trigger?.status || {};
 
     if (status.lastStatus === 'ok' && status.lastJobId) {
       const jobId = status.lastJobId;
-      log(`✅ Job created: ${jobId}`);
-
-      // Get job details
       const jobData = await getJson(`/api/jobs/${jobId}`);
       const job = jobData?.job || jobData;
-
-      log(`   State: ${job.state}`);
-      log(`   Executor: ${job.executor} (${job.executor === '0x0000000000000000000000000000000000000000' ? 'OPEN — any agent can claim' : 'assigned'})`);
-      log(`   Budget: ${job.budget || job.escrowAmount} USDT`);
-      log(`   Escrow: ${job.escrowState || 'N/A'}`);
-      log(`   Payer: ${job.payer}`);
-      if (job.createAnchorTxHash) log(`   📌 Create Anchor: ${job.createAnchorTxHash}`);
-      if (job.escrowFundTxHash) log(`   💰 Escrow Fund TX: ${job.escrowFundTxHash}`);
-      if (job.fundingAnchorTxHash) log(`   📌 Fund Anchor: ${job.fundingAnchorTxHash}`);
-
+      log(`Created: ${jobId}`);
+      log(`  state=${job.state}`);
+      log(`  capability=${job.capability}`);
+      log(`  executor=${job.executor}`);
+      log(`  budget=${job.budget || job.escrowAmount}`);
+      if (job.createAnchorTxHash) log(`  createAnchor=${job.createAnchorTxHash}`);
+      if (job.escrowFundTxHash) log(`  escrowFund=${job.escrowFundTxHash}`);
+      if (job.fundingAnchorTxHash) log(`  fundingAnchor=${job.fundingAnchorTxHash}`);
       createdJobs.push({
         round,
         jobId,
         state: job.state,
-        budget: job.budget || job.escrowAmount,
         createAnchorTxHash: job.createAnchorTxHash || '',
         escrowFundTxHash: job.escrowFundTxHash || '',
         fundingAnchorTxHash: job.fundingAnchorTxHash || ''
       });
+    } else if (status.lastStatus === 'skipped_active_job') {
+      log(`Skipped: active hourly news job still in progress (${status.lastJobId || 'unknown'})`);
+      createdJobs.push({ round, jobId: status.lastJobId || '', state: 'skipped_active_job', error: '' });
     } else {
-      log(`❌ Job creation failed: ${status.lastError || 'unknown'}`);
-      createdJobs.push({ round, jobId: '', state: 'failed', error: status.lastError });
+      log(`Failed: ${status.lastError || 'unknown'}`);
+      createdJobs.push({ round, jobId: '', state: 'failed', error: status.lastError || 'unknown' });
     }
 
     if (round < ROUNDS) {
-      log(`\n   Waiting ${INTERVAL_SEC}s before next round...\n`);
       await sleep(INTERVAL_SEC * 1000);
     }
   }
 
   divider();
-  log('📊 Summary:\n');
-
-  const successful = createdJobs.filter((j) => j.state === 'funded');
-  log(`   Jobs created: ${successful.length}/${ROUNDS}`);
-  log(`   All on-chain transactions:\n`);
-
+  log('Summary:');
   for (const job of createdJobs) {
     if (job.state === 'funded') {
-      log(`   Round ${job.round}: ${job.jobId}`);
-      if (job.createAnchorTxHash) log(`     - Create Anchor: ${job.createAnchorTxHash}`);
-      if (job.escrowFundTxHash) log(`     - Escrow Fund:   ${job.escrowFundTxHash}`);
-      if (job.fundingAnchorTxHash) log(`     - Fund Anchor:   ${job.fundingAnchorTxHash}`);
+      log(`  round=${job.round} jobId=${job.jobId}`);
+    } else if (job.state === 'skipped_active_job') {
+      log(`  round=${job.round} skipped active job ${job.jobId || ''}`.trim());
     } else {
-      log(`   Round ${job.round}: FAILED — ${job.error || 'unknown'}`);
+      log(`  round=${job.round} failed ${job.error || ''}`.trim());
     }
   }
 
   divider();
-  log('🎯 Next Steps (for the external agent / Claude + ktrace MCP):\n');
-  for (const job of successful) {
-    log(`   1. ktrace job_claim  { jobId: "${job.jobId}" }`);
-    log(`   2. ktrace cap_news_signal / cap_dex_market / cap_token_analysis  (gather BTC data)`);
-    log(`   3. Analyze data and create trade plan`);
-    log(`   4. ktrace job_submit { jobId: "${job.jobId}", summary: "...", resultRef: "...", dataSourceTraceIds: [...] }`);
-    log('');
+  log('Next steps for the external agent:');
+  for (const job of createdJobs.filter((item) => item.state === 'funded')) {
+    log(`  1. ktrace job_claim  { jobId: "${job.jobId}" }`);
+    log(`  2. ktrace job_accept { jobId: "${job.jobId}" }`);
+    log(`  3. ktrace cap_news_signal { coin: "BTC", minScore: 50, limit: 5 }`);
+    log(`  4. Build ktrace-news-brief-v1 delivery with summary/items/newsTraceId/paymentTxHash/trustTxHash`);
+    log(`  5. ktrace job_submit { jobId: "${job.jobId}", delivery: {...} }`);
   }
 
-  // Export agent_log
   divider();
-  log('📄 Agent Log (GET /api/synthesis/agent-log):\n');
+  log('Agent log:');
   const agentLog = await getJson('/api/synthesis/agent-log');
   console.log(JSON.stringify(agentLog, null, 2));
 
   divider();
-  log('✅ Demo script complete. Open jobs are waiting for external agents.');
-  log(`   agent.json:  ${BASE_URL}/.well-known/agent.json`);
-  log(`   agent_log:   ${BASE_URL}/api/synthesis/agent-log`);
-  log(`   evidence:    ${BASE_URL}/api/public/evidence/<traceId>?logs=true`);
+  log(`agent-log=${BASE_URL}/api/synthesis/agent-log`);
+  log(`agent-json=${BASE_URL}/.well-known/agent.json`);
 }
 
 main().catch((error) => {

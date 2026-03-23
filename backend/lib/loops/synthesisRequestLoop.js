@@ -1,19 +1,31 @@
+import { validateNewsBriefJobDelivery } from '../deliverySchemas/index.js';
+
 /**
  * Synthesis Autonomous Request Loop
  *
- * Acts as a Request Agent: periodically creates ERC-8183 jobs requesting
- * BTC trade plans from external agents. External agents gather data via
- * ktrace capabilities, analyze with LLM, and submit results with evidence.
- * Validator checks on-chain proofs, then completes the job to release funds.
+ * Acts as the built-in ERC8183 requester/validator pair for the standard
+ * hourly news brief example. It posts one open cap-news-signal job per hour,
+ * waits for an external agent to claim + accept + submit, then validates the
+ * submitted delivery against the recorded paid capability call.
  */
 
 function normalizeText(value = '') {
   return String(value ?? '').trim();
 }
 
+function clampNumber(value, fallback, min = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, numeric);
+}
+
 function createTraceId(prefix = 'synth') {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
+
+const HOURLY_NEWS_TEMPLATE_ID = 'erc8183-hourly-news-brief';
+const HOURLY_NEWS_CAPABILITY = 'cap-news-signal';
+const ACTIVE_NEWS_JOB_STATES = new Set(['created', 'funding_pending', 'pending_approval', 'funded', 'accepted', 'submitted']);
 
 export function createSynthesisRequestLoop({
   state,
@@ -21,6 +33,10 @@ export function createSynthesisRequestLoop({
   minIntervalMs = 60_000,
   requestJson,
   readJobs,
+  readServiceInvocations,
+  readTrustPublications,
+  readWorkflows,
+  readX402Requests,
   publishTrustSignal,
   broadcastEvent,
   PORT = 3399
@@ -62,6 +78,11 @@ export function createSynthesisRequestLoop({
     return headers;
   }
 
+  function resolveJobExpiryMs() {
+    const expiryHours = clampNumber(process.env.SYNTHESIS_JOB_EXPIRY_HOURS || 6, 6, 1);
+    return expiryHours * 60 * 60 * 1000;
+  }
+
   async function postInternal(pathname, body = {}) {
     const url = `http://127.0.0.1:${PORT}${pathname}`;
     const response = await fetch(url, {
@@ -74,71 +95,70 @@ export function createSynthesisRequestLoop({
     return { status: response.status, ok: response.ok, data };
   }
 
-  async function getInternal(pathname) {
-    const url = `http://127.0.0.1:${PORT}${pathname}`;
-    const response = await fetch(url, {
-      headers: buildHeaders(),
-      signal: AbortSignal.timeout(15_000)
-    });
-    const data = await response.json().catch(() => ({}));
-    return { status: response.status, ok: response.ok, data };
-  }
-
   function buildJobInput() {
     const now = new Date();
     return {
-      asset: 'BTC',
-      pair: 'BTCUSDT',
-      timeframe: '1h',
+      task: 'Summarize the important BTC news from the last hour.',
+      topic: 'important crypto news',
+      sourceCapability: HOURLY_NEWS_CAPABILITY,
+      window: 'last_1h',
+      coin: 'BTC',
+      signal: '',
+      minScore: 50,
+      limit: 5,
       requestedAt: now.toISOString(),
       requirements: [
-        'Current market trend analysis (bullish/bearish/sideways)',
-        'Entry price with reasoning',
-        'Take-profit target(s) with reasoning',
-        'Stop-loss level with reasoning',
-        'Confidence score (0-100)',
-        'Data sources used with ktrace evidence traceIds'
+        'Call cap_news_signal exactly once',
+        'Produce a concise summary of the important news returned',
+        'Include source URLs for the returned news items',
+        'Include the payment tx hash for the cap_news_signal call',
+        'Include the trust publication tx hash for the cap_news_signal call'
       ],
       evaluationCriteria: [
-        'All data must be sourced via ktrace capabilities with valid traceIds',
-        'Each traceId must have corresponding x402 payment proof (txHash)',
-        'Analysis must reference at least 2 different data sources',
-        'Entry/TP/SL must be specific numeric values, not ranges'
+        'Delivery must match ktrace-news-brief-v1',
+        'newsTraceId must resolve to a paid cap-news-signal invocation',
+        'paymentTxHash must match the invocation payment tx',
+        'trustTxHash must match the trust publication anchor tx',
+        'Every submitted sourceUrl must exist in the cap-news-signal result'
       ]
     };
   }
 
   function buildJobDescription() {
     return [
-      'BTC Trade Plan Request — provide a complete trading plan for BTC/USDT.',
+      'Hourly News Brief Request: summarize the important BTC-related news from the last hour.',
       '',
       'Required deliverables:',
-      '1. Market trend analysis with supporting data',
-      '2. Specific entry price',
-      '3. Take-profit and stop-loss levels',
-      '4. Confidence score (0-100)',
-      '5. All data sourced via ktrace capabilities with evidence traceIds',
+      '1. Call cap_news_signal exactly once',
+      '2. Return ktrace-news-brief-v1 delivery JSON',
+      '3. Include a short summary plus headline/sourceUrl items',
+      '4. Include newsTraceId, paymentTxHash, trustTxHash',
       '',
-      'Evaluation: Validator will check on-chain evidence (traceIds, txHashes)',
-      'for data provenance. At least 2 ktrace capabilities must be used.',
-      '',
-      'Suggested capabilities: cap-news-signal, cap-dex-market, cap-token-analysis,',
-      'cap-listing-alert, cap-smart-money-signal'
+      'Validation: the built-in validator will verify the paid cap-news-signal',
+      'trace, payment tx hash, trust publication tx hash, and submitted source URLs.'
     ].join('\n');
   }
 
-  async function createTradeJob() {
+  function findActiveHourlyNewsJob() {
+    const jobs = typeof readJobs === 'function' ? readJobs() : [];
+    return (
+      jobs.find(
+        (job) =>
+          normalizeText(job?.templateId || '') === HOURLY_NEWS_TEMPLATE_ID &&
+          ACTIVE_NEWS_JOB_STATES.has(normalizeText(job?.state || '').toLowerCase())
+      ) || null
+    );
+  }
+
+  async function createNewsJob() {
     const traceId = createTraceId('synth_job');
     const budget = normalizeText(process.env.SYNTHESIS_JOB_BUDGET || '0.005');
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours from now
-
-    const requesterAa = normalizeText(
-      process.env.ERC8183_REQUESTER_AA_ADDRESS || ''
-    );
+    const expiresAt = new Date(Date.now() + resolveJobExpiryMs()).toISOString();
+    const requesterAa = normalizeText(process.env.ERC8183_REQUESTER_AA_ADDRESS || '');
 
     const result = await postInternal('/api/jobs', {
       provider: 'any',
-      capability: 'btc-trade-plan',
+      capability: HOURLY_NEWS_CAPABILITY,
       budget,
       input: buildJobInput(),
       traceId,
@@ -148,7 +168,8 @@ export function createSynthesisRequestLoop({
       escrowAmount: budget,
       executorStakeAmount: '0',
       evaluator: 'auto',
-      templateId: 'synthesis-btc-trade-plan'
+      summary: buildJobDescription(),
+      templateId: HOURLY_NEWS_TEMPLATE_ID
     });
 
     const jobData = result.data?.job || result.data || {};
@@ -165,13 +186,11 @@ export function createSynthesisRequestLoop({
   }
 
   async function fundJob(jobId) {
-    // Prepare funding (approve allowances)
     const prep = await postInternal(`/api/jobs/${jobId}/prepare-funding`, {});
     if (!prep.ok && prep.status !== 409) {
       return { ok: false, error: `prepare-funding failed: ${normalizeText(prep.data?.error || '')}` };
     }
 
-    // Fund the escrow
     const fund = await postInternal(`/api/jobs/${jobId}/fund`, { async: false });
     const fundError = fund.data?.error;
     return {
@@ -189,7 +208,7 @@ export function createSynthesisRequestLoop({
     const submitted = jobs.filter(
       (job) =>
         normalizeText(job?.state) === 'submitted' &&
-        normalizeText(job?.templateId || '') === 'synthesis-btc-trade-plan'
+        normalizeText(job?.templateId || '') === HOURLY_NEWS_TEMPLATE_ID
     );
 
     for (const job of submitted) {
@@ -197,26 +216,24 @@ export function createSynthesisRequestLoop({
       if (!jobId) continue;
 
       try {
-        // Get audit trail
-        const audit = await getInternal(`/api/jobs/${jobId}/audit`);
-        const auditData = audit.data;
+        const deliveryValidation = validateNewsBriefJobDelivery({
+          job,
+          readServiceInvocations,
+          readTrustPublications,
+          readWorkflows,
+          readX402Requests
+        });
+        const approved = Boolean(deliveryValidation?.ok);
+        const reason = normalizeText(
+          deliveryValidation?.summary ||
+          (approved ? 'Validated hourly news brief delivery.' : 'Rejected hourly news brief delivery.')
+        );
 
-        // Check if evidence traceIds exist
-        const traceIds = Array.isArray(job?.dataSourceTraceIds) ? job.dataSourceTraceIds : [];
-        const hasEvidence = traceIds.length >= 2;
-        const hasResult = Boolean(job?.resultRef || job?.resultHash);
-
-        const approved = hasEvidence && hasResult;
-        const reason = approved
-          ? `Validated: ${traceIds.length} evidence sources, result hash present.`
-          : `Rejected: ${!hasEvidence ? 'insufficient evidence sources (need >= 2)' : 'missing result'}`;
-
-        // Validate the job
         await postInternal(`/api/jobs/${jobId}/validate`, {
           approved,
           reason,
           summary: reason,
-          evaluator: 'synthesis-auto-validator'
+          evaluator: 'erc8183-validator'
         });
 
         if (approved) {
@@ -225,7 +242,6 @@ export function createSynthesisRequestLoop({
           loopState.jobsRejected += 1;
         }
 
-        // Publish trust signal for the executor
         if (typeof publishTrustSignal === 'function') {
           try {
             await publishTrustSignal({
@@ -254,11 +270,18 @@ export function createSynthesisRequestLoop({
       loopState.totalRuns += 1;
       loopState.lastTickAt = tickStart;
 
-      // Step 1: Check and validate any submitted jobs
       await checkAndValidateSubmissions();
 
-      // Step 2: Create a new trade plan job
-      const job = await createTradeJob();
+      const activeJob = findActiveHourlyNewsJob();
+      if (activeJob) {
+        loopState.lastJobId = normalizeText(activeJob?.jobId || '');
+        loopState.lastTraceId = normalizeText(activeJob?.traceId || '');
+        loopState.lastStatus = 'skipped_active_job';
+        loopState.lastError = '';
+        return;
+      }
+
+      const job = await createNewsJob();
       if (!job.ok) {
         loopState.lastStatus = 'job_create_failed';
         loopState.lastError = job.error;
@@ -269,7 +292,6 @@ export function createSynthesisRequestLoop({
       loopState.lastTraceId = job.traceId;
       loopState.jobsCreated += 1;
 
-      // Step 3: Fund the job
       const fund = await fundJob(job.jobId);
       if (!fund.ok) {
         loopState.lastStatus = 'job_fund_failed';
@@ -285,7 +307,9 @@ export function createSynthesisRequestLoop({
           jobId: job.jobId,
           traceId: job.traceId,
           fundingTxHash: fund.txHash,
-          reason
+          reason,
+          templateId: HOURLY_NEWS_TEMPLATE_ID,
+          capability: HOURLY_NEWS_CAPABILITY
         });
       }
     } catch (error) {
@@ -307,7 +331,6 @@ export function createSynthesisRequestLoop({
     loopState.intervalMs = resolvedInterval;
     loopState.startedAt = new Date().toISOString();
     timer = setInterval(() => runTick('scheduled'), resolvedInterval);
-    // Run first tick immediately
     runTick('initial');
     return { ok: true, intervalMs: resolvedInterval };
   }

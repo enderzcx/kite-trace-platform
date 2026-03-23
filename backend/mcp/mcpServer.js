@@ -134,6 +134,50 @@ function applyConnectorGrantAuth(req, grant = {}) {
 }
 
 function buildRequestAuth(req, deps) {
+  function resolveAccountRuntimeContext(current = {}) {
+    const authSource = normalizeLower(current.authSource || '');
+    const explicitOwner = normalizeText(current.ownerEoa || '');
+    const explicitAaWallet = normalizeText(current.aaWallet || '');
+    if (authSource === 'connector-grant') {
+      return {
+        ownerEoa: explicitOwner,
+        aaWallet: explicitAaWallet
+      };
+    }
+    if (authSource !== 'account-api-key') {
+      return {
+        ownerEoa: explicitOwner,
+        aaWallet: explicitAaWallet
+      };
+    }
+    if (explicitOwner && explicitAaWallet) {
+      return {
+        ownerEoa: explicitOwner,
+        aaWallet: explicitAaWallet
+      };
+    }
+
+    let runtime = null;
+    if (explicitOwner && typeof deps.readSessionRuntimeByOwner === 'function') {
+      runtime = deps.readSessionRuntimeByOwner(explicitOwner) || null;
+    }
+    if ((!runtime || !normalizeText(runtime?.aaWallet || '')) && typeof deps.readSessionRuntime === 'function') {
+      runtime = deps.readSessionRuntime() || null;
+    }
+
+    const runtimeOwner = normalizeText(runtime?.owner || runtime?.ownerEoa || '');
+    const runtimeAaWallet = normalizeText(runtime?.aaWallet || '');
+    const ownerMatches =
+      !explicitOwner ||
+      !runtimeOwner ||
+      normalizeLower(explicitOwner) === normalizeLower(runtimeOwner);
+
+    return {
+      ownerEoa: explicitOwner || (ownerMatches ? runtimeOwner : ''),
+      aaWallet: explicitAaWallet || (ownerMatches ? runtimeAaWallet : '')
+    };
+  }
+
   const connectorToken = normalizeText(req.params?.token || '');
   if (connectorToken) {
     const resolveConnectorToken = deps.resolveAgentConnectorToken || deps.resolveClaudeConnectorToken;
@@ -217,13 +261,19 @@ function buildRequestAuth(req, deps) {
     };
   }
 
+  const accountRuntime = resolveAccountRuntimeContext({
+    authSource: normalizeLower(req.authSource || resolved.authSource || '') || 'env-api-key',
+    ownerEoa: normalizeText(req.authOwnerEoa || req.accountCtx?.ownerEoa || ''),
+    aaWallet: normalizeText(req.accountCtx?.aaWallet || '')
+  });
+
   return {
     ok: true,
     role: normalizeLower(req.authRole || resolved.role || '') || 'viewer',
     authSource: normalizeLower(req.authSource || resolved.authSource || '') || 'env-api-key',
     apiKey: normalizeText(req.auth?.token || deps.extractApiKey?.(req) || ''),
-    ownerEoa: normalizeText(req.authOwnerEoa || req.accountCtx?.ownerEoa || ''),
-    aaWallet: normalizeText(req.accountCtx?.aaWallet || ''),
+    ownerEoa: accountRuntime.ownerEoa,
+    aaWallet: accountRuntime.aaWallet,
     agentId: normalizeText(req.auth?.extra?.agentId || ''),
     identityRegistry: normalizeText(req.auth?.extra?.identityRegistry || ''),
     allowedBuiltinTools: Array.isArray(req.auth?.extra?.allowedBuiltinTools) ? req.auth.extra.allowedBuiltinTools : []

@@ -124,6 +124,15 @@ try {
     assert(Array.isArray(result.payload?.result?.tools), 'connector tools/list payload missing tools');
   }
   assert(harness.state.connectorGrants.length === 1, 'concurrent claim created duplicate grants');
+  const grantedToolNames = concurrentListResults[0].payload.result.tools
+    .map((tool) => String(tool?.name || '').trim())
+    .filter(Boolean);
+  assert(grantedToolNames.includes('ktrace__job_show'), 'claude connector default preset missing job_show');
+  assert(grantedToolNames.includes('ktrace__job_claim'), 'claude connector default preset missing job_claim');
+  assert(grantedToolNames.includes('ktrace__job_accept'), 'claude connector default preset missing job_accept');
+  assert(grantedToolNames.includes('ktrace__job_submit'), 'claude connector default preset missing job_submit');
+  assert(grantedToolNames.includes('ktrace__job_audit'), 'claude connector default preset missing job_audit');
+  assert(!grantedToolNames.includes('ktrace__job_create'), 'claude connector default preset should not expose job_create');
 
   const statusAfterClaim = await harness.requestJson(`/api/connector/claude/status?owner=${encodeURIComponent(ownerA)}`, {
     headers: buildHeaders(harness.keys.agent)

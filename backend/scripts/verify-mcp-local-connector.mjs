@@ -236,6 +236,64 @@ try {
   assert(flowShowTool.status === 200, 'flow_show tool transport failed');
   assert(flowShowTool.payload?.result?.isError !== true, 'flow_show tool returned MCP tool error');
 
+  const genericJobId = `job_generic_mcp_claim_${Date.now()}`;
+  harness.state.jobs.unshift({
+    jobId: genericJobId,
+    traceId: `trace_${genericJobId}`,
+    state: 'funded',
+    provider: 'any',
+    capability: 'btc-trade-plan',
+    payer: owner,
+    executor: '0x0000000000000000000000000000000000000000',
+    escrowState: 'funded',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+  const genericClaim = await postJsonRpcToPath(
+    harness.host,
+    '/mcp',
+    {
+      jsonrpc: '2.0',
+      id: 'generic-job-claim-env',
+      method: 'tools/call',
+      params: {
+        name: 'ktrace__job_claim',
+        arguments: {
+          jobId: genericJobId
+        }
+      }
+    },
+    harness.keys.agent
+  );
+  assert(genericClaim.status === 200, 'generic /mcp env-key job_claim transport failed');
+  assert(genericClaim.payload?.result?.isError === true, 'generic /mcp env-key job_claim should return MCP tool error');
+  assert(
+    String(genericClaim.payload?.result?.structuredContent?.error || '').trim() === 'account_api_key_required',
+    'generic /mcp env-key job_claim should require account API key'
+  );
+
+  const genericAccountClaim = await postJsonRpcToPath(
+    harness.host,
+    '/mcp',
+    {
+      jsonrpc: '2.0',
+      id: 'generic-job-claim-account',
+      method: 'tools/call',
+      params: {
+        name: 'ktrace__job_claim',
+        arguments: {
+          jobId: genericJobId
+        }
+      }
+    },
+    harness.keys.accountAgent
+  );
+  assert(genericAccountClaim.status === 200, 'generic /mcp account-key job_claim transport failed');
+  assert(genericAccountClaim.payload?.result?.isError !== true, 'generic /mcp account-key job_claim returned MCP tool error');
+  const genericClaimJob = genericAccountClaim.payload?.result?.structuredContent?.job || {};
+  assert(String(genericClaimJob.jobId || '').trim() === genericJobId, 'generic /mcp job_claim returned wrong job');
+  assert(String(genericClaimJob.executor || '').trim().toLowerCase() === owner.toLowerCase(), 'generic /mcp job_claim did not infer executor from runtime');
+
   const statusAfterClaim = await harness.requestJson(
     `/api/connector/agent/status?owner=${encodeURIComponent(owner)}&client=${encodeURIComponent(client)}&clientId=${encodeURIComponent(clientId)}`,
     {

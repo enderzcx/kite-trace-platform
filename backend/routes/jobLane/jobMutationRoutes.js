@@ -1,9 +1,10 @@
 import { sendErrorResponse } from '../../lib/errorResponse.js';
 import { createRequestLogger } from '../../lib/logger.js';
 import {
-  normalizeBtcTradingPlanEvidence,
-  validateBtcTradingPlanV1
-} from '../../lib/deliverySchemas/btcTradingPlanV1.js';
+  deriveDeliverySummary,
+  normalizeDeliveryEvidence,
+  validateDeliveryPayload
+} from '../../lib/deliverySchemas/index.js';
 
 const logger = createRequestLogger('job-mutation-route');
 
@@ -1192,9 +1193,9 @@ export function registerJobMutationContinuation(ctx = {}) {
     const submittedDelivery = detailObject(req.body?.delivery);
     const hasDirectDelivery = Object.keys(submittedDelivery).length > 0;
     const submitIntentId = normalizeText(req.body?.intentId || req.body?.idempotencyKey || '');
-    const directDeliveryValidation = hasDirectDelivery ? validateBtcTradingPlanV1(submittedDelivery) : null;
+    const directDeliveryValidation = hasDirectDelivery ? validateDeliveryPayload(submittedDelivery) : null;
     if (hasDirectDelivery && !directDeliveryValidation?.ok) {
-      return sendJobRouteError(req, res, 400, 'invalid_delivery_payload', 'delivery payload did not match ktrace-btc-trading-plan-v1', {
+      return sendJobRouteError(req, res, 400, 'invalid_delivery_payload', 'delivery payload did not match a supported ktrace delivery schema', {
         jobId: normalizeText(job.jobId),
         schema: normalizeText(submittedDelivery?.schema || ''),
         errors: Array.isArray(directDeliveryValidation?.errors) ? directDeliveryValidation.errors : []
@@ -1266,23 +1267,32 @@ export function registerJobMutationContinuation(ctx = {}) {
     const anchorRequired = Boolean(process.env.ERC8183_JOB_ANCHOR_REGISTRY);
 
     if (hasDirectDelivery) {
-      const directEvidence = normalizeBtcTradingPlanEvidence(submittedDelivery, {
+      const directEvidence = normalizeDeliveryEvidence(submittedDelivery, {
         primaryTraceId: normalizeText(req.body?.primaryTraceId || job.traceId),
         primaryEvidenceRef: normalizeText(req.body?.evidenceRef || job.evidenceRef),
         paymentRequestId: normalizeText(req.body?.paymentRequestId || job.paymentRequestId),
         paymentTxHash: normalizeText(req.body?.paymentTxHash || job.paymentTxHash),
         dataSourceTraceIds: normalizeTextList(req.body?.dataSourceTraceIds),
         receiptRefs: normalizeTextList(req.body?.receiptRefs),
-        deliveredAt: normalizeText(req.body?.deliveredAt)
+        deliveredAt: normalizeText(req.body?.deliveredAt),
+        trustTxHash: normalizeText(req.body?.trustTxHash || '')
       });
+      const directProvider = (() => {
+        const currentProvider = normalizeText(job?.provider || '');
+        if (!currentProvider || currentProvider.toLowerCase() === 'any') {
+          return normalizeText(job?.executor || currentProvider);
+        }
+        return currentProvider;
+      })();
       const now = new Date().toISOString();
       let next = {
         ...job,
         ...submitExecutionPatch,
         state: 'accepted',
         traceId: directEvidence.primaryTraceId || job.traceId,
+        provider: directProvider,
         submissionRef: `/api/jobs/${encodeURIComponent(job.jobId)}`,
-        summary: normalizeText(req.body?.summary || submittedDelivery?.analysis?.summary || 'Job submitted for validation.'),
+        summary: deriveDeliverySummary(submittedDelivery, normalizeText(req.body?.summary || 'Job submitted for validation.')),
         error: '',
         updatedAt: now,
         paymentRequestId: directEvidence.paymentRequestId || job.paymentRequestId,

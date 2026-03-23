@@ -1,8 +1,8 @@
 import { mergeJobWithEscrowRead } from '../../lib/escrowReadModel.js';
 import {
-  buildBtcTradingPlanDeliveryStandard,
-  normalizeBtcTradingPlanEvidence
-} from '../../lib/deliverySchemas/btcTradingPlanV1.js';
+  buildDeliveryStandard,
+  normalizeDeliveryEvidence
+} from '../../lib/deliverySchemas/index.js';
 
 export function normalizeText(value = '') {
   return String(value || '').trim();
@@ -306,7 +306,7 @@ export function createSharedJobStateHelpers(deps = {}) {
       materialized?.delivery && typeof materialized.delivery === 'object' && !Array.isArray(materialized.delivery)
         ? materialized.delivery
         : null;
-    const deliveryEvidence = normalizeBtcTradingPlanEvidence(delivery, {
+    const deliveryEvidence = normalizeDeliveryEvidence(delivery, {
       primaryTraceId: normalizeText(materialized?.traceId),
       primaryEvidenceRef:
         normalizeText(materialized?.evidenceRef) ||
@@ -470,7 +470,7 @@ export function createSharedJobStateHelpers(deps = {}) {
       onchainEnforced: hasEscrowBacking(view),
       enforcementMode: hasEscrowBacking(view) ? 'onchain_job_escrow_v1' : 'backend_materialized'
     };
-    const deliveryStandard = buildBtcTradingPlanDeliveryStandard({
+    const deliveryStandard = buildDeliveryStandard({
       delivery: view.delivery,
       resultHash: view.resultHash || view.submissionHash,
       outcomeAnchored: Boolean(view.outcomeAnchorTxHash),

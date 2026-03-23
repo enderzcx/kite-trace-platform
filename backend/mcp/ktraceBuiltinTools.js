@@ -1,6 +1,9 @@
 import * as z from 'zod/v4';
 
 function normalizeText(value = '') {
+  if (value !== null && typeof value === 'object') {
+    return String(value.message || value.reason || value.error || JSON.stringify(value)).trim();
+  }
   return String(value ?? '').trim();
 }
 
@@ -148,12 +151,23 @@ function buildToolResponse(summary = '', structuredContent = {}) {
 }
 
 function buildToolError(tool = {}, status = 500, payload = {}, fallbackReason = '') {
+  // API error responses wrap fields inside payload.error: { code, message, detail }
+  const nested = isPlainObject(payload?.error) ? payload.error : null;
   const reason =
-    normalizeText(payload?.reason || payload?.message || payload?.error || fallbackReason || '') ||
-    'KTrace MCP action failed.';
+    normalizeText(
+      payload?.reason || payload?.message ||
+      nested?.message || nested?.reason ||
+      (typeof payload?.error === 'string' ? payload.error : '') ||
+      fallbackReason || ''
+    ) || 'KTrace MCP action failed.';
   const code =
-    normalizeText(payload?.code || payload?.error || '') ||
+    normalizeText(
+      payload?.code || nested?.code ||
+      (typeof payload?.error === 'string' ? payload.error : '') || ''
+    ) ||
     (status === 401 ? 'unauthorized' : status === 403 ? 'forbidden' : 'ktrace_action_failed');
+  const detail = isPlainObject(payload?.detail) ? payload.detail
+    : isPlainObject(nested?.detail) ? nested.detail : null;
   return {
     isError: true,
     content: [
@@ -167,7 +181,7 @@ function buildToolError(tool = {}, status = 500, payload = {}, fallbackReason = 
       error: code,
       reason,
       status,
-      detail: isPlainObject(payload?.detail) ? payload.detail : null
+      detail
     }
   };
 }
@@ -661,6 +675,24 @@ async function invokeJobMutation(fetchLoopbackJson, tool = {}, args = {}, traceI
   if (builtinId === 'job_claim') {
     if (normalizeText(args?.executor || '')) body.executor = normalizeText(args.executor);
     if (normalizeText(args?.executorAddress || '')) body.executorAddress = normalizeText(args.executorAddress);
+    if (!body.executor && !body.executorAddress && normalizeText(requestContext?.aaWallet || '')) {
+      body.executorAddress = normalizeText(requestContext.aaWallet);
+    }
+    if (
+      !body.executor &&
+      !body.executorAddress &&
+      normalizeText(requestContext?.authSource || '') === 'env-api-key'
+    ) {
+      return buildToolError(
+        tool,
+        401,
+        {
+          code: 'account_api_key_required',
+          reason: 'job_claim over /mcp requires an account API key or connector grant so KTrace can resolve the caller AA wallet.'
+        },
+        'job_claim over /mcp requires an account API key or connector grant so KTrace can resolve the caller AA wallet.'
+      );
+    }
   } else if (builtinId === 'job_prepare_funding') {
     if (normalizeText(args?.intentId || '')) body.intentId = normalizeText(args.intentId);
   } else if (builtinId === 'job_fund') {
@@ -768,7 +800,7 @@ function resolveBuiltinMetadata(builtinId = '') {
   if (['flow_history', 'flow_show', 'artifact_receipt', 'artifact_evidence'].includes(normalized)) {
     return { audience: 'public_product', scopeMode: 'scoped', riskLevel: 'low' };
   }
-  if (['job_create', 'job_show', 'job_audit'].includes(normalized)) {
+  if (['job_create', 'job_show', 'job_audit', 'job_claim', 'job_accept', 'job_submit'].includes(normalized)) {
     return { audience: 'trusted_integration', scopeMode: 'scoped', riskLevel: 'high' };
   }
   return { audience: 'internal_ops', scopeMode: 'scoped', riskLevel: 'critical' };
@@ -1040,7 +1072,7 @@ export async function invokeBuiltinTool({
   if (builtinId === 'job_create') {
     return invokeJobCreate(fetchLoopbackJson, args, traceId, requestContext);
   }
-  if (['job_prepare_funding', 'job_fund', 'job_accept', 'job_submit', 'job_validate', 'job_complete', 'job_reject', 'job_expire'].includes(builtinId)) {
+  if (['job_prepare_funding', 'job_fund', 'job_claim', 'job_accept', 'job_submit', 'job_validate', 'job_complete', 'job_reject', 'job_expire'].includes(builtinId)) {
     return invokeJobMutation(fetchLoopbackJson, tool, args, traceId, requestContext);
   }
   if (['job_show', 'job_audit'].includes(builtinId)) {

@@ -1707,15 +1707,22 @@ const {
   expireJob: executeJobExpiry
 });
 
-const synthesisLoop = createSynthesisRequestLoop({
-  state: null,
-  intervalMs: Math.max(60_000, Number(process.env.SYNTHESIS_LOOP_INTERVAL_MS || 3600_000)),
-  requestJson: null,
-  readJobs,
-  publishTrustSignal: null,
-  broadcastEvent,
-  PORT
-});
+const synthesisLoopEnabled = /^(1|true|yes|on)$/i.test(String(process.env.SYNTHESIS_LOOP_ENABLED || '').trim());
+const synthesisLoop = synthesisLoopEnabled
+  ? createSynthesisRequestLoop({
+      state: null,
+      intervalMs: Math.max(60_000, Number(process.env.SYNTHESIS_LOOP_INTERVAL_MS || 3600_000)),
+      requestJson: null,
+      readJobs,
+      readServiceInvocations,
+      readTrustPublications,
+      readWorkflows,
+      readX402Requests,
+      publishTrustSignal: null,
+      broadcastEvent,
+      PORT
+    })
+  : null;
 
 registerHealthRoutes(app, {
   getAutoJobExpiryStatus,

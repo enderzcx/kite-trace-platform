@@ -186,6 +186,52 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     return Array.from(new Set(rawItems.map((item) => normalizeConnectorBuiltinToolId(item)).filter(Boolean)));
   }
 
+  const CONNECTOR_BUILTIN_TOOL_PRESETS = Object.freeze({
+    minimal: Object.freeze([
+      'artifact_receipt',
+      'artifact_evidence',
+      'flow_history',
+      'flow_show'
+    ]),
+    job_worker: Object.freeze([
+      'artifact_receipt',
+      'artifact_evidence',
+      'flow_history',
+      'flow_show',
+      'job_show',
+      'job_claim',
+      'job_accept',
+      'job_submit',
+      'job_audit'
+    ])
+  });
+
+  function normalizeConnectorBuiltinToolPreset(value = '') {
+    const normalized = normalizeText(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (normalized === 'jobworker') return 'job_worker';
+    if (normalized === 'readonly' || normalized === 'read_only') return 'minimal';
+    return normalized;
+  }
+
+  function resolveConnectorBuiltinTools(body = {}, { client = 'agent' } = {}) {
+    const explicitTools = normalizeConnectorBuiltinToolList(body.allowedBuiltinTools || []);
+    if (explicitTools.length > 0) return explicitTools;
+
+    const requestedPreset = normalizeConnectorBuiltinToolPreset(
+      body.allowedBuiltinToolsPreset ||
+      body.allowedBuiltinToolPreset ||
+      body.builtinToolsPreset ||
+      body.builtinToolPreset ||
+      body.connectorPreset ||
+      body.preset ||
+      ''
+    );
+    const defaultPreset = client === 'claude' ? 'job_worker' : 'minimal';
+    const presetName = requestedPreset || defaultPreset;
+    const presetTools = CONNECTOR_BUILTIN_TOOL_PRESETS[presetName];
+    return normalizeConnectorBuiltinToolList(Array.isArray(presetTools) ? presetTools : CONNECTOR_BUILTIN_TOOL_PRESETS[defaultPreset]);
+  }
+
   function resolveConnectorIdentity(body = {}, setup = null) {
     const runtime = setup?.runtime && typeof setup.runtime === 'object' ? setup.runtime : {};
     const agentId = normalizeText(body.agentId || runtime.authorizedAgentId || '');
@@ -1070,7 +1116,7 @@ export function registerCoreIdentitySessionRoutes(ctx = {}) {
     const normalizedClientId = normalizeConnectorClientId(body.clientId || body.deviceId || '');
     const setup = evaluateAgentConnectorSetup(ownerEoa);
     const identity = resolveConnectorIdentity(body, setup);
-    const allowedBuiltinTools = normalizeConnectorBuiltinToolList(body.allowedBuiltinTools || []);
+    const allowedBuiltinTools = resolveConnectorBuiltinTools(body, { client: normalizedClient });
     if (!normalizeOwnerInput(ownerEoa)) {
       return sendRouteFailure(req, res, {
         statusCode: 400,

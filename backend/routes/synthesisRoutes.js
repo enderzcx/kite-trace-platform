@@ -55,7 +55,7 @@ export function registerSynthesisRoutes(app, deps = {}) {
   app.get('/api/synthesis/agent-log', (req, res) => {
     const jobs = typeof readJobs === 'function' ? readJobs() : [];
     const synthesisJobs = jobs.filter(
-      (job) => normalizeText(job?.templateId || '') === 'synthesis-btc-trade-plan'
+      (job) => normalizeText(job?.templateId || '') === 'erc8183-hourly-news-brief'
     );
 
     const runs = synthesisJobs.map((job) => {
@@ -67,7 +67,8 @@ export function registerSynthesisRoutes(app, deps = {}) {
           details: {
             jobId: job.jobId,
             capability: job.capability,
-            budget: job.budget
+            budget: job.budget,
+            window: job?.input?.window || ''
           }
         });
       }
@@ -99,7 +100,9 @@ export function registerSynthesisRoutes(app, deps = {}) {
             resultRef: job.resultRef,
             resultHash: job.resultHash,
             summary: job.summary,
-            dataSourceTraceIds: job.dataSourceTraceIds || [],
+            newsTraceId: job?.delivery?.newsTraceId || '',
+            paymentTxHash: job?.delivery?.paymentTxHash || job.paymentTxHash || '',
+            trustTxHash: job?.delivery?.trustTxHash || '',
             evidenceRef: job.evidenceRef || ''
           }
         });

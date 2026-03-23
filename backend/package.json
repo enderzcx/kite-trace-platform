@@ -72,6 +72,7 @@
     "verify:trace-anchor:submit-order": "node .\\scripts\\verify-trace-anchor-submit-order.mjs",
     "verify:trace-anchor:status": "node .\\scripts\\verify-trace-anchor-status-api.mjs",
     "verify:job:auto-expiry": "node .\\scripts\\verify-job-auto-expiry-loop.mjs",
+    "verify:job:hourly-news-brief": "node .\\scripts\\verify-hourly-news-brief-job.mjs",
     "probe:erc8004": "node scripts/probe-erc8004-kite.js",
     "erc8004:compile": "node scripts/erc8004-compile-identity.js",
     "erc8004:compile:trust-anchor": "node scripts/erc8004-compile-trust-anchor.js",
