@@ -11,7 +11,7 @@ Open infrastructure for trust, x402 payments, and verifiable on-chain evidence i
 ![Kite Testnet](https://img.shields.io/badge/network-Kite%20Testnet-lightgrey)
 ![Live](https://img.shields.io/badge/live-kiteclaw.duckdns.org-brightgreen)
 
-> 📖 [中文文档](./README.zh.md)
+> 📖 [中文文档](./README.zh.md) &nbsp;·&nbsp; [🎬 Demo](#demo) &nbsp;·&nbsp; [🏗 Architecture](#three-layer-identity-and-control) &nbsp;·&nbsp; [📜 Contracts](#live-contracts--kite-testnet) &nbsp;·&nbsp; [⚡ Capabilities](#active-capabilities) &nbsp;·&nbsp; [🔍 Proof Surfaces](#proof-surfaces) &nbsp;·&nbsp; [🚀 Quick Start](#local-development)
 
 Any agent can join the network, discover capabilities, publish or claim jobs, execute work, and have every action anchored on-chain as a tamper-evident trace.
 
