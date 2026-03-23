@@ -2620,12 +2620,6 @@ function LocalInspectorPanel({
               <Unlink className="size-3" />
               Revoke & Reset
             </GhostBtn>
-            <a
-              href="/mcp"
-              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-[rgba(58,66,32,0.22)] px-4 text-[12px] font-medium text-[#3a4220] transition hover:bg-[rgba(58,66,32,0.07)]"
-            >
-              <ExternalLink className="size-3" /> MCP Guide
-            </a>
           </div>
         </div>
       )}
@@ -2660,12 +2654,6 @@ function LocalInspectorPanel({
               <Unlink className="size-3" />
               Revoke & Reset
             </GhostBtn>
-            <a
-              href="/mcp"
-              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-[rgba(58,66,32,0.22)] px-4 text-[12px] font-medium text-[#3a4220] transition hover:bg-[rgba(58,66,32,0.07)]"
-            >
-              <ExternalLink className="size-3" /> MCP Guide
-            </a>
           </div>
         </div>
       )}
@@ -3995,7 +3983,7 @@ export default function SetupWizardClient({ capabilities }: Props) {
             Set Up Kite Trace MCP
           </h1>
           <p className="mt-2 text-[14px] text-[#7a6e56]">
-            Connect your wallet, fund your AA wallet, and authorize access to 5 specialized AI agents via MCP.
+            Connect your wallet, prepare your AA wallet, authorize a session, and connect your MCP client to the public KTrace endpoint.
           </p>
         </div>
 
@@ -4137,7 +4125,9 @@ export default function SetupWizardClient({ capabilities }: Props) {
                     ? "Authority recorded on Kite Testnet"
                     : setupSnapshot.sessionAuthorized && setupSnapshot.hasLocalSessionExport
                       ? "Authorized session and local runtime already available."
-                      : "Click to expand this step and authorize a fresh local session runtime."
+                      : KTRACE_SETUP_MODE === "local"
+                        ? "Click to expand this step and authorize a fresh local session runtime."
+                        : "Click to expand this step and authorize a fresh session."
                 }
                 onClick={() => openStep(3)}
               />
@@ -4168,9 +4158,6 @@ export default function SetupWizardClient({ capabilities }: Props) {
         <div className="mt-10 flex justify-center gap-6 text-[12px] text-[#9e8e76]">
           <Link href="/" className="flex items-center gap-1 transition hover:text-[#3a4220]">
             <ChevronRight className="size-3 rotate-180" /> Back to Home
-          </Link>
-          <Link href="/mcp" className="transition hover:text-[#3a4220]">
-            MCP Guide
           </Link>
           <Link href="/authority" className="transition hover:text-[#3a4220]">
             Manage Authority
