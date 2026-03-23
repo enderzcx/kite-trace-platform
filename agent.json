@@ -1,0 +1,223 @@
+{
+  "schema": "erc8004-agent-manifest-v1",
+  "name": "KTrace Agent",
+  "version": "1.0.0",
+  "description": "Auditable multi-agent commerce infrastructure on Kite AI. KTrace combines ERC-8004 identity, x402 pay-per-call settlement, AA session limits, and ERC-8183 escrow so every paid tool call and job lifecycle step can be inspected with receipts, trace IDs, and on-chain anchors.",
+  "repository": "https://github.com/enderzcx/kite-trace-platform",
+  "author": "Sunny Zheng (@0xenderzcx)",
+  "contact": "tifeiyangyang@gmail.com",
+  "identity": {
+    "standard": "ERC-8004",
+    "chain": "kite-testnet",
+    "identityRegistry": "0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    "trustAnchorRegistry": "0xAcdcF151F4A28fFd07e45c62FfE9DAEDe9556823",
+    "operatorEoa": "0x0309dc91bb89750c317ec69566baf1613b57e6bb",
+    "aaWallet": "0x13a77fbf4ef77dd1044d22df0d048b85aa4f1a6a",
+    "accountVersion": "KTraceAccountV3-session-execute"
+  },
+  "contracts": {
+    "JobEscrowV4": "0x95260b27c509Bf624B33702C09CdD37098a6967D",
+    "JobLifecycleAnchorV2": "0xE7833a5D6378A8699e81abaaab77bf924deA172e",
+    "IdentityRegistryV1": "0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    "TrustPublicationAnchorV1": "0xAcdcF151F4A28fFd07e45c62FfE9DAEDe9556823"
+  },
+  "capabilities": [
+    {
+      "id": "cap-news-signal",
+      "name": "AI News Signal",
+      "description": "AI-analyzed news signal (long/short/neutral) from Bloomberg, Reuters, CoinDesk and 50+ sources.",
+      "provider": "fundamental-agent-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.0005",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-listing-alert",
+      "name": "Exchange Listing Alert",
+      "description": "Real-time listing announcements from Binance, OKX, Coinbase, Bybit, Hyperliquid and others. AI-scored with impact and long/short signal.",
+      "provider": "fundamental-agent-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.002",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-kol-monitor",
+      "name": "KOL Tweet Monitor",
+      "description": "Track KOL tweets, deleted tweets, and follower events.",
+      "provider": "fundamental-agent-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.0003",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-meme-sentiment",
+      "name": "Meme Coin Sentiment",
+      "description": "Twitter meme coin social sentiment and trending detection.",
+      "provider": "fundamental-agent-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.0001",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-dex-market",
+      "name": "DEX Market Data",
+      "description": "Real-time price, K-line charts and index prices via OKX DEX.",
+      "provider": "technical-agent-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.0001",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-smart-money-signal",
+      "name": "Smart Money Signal",
+      "description": "Track smart money, whale, and KOL on-chain DEX activity via OKX onchainos.",
+      "provider": "technical-agent-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.001",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-trenches-scan",
+      "name": "Trenches Token Scan",
+      "description": "Meme token early detection: dev reputation, bundle detection, and aped wallets via OKX DEX Trenches.",
+      "provider": "technical-agent-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.0015",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-token-analysis",
+      "name": "Token Deep Analysis",
+      "description": "Full token analysis: holders, top traders, liquidity pools, and market cap via OKX DEX.",
+      "provider": "technical-agent-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.0005",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-wallet-pnl",
+      "name": "Wallet PnL Analysis",
+      "description": "Wallet portfolio holdings and PnL analysis across 20+ chains.",
+      "provider": "technical-agent-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.0003",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-market-price-feed",
+      "name": "Market Snapshot Data Node",
+      "description": "Generic CoinGecko market snapshot for baskets and ranked watchlists.",
+      "provider": "data-node-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.00005",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-tech-buzz-signal",
+      "name": "Tech Buzz Signal Data Node",
+      "description": "Low-cost Hacker News top-story primitive via x402 payment.",
+      "provider": "data-node-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.00005",
+      "evidenceSchema": "ktrace-evidence-v1"
+    },
+    {
+      "id": "cap-weather-context",
+      "name": "Weather Context Data Node",
+      "description": "Low-cost weather context primitive via Open-Meteo and x402 payment.",
+      "provider": "data-node-real",
+      "paymentModel": "x402",
+      "priceUsdt": "0.00005",
+      "evidenceSchema": "ktrace-evidence-v1"
+    }
+  ],
+  "autonomousLoop": {
+    "name": "ERC8183_REQUESTER Hourly News Brief",
+    "templateId": "erc8183-hourly-news-brief",
+    "deliverySchema": "ktrace-news-brief-v1",
+    "capability": "cap-news-signal",
+    "description": "The built-in requester agent posts one open ERC-8183 job at a time for an hourly BTC news brief. External agents claim, accept, call cap-news-signal once, submit a structured delivery, and the validator agent approves or rejects on-chain.",
+    "interval": "3600s",
+    "actions": [
+      "job_create",
+      "job_fund",
+      "job_validate",
+      "trust_publish"
+    ],
+    "observability": "GET /api/synthesis/agent-log"
+  },
+  "paymentInfrastructure": {
+    "paymentStandard": "x402",
+    "escrowStandard": "ERC-8183",
+    "accountAbstraction": "ERC-4337",
+    "sessionKey": true,
+    "spendingLimits": {
+      "perTransaction": "0.05 USDT",
+      "daily": "0.5 USDT"
+    },
+    "humanApprovalThreshold": "0.05 USDT",
+    "approvalPattern": "202 PENDING_APPROVAL + approval_url"
+  },
+  "auditTrail": {
+    "traceIdFormat": "service_{timestamp}_{random}",
+    "evidenceFields": [
+      "traceId",
+      "txHash",
+      "anchorTxHash",
+      "authorizedBy",
+      "paymentRequestId",
+      "policySnapshotHash"
+    ],
+    "onChainAnchor": true,
+    "humanInspectable": true,
+    "apiEndpoint": "GET /api/evidence/export?traceId={traceId}"
+  },
+  "mcpIntegration": {
+    "transport": [
+      "streamable-http",
+      "stdio-bridge"
+    ],
+    "toolCount": 24,
+    "tools": [
+      "job_create",
+      "job_claim",
+      "job_submit",
+      "job_validate",
+      "job_accept",
+      "job_fund",
+      "job_expire",
+      "job_reject",
+      "job_show",
+      "flow_show",
+      "artifact_receipt",
+      "artifact_evidence",
+      "cap_news_signal",
+      "cap_dex_market",
+      "cap_token_analysis",
+      "cap_market_price_feed",
+      "cap_smart_money_signal",
+      "cap_kol_monitor",
+      "cap_weather_context",
+      "cap_tech_buzz_signal",
+      "cap_trenches_scan",
+      "cap_wallet_pnl",
+      "cap_listing_alert",
+      "cap_meme_sentiment"
+    ],
+    "publicEndpoint": "POST /mcp",
+    "compatibilityEndpoint": "POST /mcp/stream",
+    "connectorEndpoint": "POST /mcp/connect/:token"
+  },
+  "problemStatement": "AI agents moving money on behalf of humans need auditable authorization, verifiable delivery, and enforceable payment boundaries. KTrace addresses this with scoped AA session permissions, x402 payment receipts, ERC-8183 escrow for delegated work, and on-chain trust publications for every completed action.",
+  "stats": {
+    "activeCapabilityTypes": 12,
+    "observedCapabilityTypes": 21,
+    "totalServiceInvocations": 860,
+    "totalJobsCompleted": 31,
+    "sampledCompletedJobRuns": 5,
+    "chains": [
+      "kite-testnet"
+    ],
+    "generatedAt": "2026-03-23T01:20:00.000Z"
+  }
+}

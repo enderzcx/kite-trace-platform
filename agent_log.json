@@ -1,0 +1,321 @@
+{
+  "schema": "erc8004-agent-log-v1",
+  "agent": "KTrace Agent",
+  "operatorEoa": "0x0309dc91bb89750c317ec69566baf1613b57e6bb",
+  "aaWallet": "0x13a77fbf4ef77dd1044d22df0d048b85aa4f1a6a",
+  "identityRegistry": "0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+  "chain": "kite-testnet",
+  "exportedAt": "2026-03-23T01:20:00.000Z",
+  "summary": {
+    "totalInvocations": 860,
+    "totalCompletedJobs": 31,
+    "totalJobs": 140,
+    "activeCapabilityTypes": 12,
+    "observedCapabilityTypes": 21,
+    "sampledLifecycleRuns": 5,
+    "loopDescription": "The current standard demo is the hourly ERC-8183 news brief: the built-in requester posts an open job, an external agent completes the work with cap-news-signal, and the validator finalizes settlement on-chain."
+  },
+  "notes": [
+    "This export summarizes current store totals and includes five representative full lifecycle samples.",
+    "Where older submissions contained terminal encoding artifacts, delivery summaries were normalized for readability while preserving the original trace IDs and hashes."
+  ],
+  "autonomousLoopRuns": [
+    {
+      "runId": "synth_job_1774223853187_53153dad",
+      "phase": "full_lifecycle",
+      "flowType": "hourly_news_brief",
+      "triggeredBy": "autonomous_loop",
+      "templateId": "erc8183-hourly-news-brief",
+      "capability": "cap-news-signal",
+      "escrowContract": "0x95260b27c509Bf624B33702C09CdD37098a6967D",
+      "jobId": "job_1774223853187_53153dad",
+      "traceId": "service_1774223983397_8a10f4b8",
+      "deliverySchema": "ktrace-news-brief-v1",
+      "executor": "0x13a77fbf4ef77dd1044d22df0d048b85aa4f1a6a",
+      "validator": "0x4b666887c452c0cd828fe4c9d5b78f33f5d636e4",
+      "budget": "0.005 USDT",
+      "timeline": {
+        "createdAt": "2026-03-22T23:57:33.150Z",
+        "fundedAt": "2026-03-22T23:57:47.468Z",
+        "acceptedAt": "2026-03-22T23:59:19.335Z",
+        "submittedAt": "2026-03-23T00:01:09.169Z",
+        "validatedAt": "2026-03-23T00:01:46.543Z",
+        "completedAt": "2026-03-23T00:01:46.543Z",
+        "durationSeconds": 253
+      },
+      "onchainProof": {
+        "createAnchorTxHash": "0x914f47df4de70dea34830d18bdfe80ea41844c69ec59e0ca6b095c3f8257ed67",
+        "fundingTxHash": "0xf6909da4d0da5bffc0b07ef46f9d7e8cbb0f0f6ef8efe313f72fdba81a37cb2c",
+        "acceptTxHash": "0xb0bdfae2c9cf8dd7d614e0ae39008d54a16fe862ce9c25552dd1d54b3ae3d04f",
+        "submitTxHash": "0x6e618db8a63435a9bd34a3ffe912fbc72f28e6847452b0b9aad8c84e972fe6d5",
+        "validateTxHash": "0x0c7fa279460c00c1058bf2290a23cd60c915ea2ab93d5c6c6d13ab95aeb8a7c1",
+        "outcomeAnchorTxHash": "0xc5683d656cfd81b417691c4e324ae27269e03e68bd7262249aefa36054ada5d3",
+        "paymentTxHash": "0x23a9a3144da6014a727b86486621ec0df90b2b4ef5d5407e61024d6766101cac",
+        "trustAnchorTxHash": "0xed8d01816c61a3872e35932a9b5ee4e0b90d3c19671f0ac9e2661131eb4f1e11"
+      },
+      "validationResult": {
+        "approved": true,
+        "evaluator": "erc8183-validator",
+        "summary": "Delivery conforms to ktrace-news-brief-v1. newsTraceId resolves to a paid cap-news-signal invocation. Payment and trust tx hashes match."
+      },
+      "delivery": {
+        "summary": "BTC hourly news brief for 2026-03-22 22:00-23:59 UTC: geopolitical tension dominated the signal set, with Brent oil surging and renewed focus on the Strait of Hormuz; overall BTC signal remained neutral.",
+        "itemCount": 3,
+        "sourceUrls": [
+          "https://www.bloomberg.com/news/articles/2026-03-22/brent-oil-rises-on-trump-iran-war-threats",
+          "https://www.reuters.com/world/starmer-trump-discuss-strait-of-hormuz-2026-03-22",
+          "https://www.reuters.com/world/starmer-trump-middle-east-hormuz-shipping-2026-03-22"
+        ]
+      }
+    },
+    {
+      "runId": "synth_job_1774222287685_e3718114",
+      "phase": "full_lifecycle",
+      "flowType": "hourly_news_brief",
+      "triggeredBy": "autonomous_loop",
+      "templateId": "erc8183-hourly-news-brief",
+      "capability": "cap-news-signal",
+      "escrowContract": "0x95260b27c509Bf624B33702C09CdD37098a6967D",
+      "jobId": "job_1774222287685_e3718114",
+      "traceId": "service_1774209667990_acdc52d5",
+      "deliverySchema": "ktrace-news-brief-v1",
+      "executor": "0xe3f598edffc6599170b84f4d7f4e32046c1902b6",
+      "validator": "0x4b666887c452c0cd828fe4c9d5b78f33f5d636e4",
+      "budget": "0.005 USDT",
+      "timeline": {
+        "createdAt": "2026-03-22T23:31:27.638Z",
+        "fundedAt": "2026-03-22T23:31:33.608Z",
+        "acceptedAt": "2026-03-22T23:32:33.743Z",
+        "submittedAt": "2026-03-22T23:39:09.493Z",
+        "validatedAt": "2026-03-22T23:39:29.335Z",
+        "completedAt": "2026-03-22T23:39:29.335Z",
+        "durationSeconds": 481
+      },
+      "onchainProof": {
+        "createAnchorTxHash": "0xed3602b716bfab5b35b7b784c792d7bab2dd790530909ff2b2221dc88e3d6e2b",
+        "fundingTxHash": "0x002dfeb560a5e63115421bcb9099d37f58ef209d2b336637726fbe27b919e42d",
+        "acceptTxHash": "0x7dc1edd2d613c65e2a11eb4cff444766185997e1e0bf7393fe1b88c0a2df5078",
+        "submitTxHash": "0xa23332ef9b255f84da837055e9a0e289c49de5e0ca7a516f0bade0423d10d8aa",
+        "validateTxHash": "0x8cede82a8862f6467f47e0edf156f00612404d42bdee595db35eafcbb693ad04",
+        "outcomeAnchorTxHash": "0x357c39fe85d14975f26e7c8af72e343874491c87f1d6fad1428335bc70659f5e",
+        "paymentTxHash": "0x079d115de8db63d5497a008e92d5d4c9b1e1b88ad55130eaea9cee346cc87443",
+        "trustAnchorTxHash": "0x27d4136fd7f62adf84479b79cc321044f6abb330aa7f3084a69768a98c41f0de"
+      },
+      "validationResult": {
+        "approved": true,
+        "evaluator": "erc8183-validator",
+        "summary": "Validated hourly news brief against service_1774209667990_acdc52d5."
+      },
+      "delivery": {
+        "summary": "Normalized summary from submitted items: macro pressure increased, bitcoin held relative strength, and Hormuz closure risk remained a key headline.",
+        "itemCount": 2,
+        "sourceUrls": [
+          "https://www.coindesk.com/markets/2026/03/20/gold-falters-as-macro-pressures-build-bitcoin-holds-liquidity-trend",
+          "https://dbws.io/newsbot/i/nS8N3S102F"
+        ]
+      }
+    },
+    {
+      "runId": "synth_job_1774113851270_f853b0d8",
+      "phase": "full_lifecycle",
+      "flowType": "legacy_btc_trade_plan",
+      "triggeredBy": "autonomous_loop",
+      "capability": "cap-market-price-feed",
+      "escrowContract": "0x84BAE777C49f3914d4F3038cCA05120CACB32721",
+      "jobId": "job_1774113851270_f853b0d8",
+      "traceId": "mcp_ktrace_live_1774113751063_cap-market-price-feed",
+      "deliverySchema": "ktrace-btc-trading-plan-v1",
+      "executor": "0xe3f598edffc6599170b84f4d7f4e32046c1902b6",
+      "budget": "0.00015 USDT",
+      "timeline": {
+        "createdAt": "2026-03-21T17:24:11.261Z",
+        "completedAt": "2026-03-21T17:24:57.366Z",
+        "durationSeconds": 46
+      },
+      "onchainProof": {
+        "createAnchorTxHash": "0xa71fd78cc558b1f9efded956959770086198c0a9a77d7a5a20ad4e12c50ee0f3",
+        "fundingTxHash": "0x1d33ab8e6f709c43cb10951cad33f39292353ec1cc13a131c89f34c719c6b81d",
+        "acceptTxHash": "0xbee0fb15ccf66046e7b9c4692eb24433cd5c1ea7b1c035261a77c9f965258bf7",
+        "submitTxHash": "0x0019525469a3ddab626ce4b3a2e59dd6e53038e0e72fcb048e6aa97a154488a9",
+        "validateTxHash": "0x6f09b84a48e1791340df9b4d503937b3cc0c3ca46cd48b05d245c5a691349acb",
+        "outcomeAnchorTxHash": "0x9b098aeb8146a9945d11a606d2d313ae9345591496f6a7af552ed07d90b54c48",
+        "paymentTxHash": "0x1d33ab8e6f709c43cb10951cad33f39292353ec1cc13a131c89f34c719c6b81d"
+      },
+      "validationResult": {
+        "approved": true,
+        "evaluator": "erc8183-validator",
+        "summary": "Validator approved the MCP live proof delivery."
+      }
+    },
+    {
+      "runId": "synth_job_1774085634797_caef698f",
+      "phase": "full_lifecycle",
+      "flowType": "legacy_btc_trade_plan",
+      "triggeredBy": "autonomous_loop",
+      "capability": "cap-market-price-feed",
+      "escrowContract": "0x84BAE777C49f3914d4F3038cCA05120CACB32721",
+      "jobId": "job_1774085634797_caef698f",
+      "traceId": "mcp_ktrace_live_1774085568045_cap-market-price-feed",
+      "deliverySchema": "ktrace-btc-trading-plan-v1",
+      "executor": "0xe3f598edffc6599170b84f4d7f4e32046c1902b6",
+      "budget": "0.00015 USDT",
+      "timeline": {
+        "createdAt": "2026-03-21T09:33:54.790Z",
+        "completedAt": "2026-03-21T09:35:05.740Z",
+        "durationSeconds": 70
+      },
+      "onchainProof": {
+        "createAnchorTxHash": "0xe1e230d68d456a621be70e41e273d47ed67b42f9d61e7d8412ef4d7ebb5074fc",
+        "fundingTxHash": "0x8bd9569f062a1b9125e3d1cbfc685601d0684f6e3971fe8ab7a7771d1848cddc",
+        "acceptTxHash": "0x60d95d95fee82286ca5e42b0ee78d8c1ea0563a7c356589dd8517e5da0951c83",
+        "submitTxHash": "0x11b609c19fc37843db820f18a0eb08f1e906d2889ac0a9a9afe67297848a2262",
+        "validateTxHash": "0xb2c018f683b78b4764310c5d39d90ad9bf9e00be67d82e34d9d8bd7ae8f491ef",
+        "outcomeAnchorTxHash": "0x6612e8479b65d07de0bcaf64d0d6dd16f970f42c3870c3c827e57df1a5d4a376",
+        "paymentTxHash": "0x84a78440c6ae213ea796a259c90398688b3904d8f33ff05678965781de59bf5d"
+      },
+      "validationResult": {
+        "approved": true,
+        "evaluator": "erc8183-validator",
+        "summary": "Validator approved the MCP live proof delivery."
+      }
+    },
+    {
+      "runId": "synth_job_1774085259810_e704a9f2",
+      "phase": "full_lifecycle",
+      "flowType": "legacy_btc_trade_plan",
+      "triggeredBy": "autonomous_loop",
+      "capability": "cap-market-price-feed",
+      "escrowContract": "0x84BAE777C49f3914d4F3038cCA05120CACB32721",
+      "jobId": "job_1774085259810_e704a9f2",
+      "traceId": "mcp_ktrace_live_1774085209718_cap-market-price-feed",
+      "deliverySchema": "ktrace-btc-trading-plan-v1",
+      "executor": "0xe3f598edffc6599170b84f4d7f4e32046c1902b6",
+      "budget": "0.00015 USDT",
+      "timeline": {
+        "createdAt": "2026-03-21T09:27:39.802Z",
+        "completedAt": "2026-03-21T09:29:31.949Z",
+        "durationSeconds": 112
+      },
+      "onchainProof": {
+        "createAnchorTxHash": "0x78a97c2cf2d79fb08abb7351a4840bbca3dc14167fd6d585e65ebaa3ca718d40",
+        "fundingTxHash": "0x9969ffa5aec3f025d5c990204ee03c788177d498b35fbfc4948548961f73fa86",
+        "acceptTxHash": "0x483b883447e68f38c79abdbdfa86afc86f7f889776b874c35fc6e67799ef3864",
+        "submitTxHash": "0x98ed6b370d4cef21c0d7a175cbfd1dba9107bdd587a49ea7e6d3596f0c7e49b5",
+        "validateTxHash": "0x10687f56737dad2926444c9a62a025d5520d0fbd0179b5b45221117afde42c26",
+        "outcomeAnchorTxHash": "0xbc4cbd3cac51f16f72c7315f85528646f5d4cc538ccdd64d14e7a8642a4d11c8",
+        "paymentTxHash": "0x9969ffa5aec3f025d5c990204ee03c788177d498b35fbfc4948548961f73fa86"
+      },
+      "validationResult": {
+        "approved": true,
+        "evaluator": "erc8183-validator",
+        "summary": "Validator approved the MCP live proof delivery."
+      }
+    }
+  ],
+  "serviceInvocationSample": [
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-news-signal",
+      "totalInvocations": 76,
+      "sampleTxHash": "0x23a9a3144da6014a727b86486621ec0df90b2b4ef5d5407e61024d6766101cac",
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-market-price-feed",
+      "totalInvocations": 80,
+      "sampleTxHash": "0x1d33ab8e6f709c43cb10951cad33f39292353ec1cc13a131c89f34c719c6b81d",
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-listing-alert",
+      "totalInvocations": 64,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-dex-market",
+      "totalInvocations": 64,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-tech-buzz-signal",
+      "totalInvocations": 56,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-weather-context",
+      "totalInvocations": 48,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-kol-monitor",
+      "totalInvocations": 40,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-token-analysis",
+      "totalInvocations": 37,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-meme-sentiment",
+      "totalInvocations": 36,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-smart-money-signal",
+      "totalInvocations": 33,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-trenches-scan",
+      "totalInvocations": 29,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    },
+    {
+      "type": "x402_pay_per_call",
+      "serviceId": "cap-wallet-pnl",
+      "totalInvocations": 28,
+      "paymentModel": "x402",
+      "autonomouslyTriggered": true
+    }
+  ],
+  "autonomyEvidence": {
+    "description": "The loop runs without a human trigger. Each cycle checks submitted jobs, validates the delivery schema, calls job_validate with an approval or rejection verdict, publishes trust, and creates the next hourly news brief job only if no active one is already in flight.",
+    "loopCode": "backend/lib/loops/synthesisRequestLoop.js",
+    "safetyGuardrails": [
+      "busy-lock prevents concurrent ticks",
+      "findActiveHourlyNewsJob skips job creation when one hourly news brief is still active",
+      "ERC-8183 escrow enforces settlement and lifecycle transitions at contract level",
+      "AA session key policy constrains recipients and per-transaction spend"
+    ],
+    "computeBudgetAwareness": "SYNTHESIS_JOB_BUDGET caps per-job escrow, and the AA consumer authority policy caps total spend per authorization period."
+  },
+  "consumerAuthorityModel": {
+    "description": "A human defines singleLimit, dailyLimit, allowedCapabilities, and expiry. The agent can operate autonomously within that envelope. Requests above threshold can return 202 PENDING_APPROVAL with an approval URL for async review.",
+    "sampleAuthorityId": "0x93380f602185d7a64ea0239cf104b8cc1cec5b2317dc8cec7fa1b5703dfcfa84",
+    "sampleSessionId": "0x956f7736a408425e94b02c1f3e5760288d89b73a4f4a5e021e94065520eb845e",
+    "authorizedBy": "0x0309dc91bb89750c317ec69566baf1613b57e6bb",
+    "policySnapshotHash": "sha256:31e6c600ade6881b2dfa583c4dcf3ca9334c4bc9f18d53ac223c7e25ce39139f"
+  }
+}
