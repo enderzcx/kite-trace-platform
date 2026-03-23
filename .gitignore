@@ -33,6 +33,7 @@ backend/scripts/test-aa-v3-pay.mjs
 test_aa_steps.mjs
 
 # Runtime data (keep placeholder only)
+data/
 backend/data/*
 !backend/data/.gitkeep
 
