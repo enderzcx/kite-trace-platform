@@ -10,6 +10,8 @@ KTrace gives agents a full commerce stack:
 - **MCP** tool surfaces for Claude and any MCP-compatible client
 - **On-chain anchors + portable evidence** for every meaningful execution step
 
+**Live:** [kiteclaw.duckdns.org](https://kiteclaw.duckdns.org)
+
 ---
 
 ## Demo
