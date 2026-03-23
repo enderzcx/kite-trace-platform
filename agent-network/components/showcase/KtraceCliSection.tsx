@@ -287,48 +287,60 @@ function McpAccessCard({
   );
 }
 
+const MCP_JSON_SNIPPET = `{
+  "mcpServers": {
+    "ktrace": {
+      "type": "streamable-http",
+      "url": "${MCP_ENDPOINT}",
+      "headers": {
+        "x-api-key": "<your-api-key>"
+      }
+    }
+  }
+}`;
+
+const CURSOR_SNIPPET = `# ~/.cursor/mcp.json
+{
+  "mcpServers": {
+    "ktrace": {
+      "url": "${MCP_ENDPOINT}",
+      "headers": { "x-api-key": "<your-api-key>" }
+    }
+  }
+}`;
+
+const TOOL_CALL_SNIPPET = `# Call any capability directly — payment is automatic
+cap_news_signal({ "coin": "BTC", "limit": 3 })
+
+# Delegate a job to another agent (ERC-8183)
+job_create({ "capability": "cap_token_analysis", "expiresInHours": 24 })
+
+# Verify results and fetch on-chain evidence
+artifact_evidence({ "traceId": "<trace-id>" })`;
+
 export default function KtraceCliSection() {
   const { copied, copy } = useClipboard();
-
-  const oliveGreen = "#4a5a20";
-  const warmBrown = "#8a6020";
 
   const steps = [
     {
       step: "1",
-      title: "Save backend auth once",
-      description: "Store the base URL and agent key locally so later calls stay short.",
-      copyKey: "login",
-      code: `$ ktrace auth login --base-url ${BASE} --api-key <agent-key>`,
-      note: "After this step, external agents can stay on the CLI and avoid hand-writing backend headers.",
-      accentColor: oliveGreen,
+      title: "Add to your MCP client",
+      description: "Paste the config into Claude Code, Cursor, or any MCP-compatible client.",
+      copyKey: "claude-config",
+      tabLabels: ["Claude Code", "Cursor"],
+      codes: [MCP_JSON_SNIPPET, CURSOR_SNIPPET],
+      note: "One config. All five agents and their tools are discovered automatically.",
+      accentColor: "#4a5a20",
     },
     {
       step: "2",
-      title: "Invoke in one command",
-      description: "Discover, pay, wait for fulfillment, and fetch evidence from one entrypoint.",
-      copyKey: "invoke",
-      code: `$ ktrace agent invoke \\\n    --capability cap-listing-alert \\\n    --input '{"exchange":"all","limit":3}'`,
-      note: "The response now includes provider, traceId, state, paymentTxHash, and evidenceReady.",
-      accentColor: oliveGreen,
-    },
-    {
-      step: "3",
-      title: "Audit the trace",
-      description: "Retrieve the full evidence record for any completed or failed purchase.",
-      copyKey: "evidence",
-      code: `$ ktrace artifact evidence <traceId>`,
-      note: "Evidence includes authorizedBy, txHash, sourceUrl, publishedAt, and fetchedAt.",
-      accentColor: warmBrown,
-    },
-    {
-      step: "4",
-      title: "Optional discovery",
-      description: "Inspect ranked providers before invoking when you want to compare options.",
-      copyKey: "discover",
-      code: `$ ktrace discovery select --capability cap-listing-alert`,
-      note: "Most external agents can skip this and go straight to ktrace agent invoke.",
-      accentColor: "#7a6e56",
+      title: "Call any tool — payment is automatic",
+      description: "Your AA wallet session key handles x402 payments inline. No manual steps.",
+      copyKey: "tool-call",
+      tabLabels: ["Tool Calls"],
+      codes: [TOOL_CALL_SNIPPET],
+      note: "Tools follow the pattern cap_*, job_*, artifact_* and flow_*.",
+      accentColor: "#4a5a20",
     },
   ];
 
@@ -340,29 +352,25 @@ export default function KtraceCliSection() {
             Using ktrace
           </span>
           <h2 className="font-display text-[2.4rem] font-normal leading-tight tracking-tight text-[#18180e]">
-            Three commands to integrate.
+            One endpoint. Five agents.
           </h2>
           <p className="max-w-xl text-[14px] leading-relaxed text-[#7a6e56]">
-            ktrace is now the external-agent entrypoint. Login once, invoke one capability,
-            then inspect the audit trail from the returned trace.
+            Add the MCP server once, then call any capability across all agents.
+            Payment, evidence, and audit trail are handled automatically.
           </p>
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {steps.slice(0, 2).map((step, i) => (
-            <StepCard key={step.copyKey} {...step} copied={copied} onCopy={copy} delay={i * 0.08} />
+          {steps.map((step, i) => (
+            <MultiTabStepCard key={step.copyKey} {...step} copied={copied} onCopy={copy} delay={i * 0.1} />
           ))}
-        </div>
-        <div className="mt-6 grid gap-6 md:grid-cols-2">
-          <StepCard {...steps[2]} copied={copied} onCopy={copy} delay={0.16} />
-          <StepCard {...steps[3]} copied={copied} onCopy={copy} delay={0.22} />
         </div>
 
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.4, delay: 0.25 }}
+          transition={{ duration: 0.4, delay: 0.2 }}
           className="mt-10 rounded-2xl border border-[rgba(74,90,32,0.2)] bg-[rgba(74,90,32,0.05)] p-6"
         >
           <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#4a5a20]">
@@ -391,5 +399,83 @@ export default function KtraceCliSection() {
         <McpAccessCard copied={copied} onCopy={copy} />
       </div>
     </section>
+  );
+}
+
+function MultiTabStepCard({
+  step,
+  title,
+  description,
+  note,
+  codes,
+  tabLabels,
+  copyKey,
+  copied,
+  onCopy,
+  accentColor,
+  delay,
+}: {
+  step: string;
+  title: string;
+  description: string;
+  note?: string;
+  codes: string[];
+  tabLabels: string[];
+  copyKey: string;
+  copied: string | null;
+  onCopy: (key: string, text: string) => void;
+  accentColor: string;
+  delay: number;
+}) {
+  const [activeTab, setActiveTab] = useState(0);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 18 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.15 }}
+      transition={{ duration: 0.45, delay, ease: "easeOut" }}
+      className="flex flex-col gap-3"
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-[#faf7f1]"
+          style={{ background: accentColor }}
+        >
+          {step}
+        </span>
+        <div>
+          <p className="text-[13px] font-semibold text-[#18180e]">{title}</p>
+          <p className="text-[12px] text-[#9e8e76]">{description}</p>
+        </div>
+      </div>
+      {tabLabels.length > 1 && (
+        <div className="flex gap-1.5">
+          {tabLabels.map((label, i) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setActiveTab(i)}
+              className="rounded-full px-3 py-1 text-[11px] font-semibold transition"
+              style={
+                activeTab === i
+                  ? { background: accentColor, color: "#faf7f1" }
+                  : { background: "rgba(90,80,50,0.07)", color: "#9e8e76", border: "1px solid rgba(90,80,50,0.12)" }
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <TerminalWindow
+        title={tabLabels[activeTab] ?? "ktrace"}
+        code={codes[activeTab] ?? ""}
+        copyKey={`${copyKey}-${activeTab}`}
+        copied={copied}
+        onCopy={onCopy}
+        accentColor={accentColor}
+      />
+      {note ? <p className="text-[11px] text-[#b0a08a]">{note}</p> : null}
+    </motion.div>
   );
 }

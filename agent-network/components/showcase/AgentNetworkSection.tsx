@@ -9,7 +9,7 @@ interface AgentNetworkSectionProps {
   providers?: ShowcaseProvider[];
 }
 
-type CallTab = "mac" | "win";
+type CallTab = "mcp" | "claude";
 
 const AGENT_THEME: Record<
   string,
@@ -47,17 +47,50 @@ const AGENT_THEME: Record<
     icon: "T",
     priceColor: "#8a6020",
   },
+  "data-node-real": {
+    accent: "#1a6080",
+    accentBorder: "rgba(26,96,128,0.22)",
+    accentMuted: "rgba(26,96,128,0.07)",
+    accentStrip: "linear-gradient(90deg, transparent, rgba(26,96,128,0.35), transparent)",
+    badgeBg: "rgba(26,96,128,0.08)",
+    badgeText: "#1a6080",
+    badgeBorder: "rgba(26,96,128,0.2)",
+    icon: "D",
+    priceColor: "#1a6080",
+  },
+  "request-agent-real": {
+    accent: "#6a3a8a",
+    accentBorder: "rgba(106,58,138,0.22)",
+    accentMuted: "rgba(106,58,138,0.07)",
+    accentStrip: "linear-gradient(90deg, transparent, rgba(106,58,138,0.35), transparent)",
+    badgeBg: "rgba(106,58,138,0.08)",
+    badgeText: "#6a3a8a",
+    badgeBorder: "rgba(106,58,138,0.2)",
+    icon: "R",
+    priceColor: "#6a3a8a",
+  },
+  "verify-agent-real": {
+    accent: "#1a7a5a",
+    accentBorder: "rgba(26,122,90,0.22)",
+    accentMuted: "rgba(26,122,90,0.07)",
+    accentStrip: "linear-gradient(90deg, transparent, rgba(26,122,90,0.35), transparent)",
+    badgeBg: "rgba(26,122,90,0.08)",
+    badgeText: "#1a7a5a",
+    badgeBorder: "rgba(26,122,90,0.2)",
+    icon: "V",
+    priceColor: "#1a7a5a",
+  },
 };
 
 const DEFAULT_THEME = AGENT_THEME["fundamental-agent-real"];
 const BASE_URL = "https://kiteclaw.duckdns.org";
 const TABS: { id: CallTab; label: string }[] = [
-  { id: "mac", label: "macOS / Linux" },
-  { id: "win", label: "Windows" },
+  { id: "mcp", label: "MCP Tool" },
+  { id: "claude", label: "Claude Prompt" },
 ];
 const TAB_NOTE: Record<CallTab, string> = {
-  mac: "Save auth once with ktrace auth login, then use ktrace agent invoke for discovery, payment, and evidence in one flow.",
-  win: "Same flow on PowerShell or Command Prompt: login once, then call ktrace agent invoke as a single command.",
+  mcp: "Each capability maps to an MCP tool. Claude calls it automatically — payment is handled by your session key.",
+  claude: "Just ask Claude in natural language. It picks the right tool, pays via your AA wallet, and returns verified results.",
 };
 
 function abbreviateAddress(address = "") {
@@ -80,29 +113,31 @@ function safeParseInput(input = "") {
 }
 
 function buildCallSnippet(provider: ShowcaseProvider, capability: ShowcaseCapability | undefined, tab: CallTab) {
-  const capabilityId = capability?.capabilityId ?? "cap-listing-alert";
-  const inputJson = JSON.stringify(safeParseInput(capability?.defaultInput || "{}"));
+  const capabilityId = (capability?.capabilityId ?? "cap-listing-alert").replace(/-/g, "_");
+  const inputObj = safeParseInput(capability?.defaultInput || "{}");
+  const inputJson = JSON.stringify(inputObj, null, 2);
 
-  if (tab === "mac") {
+  if (tab === "mcp") {
     return (
-      `# One-time setup\n` +
-      `ktrace auth login --base-url ${BASE_URL} --api-key <agent-key>\n\n` +
-      `# Invoke in one CLI-only call\n` +
-      `ktrace agent invoke \\\n` +
-      `  --capability ${capabilityId} \\\n` +
-      `  --input '${inputJson}'\n\n` +
-      `# Audit the returned trace\n` +
-      `ktrace artifact evidence <trace-id>`
+      `# MCP tool name\n` +
+      `${capabilityId}\n\n` +
+      `# Input\n` +
+      `${inputJson}\n\n` +
+      `# Payment is automatic via your AA wallet session key.`
     );
   }
 
+  // Claude natural language prompt
+  const examplePrompt = capability
+    ? `"${capability.description.split(".")[0]}."`
+    : `"Get the latest data from ${provider.title}."`;
   return (
-    `:: One-time setup\n` +
-    `ktrace auth login --base-url ${BASE_URL} --api-key <agent-key>\n\n` +
-    `:: Invoke in one CLI-only call\n` +
-    `ktrace agent invoke --capability ${capabilityId} --input '${inputJson}'\n\n` +
-    `:: Audit the returned trace\n` +
-    `ktrace artifact evidence <trace-id>`
+    `# Just ask Claude:\n` +
+    `${examplePrompt}\n\n` +
+    `# Claude will:\n` +
+    `# 1. Select the right MCP tool (${capabilityId})\n` +
+    `# 2. Pay automatically via your session key\n` +
+    `# 3. Return verified on-chain evidence`
   );
 }
 
@@ -212,7 +247,7 @@ function AgentCard({
   onCopy: (key: string, text: string) => void;
 }) {
   const theme = AGENT_THEME[provider.providerId] ?? DEFAULT_THEME;
-  const [callTab, setCallTab] = useState<CallTab>("mac");
+  const [callTab, setCallTab] = useState<CallTab>("mcp");
   const firstCap = provider.capabilities[0];
   const snippet = buildCallSnippet(provider, firstCap, callTab);
 
@@ -253,7 +288,9 @@ function AgentCard({
                   }}
                 >
                   <BadgeCheck className="h-2.5 w-2.5" />
-                  ERC-8004
+                  {["request-agent-real", "verify-agent-real"].includes(provider.providerId)
+                    ? "ERC-8183"
+                    : "ERC-8004"}
                 </span>
               </div>
               <p className="mt-0.5 text-[13px] text-[#7a6e56]">{provider.description}</p>

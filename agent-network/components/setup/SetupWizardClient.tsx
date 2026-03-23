@@ -167,7 +167,7 @@ interface LocalSessionRuntimeExport {
 }
 
 interface Props {
-  capabilities: string[];
+  capabilities: Array<{ id: string; name: string; providerId: string }> | string[];
 }
 
 // 鈹€鈹€鈹€ Ethereum 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -620,9 +620,9 @@ function buildSetupSnapshot({
 
 function resolveInitialWizardStep(snapshot: SetupSnapshot): Step {
   if (!snapshot.ownerEoa) return 0;
-  if (!snapshot.aaWallet || !snapshot.sessionRuntimeReady) return 1;
+  if (!snapshot.aaWallet || !snapshot.aaDeployed) return 1;
   if (!snapshot.hasIdentity || !snapshot.agentWalletMatchesAa) return 2;
-  if (!snapshot.sessionAuthorized || !snapshot.hasLocalSessionExport) return 3;
+  if (!snapshot.sessionRuntimeReady || !snapshot.sessionAuthorized || !snapshot.hasLocalSessionExport) return 3;
   return 4;
 }
 
@@ -1764,7 +1764,7 @@ function FundStep({
 
 // 鈹€鈹€鈹€ Step 2: Authorize / Renew Session 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-const DEFAULT_CAPS = ["cap_dex_market", "cap_defi_yield", "cap_onchain_data", "cap_agent_exec"];
+const DEFAULT_CAPS = ["cap-dex-market", "cap-news-signal", "cap-kol-monitor", "cap-market-price-feed"];
 
 function AuthorizeStep({
   address,
@@ -1780,15 +1780,33 @@ function AuthorizeStep({
   address: string;
   runtime: SessionRuntime;
   accountStatus?: AccountStatus | null;
-  availableCaps: string[];
+  availableCaps: Array<{ id: string; name: string; providerId: string }> | string[];
   mode?: "new" | "renew";
   onRuntimeUpdate: (runtime: SessionRuntime) => void;
   hasLocalSessionRuntime?: boolean;
   onLocalSessionRuntimeReady?: (runtimeExport: LocalSessionRuntimeExport) => void;
   onDone: () => void;
 }) {
-  const capList = availableCaps.length > 0 ? availableCaps : DEFAULT_CAPS;
-  const [selected, setSelected] = useState<Set<string>>(new Set(capList.slice(0, 3)));
+  // Normalize: support both CapabilityInfo[] and string[]
+  const normalizedCaps: Array<{ id: string; name: string; group: string }> =
+    (availableCaps as Array<{ id: string; name: string; providerId: string } | string>).map((c) =>
+      typeof c === "string"
+        ? { id: c, name: c, group: "" }
+        : {
+            id: c.id,
+            name: c.name || c.id,
+            group:
+              c.providerId === "fundamental-agent-real"
+                ? "基本面 Agent"
+                : c.providerId === "technical-agent-real"
+                  ? "技术面 Agent"
+                  : c.providerId === "data-node-real"
+                    ? "DATA Agent"
+                    : "",
+          }
+    );
+  const capList = normalizedCaps.length > 0 ? normalizedCaps : DEFAULT_CAPS.map((id) => ({ id, name: id, group: "" }));
+  const [selected, setSelected] = useState<Set<string>>(new Set(capList.slice(0, 3).map((c) => c.id)));
   const [singleLimit, setSingleLimit] = useState("0.01");
   const [dailyLimit, setDailyLimit] = useState("0.10");
   const [sessionValidityHours, setSessionValidityHours] = useState("24");
@@ -1921,6 +1939,32 @@ function AuthorizeStep({
       if (effectiveRuntime.tokenAddress && checkedTokenBalance <= 0) {
         throw new Error("AA has no settlement balance.");
       }
+      // Sign the authorization message first (off-chain, no gas) so the user
+      // confirms intent before the on-chain transactions start.
+      setState("signing");
+      const now = Date.now();
+      const validityHours = Number(sessionValidityHours || "0");
+      if (!Number.isFinite(validityHours) || validityHours <= 0) {
+        throw new Error("Session key validity must be greater than 0 hours.");
+      }
+      const nonce = randomHex(16);
+      const issuedAt = new Date(now).toISOString();
+      const expiresAtMs = now + Math.round(validityHours * 60 * 60 * 1000);
+      const expiresAt = new Date(expiresAtMs).toISOString();
+      const audience =
+        (process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://api.kitetrace.xyz").replace(/\/+$/, "");
+      const signMessage = buildSignMessage(effectiveRuntime, {
+        singleLimit,
+        dailyLimit,
+        allowedCapabilities: Array.from(selected),
+        userEoa: activeUserEoa,
+        nonce,
+        issuedAt,
+        expiresAt,
+        audience,
+      });
+      const signature = await signer.signMessage(signMessage);
+
       setState("preparingToken");
       const supportedTokenSync = await ensureSupportedSettlementToken(effectiveRuntime, signer, chainReader).catch((error) => {
         const message = error instanceof Error ? error.message : "Settlement token setup failed.";
@@ -2033,32 +2077,6 @@ function AuthorizeStep({
         };
         onRuntimeUpdate(effectiveRuntime);
       }
-
-      setState("signing");
-      const now = Date.now();
-      const validityHours = Number(sessionValidityHours || "0");
-      if (!Number.isFinite(validityHours) || validityHours <= 0) {
-        throw new Error("Session key validity must be greater than 0 hours.");
-      }
-      const nonce = randomHex(16);
-      const issuedAt = new Date(now).toISOString();
-      const expiresAtMs = now + Math.round(validityHours * 60 * 60 * 1000);
-      const expiresAt = new Date(expiresAtMs).toISOString();
-      const audience =
-        (process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://api.kitetrace.xyz").replace(/\/+$/, "");
-
-      const message = buildSignMessage(effectiveRuntime, {
-        singleLimit,
-        dailyLimit,
-        allowedCapabilities: Array.from(selected),
-        userEoa: activeUserEoa,
-        nonce,
-        issuedAt,
-        expiresAt,
-        audience,
-      });
-
-      const signature = await signer.signMessage(message);
 
       setState("submitting");
       const res = await fetch("/api/setup/session/authorize", {
@@ -2255,31 +2273,47 @@ function AuthorizeStep({
               <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#9e8e76]">
                 Allowed capabilities ({selected.size} selected)
               </span>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {capList.map((cap) => {
-                  const checked = selected.has(cap);
+              <div className="flex flex-col gap-3">
+                {(["基本面 Agent", "技术面 Agent", "DATA Agent", ""] as const).map((group) => {
+                  const groupCaps = capList.filter((c) => c.group === group);
+                  if (groupCaps.length === 0) return null;
                   return (
-                    <button
-                      key={cap}
-                      type="button"
-                      onClick={() => toggleCap(cap)}
-                      className={[
-                        "flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-[11px] font-medium transition",
-                        checked
-                          ? "border-[#3a4220] bg-[rgba(58,66,32,0.1)] text-[#3a4220]"
-                          : "border-[rgba(90,80,50,0.18)] bg-transparent text-[#7a6e56] hover:border-[rgba(58,66,32,0.3)]",
-                      ].join(" ")}
-                    >
-                      <span
-                        className={[
-                          "flex size-3.5 shrink-0 items-center justify-center rounded border",
-                          checked ? "border-[#3a4220] bg-[#3a4220]" : "border-[rgba(90,80,50,0.3)]",
-                        ].join(" ")}
-                      >
-                        {checked && <Check className="size-2.5 text-[#faf7f1]" />}
-                      </span>
-                      <span className="truncate">{cap}</span>
-                    </button>
+                    <div key={group || "other"} className="flex flex-col gap-1.5">
+                      {group && (
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#9e8e76]">
+                          {group}
+                        </span>
+                      )}
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {groupCaps.map((cap) => {
+                          const checked = selected.has(cap.id);
+                          return (
+                            <button
+                              key={cap.id}
+                              type="button"
+                              onClick={() => toggleCap(cap.id)}
+                              className={[
+                                "flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-[11px] font-medium transition",
+                                checked
+                                  ? "border-[#3a4220] bg-[rgba(58,66,32,0.1)] text-[#3a4220]"
+                                  : "border-[rgba(90,80,50,0.18)] bg-transparent text-[#7a6e56] hover:border-[rgba(58,66,32,0.3)]",
+                              ].join(" ")}
+                              title={cap.id}
+                            >
+                              <span
+                                className={[
+                                  "flex size-3.5 shrink-0 items-center justify-center rounded border",
+                                  checked ? "border-[#3a4220] bg-[#3a4220]" : "border-[rgba(90,80,50,0.3)]",
+                                ].join(" ")}
+                              >
+                                {checked && <Check className="size-2.5 text-[#faf7f1]" />}
+                              </span>
+                              <span className="truncate">{cap.name}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
@@ -2310,7 +2344,7 @@ function AuthorizeStep({
               </PrimaryBtn>
               {!loading && (
                 <p className="text-[11px] text-[#9e8e76]">
-                  Usually one signature. On first-time or repaired setups, your wallet may ask for one or two on-chain confirmations first.
+                  First authorization: 1 message sign + up to 3 on-chain confirmations. Renewals: 1 sign + 2 confirmations.
                 </p>
               )}
             </div>
@@ -3313,20 +3347,58 @@ function RegisterIdentityStep({
       );
       if (identityProfile && hasRuntimeIdentity(mergeRuntimeIdentity(runtime, identityProfile))) {
         const merged = mergeRuntimeIdentity(runtime, identityProfile);
-        setExistingAgentId(merged.agentId || "");
-        if (
-          merged.aaWallet &&
-          merged.agentWallet &&
-          normalizeAccountAddress(merged.agentWallet) === normalizeAccountAddress(merged.aaWallet)
-        ) {
+        // Verify on-chain that the current EOA actually owns this agentId.
+        // If the runtime has a stale agentId from a different wallet, ownerOf will
+        // not match and we must treat it as "no identity" so the user registers fresh.
+        if (merged.agentId && registryAddress) {
+          const roProvider = getReadOnlyProvider() ?? getBrowserProvider();
+          if (roProvider) {
+            const roRegistry = new Contract(registryAddress, IDENTITY_REGISTRY_ABI, roProvider);
+            const onChainOwner = await roRegistry.ownerOf(BigInt(merged.agentId)).catch(() => "");
+            if (onChainOwner && normalizeAccountAddress(onChainOwner) !== normalizeAccountAddress(address)) {
+              // Token belongs to a different EOA — clear stale identity from runtime
+              // and fall through to fresh registration flow.
+              const cleared = { ...merged, agentId: undefined, agentWallet: undefined,
+                identityRegisterTxHash: undefined, identityBindTxHash: undefined };
+              onRuntimeUpdate(cleared);
+              setExistingAgentId("");
+              // Fall through to fee-fetch / fresh registration
+            } else {
+              setExistingAgentId(merged.agentId || "");
+              if (
+                merged.aaWallet &&
+                merged.agentWallet &&
+                normalizeAccountAddress(merged.agentWallet) === normalizeAccountAddress(merged.aaWallet)
+              ) {
+                onRuntimeUpdate(merged);
+                setState("done");
+                return;
+              }
+              onRuntimeUpdate(merged);
+              setState("idle");
+              return;
+            }
+          } else {
+            setExistingAgentId(merged.agentId || "");
+            onRuntimeUpdate(merged);
+            setState("idle");
+            return;
+          }
+        } else {
+          setExistingAgentId(merged.agentId || "");
+          if (
+            merged.aaWallet &&
+            merged.agentWallet &&
+            normalizeAccountAddress(merged.agentWallet) === normalizeAccountAddress(merged.aaWallet)
+          ) {
+            onRuntimeUpdate(merged);
+            setState("done");
+            return;
+          }
           onRuntimeUpdate(merged);
-          setState("done");
+          setState("idle");
           return;
         }
-        setExistingAgentId(merged.agentId || "");
-        onRuntimeUpdate(merged);
-        setState("idle");
-        return;
       }
       // No identity — read fees
       const provider = getReadOnlyProvider() ?? getBrowserProvider();
@@ -3368,8 +3440,21 @@ function RegisterIdentityStep({
       let resolvedRegisterTxHash = registerTxHash;
       let resolvedWalletTxHash = walletTxHash;
 
+      // Guard: verify the current EOA actually owns this agentId on-chain.
+      // Prevents NotAgentAdmin() revert when runtime has a stale agentId from a
+      // different wallet (e.g. user switched MetaMask accounts).
+      if (resolvedAgentId) {
+        const onChainOwner = await registry.ownerOf(BigInt(resolvedAgentId)).catch(() => "");
+        if (onChainOwner && normalizeAccountAddress(onChainOwner) !== normalizeAccountAddress(address)) {
+          // Stale agentId — force fresh registration
+          resolvedAgentId = "";
+          setExistingAgentId("");
+          setAgentId("");
+        }
+      }
+
       // Step 1: Register (mint agent identity)
-      if (!existingAgentId) {
+      if (!resolvedAgentId) {
         setState("registering");
         const tokenURI = JSON.stringify({
           name: `KTrace Agent ${shorten(address)}`,
@@ -3400,7 +3485,12 @@ function RegisterIdentityStep({
         const currentWallet = await registry.getAgentWallet(BigInt(resolvedAgentId)).catch(() => "");
         if (normalizeAccountAddress(currentWallet) !== normalizeAccountAddress(aaWallet)) {
           setState("settingWallet");
-          const metaFee = walletFee ? BigInt(walletFee) : BigInt(0);
+          // Always read metadataUpdateFee fresh from chain — walletFee state may be
+          // unset when the user already has an existing identity (fee-fetch is skipped
+          // in that code path), causing a FeeTooLow revert with value: 0.
+          const metaFee = await registry.metadataUpdateFee().catch(
+            () => walletFee ? BigInt(walletFee) : BigInt(0)
+          );
           const walletTx = await registry.setAgentWallet(BigInt(resolvedAgentId), aaWallet, { value: metaFee });
           setWalletTxHash(walletTx.hash);
           await walletTx.wait();
@@ -3437,6 +3527,13 @@ function RegisterIdentityStep({
       const syncJson = (await syncRes.json().catch(() => ({}))) as Record<string, unknown>;
       if (syncRes.ok && syncJson.ok) {
         onRuntimeUpdate(parseRuntime(syncJson));
+      } else if (!syncRes.ok) {
+        // Surface backend sync errors so the user knows the data wasn't persisted.
+        // Common cause: 409 "setup_runtime_identity_missing_runtime" when the AA
+        // wallet prepare step didn't create a backend runtime entry first.
+        const reason = (syncJson.reason as string) || (syncJson.error as string) || `HTTP ${syncRes.status}`;
+        console.warn("[RegisterIdentity] backend sync failed:", reason, syncJson);
+        // Non-fatal: on-chain registration succeeded; user can re-sync later.
       }
 
       setState("done");
@@ -3575,7 +3672,7 @@ function RegisterIdentityStep({
 
 // 鈹€鈹€鈹€ Progress bar 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-const STEP_LABELS = ["Connect Wallet", "Prepare AA Wallet", "Register Identity", "Authorize", "Connect"];
+const STEP_LABELS = ["Connect Wallet", "Prepare AA Wallet", "Register Identity", "Authorize", "MCP"];
 
 function ProgressBar({ step }: { step: Step }) {
   return (
@@ -3839,7 +3936,7 @@ export default function SetupWizardClient({ capabilities }: Props) {
             Set Up Kite Trace MCP
           </h1>
           <p className="mt-2 text-[14px] text-[#7a6e56]">
-            Connect your wallet, fund your AA wallet, authorize a session, and choose how you want to use KTrace locally or remotely.
+            Connect your wallet, fund your AA wallet, and authorize access to 5 specialized AI agents via MCP.
           </p>
         </div>
 

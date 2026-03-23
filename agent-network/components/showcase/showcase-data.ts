@@ -33,13 +33,87 @@ export interface ShowcaseProvider {
 }
 
 export const fallbackHealthStats: ShowcaseHealthStats = {
-  agentsLive: 3,
-  capabilityCount: 9,
+  agentsLive: 5,
+  capabilityCount: 20,
   network: "Kite Testnet",
   standards: "ERC-8004 + ERC-8183",
 };
 
 export const fallbackCapabilities: ShowcaseCapability[] = [
+  // Request Agent — ERC-8183 job delegation
+  {
+    capabilityId: "job_create",
+    providerId: "request-agent-real",
+    name: "Create Delegated Job",
+    description: "Create an escrow job and delegate a task to another agent on-chain.",
+    price: "Gas only",
+    tags: ["request", "job", "erc-8183", "escrow"],
+    defaultInput: '{\n  "capability": "cap_news_signal",\n  "input": { "coin": "BTC", "limit": 3 },\n  "expiresInHours": 24\n}',
+  },
+  {
+    capabilityId: "job_fund",
+    providerId: "request-agent-real",
+    name: "Fund Job Escrow",
+    description: "Deposit USDT into an open job's escrow before an executor claims it.",
+    price: "Job amount",
+    tags: ["request", "fund", "escrow"],
+    defaultInput: '{\n  "jobId": "<job-id>",\n  "amountUsdt": "0.01"\n}',
+  },
+  {
+    capabilityId: "job_show",
+    providerId: "request-agent-real",
+    name: "Query Job Status",
+    description: "Fetch current state, result, and executor info for any job.",
+    price: "Free",
+    tags: ["request", "status", "query"],
+    defaultInput: '{\n  "jobId": "<job-id>"\n}',
+  },
+  {
+    capabilityId: "flow_history",
+    providerId: "request-agent-real",
+    name: "Job Flow History",
+    description: "Browse all jobs created or executed by an agent wallet.",
+    price: "Free",
+    tags: ["request", "history", "flow"],
+    defaultInput: '{\n  "role": "requester",\n  "limit": 10\n}',
+  },
+  // Verify Agent — ERC-8183 audit & evidence
+  {
+    capabilityId: "job_validate",
+    providerId: "verify-agent-real",
+    name: "Validate Job Result",
+    description: "Accept or reject a submitted job result on behalf of the requester.",
+    price: "Gas only",
+    tags: ["verify", "validate", "erc-8183"],
+    defaultInput: '{\n  "jobId": "<job-id>",\n  "decision": "accept"\n}',
+  },
+  {
+    capabilityId: "job_audit",
+    providerId: "verify-agent-real",
+    name: "Audit Job",
+    description: "Perform a full audit of a completed or disputed job record.",
+    price: "Free",
+    tags: ["verify", "audit"],
+    defaultInput: '{\n  "jobId": "<job-id>"\n}',
+  },
+  {
+    capabilityId: "artifact_evidence",
+    providerId: "verify-agent-real",
+    name: "On-chain Evidence",
+    description: "Retrieve cryptographic evidence anchored on-chain for a capability trace.",
+    price: "Free",
+    tags: ["verify", "evidence", "artifact"],
+    defaultInput: '{\n  "traceId": "<trace-id>"\n}',
+  },
+  {
+    capabilityId: "artifact_receipt",
+    providerId: "verify-agent-real",
+    name: "Payment Receipt",
+    description: "Fetch the signed payment receipt and txHash for any settled job.",
+    price: "Free",
+    tags: ["verify", "receipt", "payment"],
+    defaultInput: '{\n  "traceId": "<trace-id>"\n}',
+  },
   {
     capabilityId: "cap-listing-alert",
     providerId: "fundamental-agent-real",
@@ -121,9 +195,72 @@ export const fallbackCapabilities: ShowcaseCapability[] = [
     tags: ["technical", "market", "kline"],
     defaultInput: '{\n  "symbol": "BTCUSDT",\n  "interval": "1h",\n  "limit": 5\n}',
   },
+  {
+    capabilityId: "cap-market-price-feed",
+    providerId: "data-node-real",
+    name: "Market Snapshot",
+    description: "CoinGecko market snapshot for token baskets and ranked watchlists.",
+    price: "0.00005 USDT",
+    tags: ["data", "market", "coingecko"],
+    defaultInput: '{\n  "ids": "bitcoin,ethereum",\n  "vsCurrency": "usd",\n  "limit": 5\n}',
+  },
+  {
+    capabilityId: "cap-tech-buzz-signal",
+    providerId: "data-node-real",
+    name: "Tech Buzz Signal",
+    description: "Hacker News top-story primitive — tech sentiment proxy for crypto narratives.",
+    price: "0.00005 USDT",
+    tags: ["data", "news", "hackernews"],
+    defaultInput: '{\n  "limit": 10\n}',
+  },
+  {
+    capabilityId: "cap-weather-context",
+    providerId: "data-node-real",
+    name: "Weather Context",
+    description: "Low-cost weather primitive via Open-Meteo for macro context signals.",
+    price: "0.00005 USDT",
+    tags: ["data", "weather", "open-meteo"],
+    defaultInput: '{\n  "latitude": 40.71,\n  "longitude": -74.0,\n  "forecastDays": 3\n}',
+  },
 ];
 
 export const fallbackProviders: ShowcaseProvider[] = [
+  {
+    providerId: "request-agent-real",
+    title: "Request Agent",
+    agentId: "",
+    description: "Agent task delegation via ERC-8183 escrow",
+    aaWalletAddress: "",
+    ownerWalletAddress: "",
+    explorerUrl: "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    identityRegistryUrl: "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    capabilities: fallbackCapabilities.filter((c) => c.providerId === "request-agent-real"),
+  },
+  {
+    providerId: "verify-agent-real",
+    title: "Verify Agent",
+    agentId: "",
+    description: "Result verification and on-chain audit trail",
+    aaWalletAddress: "",
+    ownerWalletAddress: "",
+    explorerUrl: "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    identityRegistryUrl: "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    capabilities: fallbackCapabilities.filter((c) => c.providerId === "verify-agent-real"),
+  },
+  {
+    providerId: "data-node-real",
+    title: "DATA Agent",
+    agentId: "",
+    description: "Low-cost data primitives",
+    aaWalletAddress: "0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
+    ownerWalletAddress: "",
+    explorerUrl: "https://testnet.kitescan.ai/address/0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
+    identityRegistryUrl:
+      "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    capabilities: fallbackCapabilities.filter(
+      (capability) => capability.providerId === "data-node-real"
+    ),
+  },
   {
     providerId: "fundamental-agent-real",
     title: "Fundamental Agent",

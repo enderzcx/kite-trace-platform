@@ -304,7 +304,7 @@ x-api-key: <VIEWER_OR_HIGHER_KEY>`}
                 {
                   name: "Kite Trace MCP Server",
                   version: "1.0.0",
-                  endpoint: "http://127.0.0.1:3001/mcp",
+                  endpoint: "https://kiteclaw.duckdns.org/mcp",
                   transport: "streamable-http",
                   auth: {
                     type: "api-key-header",
@@ -331,7 +331,7 @@ x-api-key: <VIEWER_OR_HIGHER_KEY>`}
             </p>
             <CodeBlock
               lang="bash"
-              code={`curl -s http://127.0.0.1:3001/mcp \\
+              code={`curl -s https://kiteclaw.duckdns.org/mcp \\
   -H "accept: application/json, text/event-stream" \\
   -H "content-type: application/json" \\
   -H "x-api-key: <VIEWER_OR_HIGHER_KEY>" \\
@@ -349,7 +349,7 @@ x-api-key: <VIEWER_OR_HIGHER_KEY>`}
             </p>
             <CodeBlock
               lang="bash"
-              code={`curl -s http://127.0.0.1:3001/mcp \\
+              code={`curl -s https://kiteclaw.duckdns.org/mcp \\
   -H "accept: application/json, text/event-stream" \\
   -H "content-type: application/json" \\
   -H "x-api-key: <AGENT_OR_HIGHER_KEY>" \\
@@ -358,10 +358,10 @@ x-api-key: <VIEWER_OR_HIGHER_KEY>`}
   "id": "call-1",
   "method": "tools/call",
   "params": {
-    "name": "ktrace__svc_price",
+    "name": "ktrace__cap_news_signal",
     "arguments": {
-      "pair": "BTCUSDT",
-      "payer": "0x1111111111111111111111111111111111111111",
+      "coin": "BTC",
+      "limit": 3,
       "_meta": { "traceId": "mcp_consumer_demo_001" }
     }
   }

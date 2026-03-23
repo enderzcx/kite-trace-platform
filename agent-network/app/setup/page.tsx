@@ -5,12 +5,16 @@ export const dynamic = "force-dynamic";
 export const metadata = {
   title: "Setup — Kite Trace",
   description:
-    "Connect your wallet, authorize a session, and get your MCP API key to use Kite Trace with Claude Desktop.",
+    "Connect your wallet, authorize a session, and access 5 specialized AI agents via MCP.",
 };
 
-// Fetch the available capability IDs server-side so the wizard can populate
-// the allowedCapabilities checkbox list without an extra client-side round trip.
-async function fetchCapabilities(): Promise<string[]> {
+export interface CapabilityInfo {
+  id: string;
+  name: string;
+  providerId: string;
+}
+
+async function fetchCapabilities(): Promise<CapabilityInfo[]> {
   try {
     const backendUrl = (process.env.BACKEND_URL ?? "").replace(/\/+$/, "");
     if (!backendUrl) return [];
@@ -24,12 +28,23 @@ async function fetchCapabilities(): Promise<string[]> {
     });
     if (!res.ok) return [];
     const json = (await res.json()) as {
-      capabilities?: Array<{ id?: string; capabilityId?: string }>;
+      capabilities?: Array<{
+        id?: string;
+        capabilityId?: string;
+        name?: string;
+        providerId?: string;
+        active?: boolean;
+      }>;
     };
     const list = json.capabilities ?? [];
     return list
-      .map((c) => (c.id ?? c.capabilityId ?? "").trim())
-      .filter(Boolean);
+      .filter((c) => c.active !== false)
+      .map((c) => ({
+        id: (c.id ?? c.capabilityId ?? "").trim(),
+        name: (c.name ?? "").trim(),
+        providerId: (c.providerId ?? "").trim(),
+      }))
+      .filter((c) => Boolean(c.id));
   } catch {
     return [];
   }
