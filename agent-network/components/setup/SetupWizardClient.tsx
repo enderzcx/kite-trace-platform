@@ -3674,12 +3674,13 @@ function RegisterIdentityStep({
 
 const STEP_LABELS = ["Connect Wallet", "Prepare AA Wallet", "Register Identity", "Authorize", "MCP"];
 
-function ProgressBar({ step }: { step: Step }) {
+function ProgressBar({ step, onStepClick }: { step: Step; onStepClick?: (s: Step) => void }) {
   return (
     <div className="flex items-center gap-0">
       {STEP_LABELS.map((label, i) => {
         const done = i < step;
         const active = i === step;
+        const clickable = !!onStepClick && i !== step;
         return (
           <div key={label} className="flex flex-1 flex-col items-center gap-1.5">
             <div className="relative flex w-full items-center">
@@ -3691,7 +3692,10 @@ function ProgressBar({ step }: { step: Step }) {
                   ].join(" ")}
                 />
               )}
-              <span
+              <button
+                type="button"
+                disabled={!clickable}
+                onClick={() => clickable && onStepClick(i as Step)}
                 className={[
                   "flex size-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold transition-all",
                   done
@@ -3699,10 +3703,11 @@ function ProgressBar({ step }: { step: Step }) {
                     : active
                       ? "border-[#3a4220] bg-[rgba(58,66,32,0.12)] text-[#3a4220]"
                       : "border-[rgba(90,80,50,0.2)] bg-transparent text-[#9e8e76]",
+                  clickable ? "cursor-pointer hover:opacity-70" : "cursor-default",
                 ].join(" ")}
               >
                 {done ? <Check className="size-3" /> : i + 1}
-              </span>
+              </button>
               {i < STEP_LABELS.length - 1 && (
                 <div
                   className={[
@@ -3712,14 +3717,18 @@ function ProgressBar({ step }: { step: Step }) {
                 />
               )}
             </div>
-            <span
+            <button
+              type="button"
+              disabled={!clickable}
+              onClick={() => clickable && onStepClick(i as Step)}
               className={[
-                "text-[10px] font-medium",
-                done ? "text-[#3a4220]" : active ? "text-[#18180e]" : "text-[#9e8e76]",
+                "text-[10px] font-medium transition-opacity",
+                done ? "text-[#3a4220]" : active ? "text-[#18180e] font-semibold" : "text-[#9e8e76]",
+                clickable ? "cursor-pointer hover:opacity-70" : "cursor-default",
               ].join(" ")}
             >
               {label}
-            </span>
+            </button>
           </div>
         );
       })}
@@ -3942,7 +3951,7 @@ export default function SetupWizardClient({ capabilities }: Props) {
 
         {/* Progress */}
         <div className="mb-8">
-          <ProgressBar step={step} />
+          <ProgressBar step={step} onStepClick={step >= 1 ? openStep : undefined} />
         </div>
 
         {/* Returning user welcome banner */}
