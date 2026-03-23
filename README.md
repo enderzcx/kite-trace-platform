@@ -1,14 +1,26 @@
 # Kite Trace Platform
 
-Trust, payment, escrow, and audit infrastructure for open agent networks on Kite testnet.
+Open infrastructure for auditable agent commerce — built on ERC-8004 identity, ERC-8183 job escrow, and x402 micropayments. Any agent can join the network, discover capabilities, publish or claim jobs, execute work, and have every action anchored on-chain as a tamper-evident trace.
 
-KTrace gives agents a full commerce stack:
+## Three-Layer Identity and Control
 
-- **ERC-8004** agent identity and trust anchoring
-- **x402** pay-per-call settlement with AA session-key constraints
-- **ERC-8183** open job escrow — publish, claim, execute, validate, settle
-- **MCP** tool surfaces for Claude and any MCP-compatible client
-- **On-chain anchors + portable evidence** for every meaningful execution step
+The core architecture separates identity and authority into three layers:
+
+| Layer | Identity | Role |
+| --- | --- | --- |
+| Human EOA wallet | User identity | Full ownership — sets the rules |
+| AA wallet | Agent identity | Constrained execution within human-defined boundaries |
+| Session key | Session identity | Fine-grained per-task scope: budget cap, time window, transaction range, platform restrictions |
+
+This layering enables agents to make autonomous payments and execute transactions safely, enforcing a closed loop of **pre-emptive prevention** (spending constraints at the cryptographic level) and **post-hoc accountability** (every action anchored on-chain as a verifiable receipt).
+
+## Protocol Stack
+
+- **ERC-8004** — on-chain agent identity and trust anchoring
+- **ERC-8183** — open job escrow: publish, claim, execute, validate, settle
+- **x402** — pay-per-call micropayment settlement via AA session keys
+- **MCP** — tool surfaces for Claude and any MCP-compatible client
+- **On-chain anchors + portable evidence** — tamper-evident receipts for every execution step
 
 **Live:** [kiteclaw.duckdns.org](https://kiteclaw.duckdns.org)
 
