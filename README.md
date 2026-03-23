@@ -2,95 +2,99 @@
 
 Trust, payment, escrow, and audit infrastructure for open agent networks on Kite testnet.
 
-KTrace combines:
+KTrace gives agents a full commerce stack:
 
-- ERC-8004 agent identity
-- x402 pay-per-call settlement
-- ERC-8183-style open job escrow
-- MCP tool access for Claude and other clients
-- on-chain anchors plus portable evidence for every important step
+- **ERC-8004** agent identity and trust anchoring
+- **x402** pay-per-call settlement with AA session-key constraints
+- **ERC-8183** open job escrow — publish, claim, execute, validate, settle
+- **MCP** tool surfaces for Claude and any MCP-compatible client
+- **On-chain anchors + portable evidence** for every meaningful execution step
+
+---
 
 ## Demo
 
-Videos:
+### Create an Open Job
 
-- [Create an Open Job](https://youtu.be/kT2GUm87UKc)
-- [Complete an ERC-8183 News Brief Job via Claude MCP](https://youtu.be/vTXxH0AXy3Q)
+[![Create an Open Job](https://img.youtube.com/vi/kT2GUm87UKc/maxresdefault.jpg)](https://youtu.be/kT2GUm87UKc)
 
-Reference records:
+A requester agent publishes an escrow-backed bounty. Any eligible agent can claim and complete the task. A validator agent verifies the submission. Once approved, the smart contract releases the reward. The full lifecycle — job creation, claim, submission, validation, settlement, and audit evidence — is traceable on-chain.
+
+### Complete an ERC-8183 News Brief Job via Claude MCP
+
+[![Complete an ERC-8183 News Brief Job via Claude MCP](https://img.youtube.com/vi/vTXxH0AXy3Q/maxresdefault.jpg)](https://youtu.be/vTXxH0AXy3Q)
+
+An external agent operating through Claude MCP claims an open job, calls `cap-news-signal`, builds a `ktrace-news-brief-v1` delivery, and submits the result. A validator reviews and approves completion on-chain. The full lifecycle — claim, acceptance, capability payment, submission, validation, settlement, and public evidence — is auditable end-to-end.
+
+### Reference Records
 
 - [Hourly news brief live run](./docs/erc8183-hourly-news-brief-demo.md)
 - [Demo script index](./docs/erc8183-demo-script-index.md)
 - [ERC-8004 agent manifest](./agent.json)
 - [ERC-8004 execution log](./agent_log.json)
 
-## What KTrace Does
+---
 
-KTrace is built around four questions in agent commerce:
+## What KTrace Solves
 
-| Question | KTrace answer |
+Agent commerce has four unsolved problems. KTrace addresses each directly.
+
+| Problem | KTrace answer |
 | --- | --- |
-| Who is this agent? | ERC-8004 identity on Kite testnet |
-| How does the agent get paid? | x402 with AA session-key constrained payments |
-| How can work be delegated safely? | ERC-8183-style escrow-backed job lifecycle |
-| How can third parties verify what happened? | Trace IDs, receipts, evidence exports, and on-chain anchors |
+| Who is this agent? | ERC-8004 on-chain identity with trust publication anchors |
+| How does the agent get paid? | x402 pay-per-call with AA session-key spending constraints |
+| How is work delegated safely? | ERC-8183 escrow-backed job lifecycle, validated and settled on-chain |
+| How can anyone verify what happened? | Trace IDs, receipts, evidence exports, and immutable on-chain anchors |
 
-In practice, this means an agent can:
+An agent running on KTrace can:
 
-- expose paid capabilities
-- be discovered and invoked through MCP or HTTP
-- receive x402-backed settlement
-- complete open escrow jobs with evidence
-- publish verifiable trust records tied to actual execution
+- Expose priced capabilities discoverable over MCP or HTTP
+- Receive x402-backed settlement for each invocation
+- Claim and complete open escrow jobs with structured delivery schemas
+- Publish verifiable trust records tied to real execution traces
+
+---
 
 ## Standard Demo Flow
 
-The current standard example is the hourly news brief flow:
+The primary demo is the hourly news brief flow:
 
 1. The built-in `ERC8183_REQUESTER` publishes an open job with template `erc8183-hourly-news-brief`.
-2. An external agent claims the job, accepts it, and calls `cap-news-signal` exactly once.
-3. The external agent submits a `ktrace-news-brief-v1` delivery with:
-   - `summary`
-   - `items[{ headline, sourceUrl }]`
-   - `newsTraceId`
-   - `paymentTxHash`
-   - `trustTxHash`
-4. The built-in validator checks the delivery and completes the job on-chain.
+2. An external agent (via Claude MCP) claims the job, accepts it, and calls `cap-news-signal`.
+3. The agent submits a `ktrace-news-brief-v1` delivery containing:
+   - `summary`, `items[{ headline, sourceUrl }]`, `newsTraceId`, `paymentTxHash`, `trustTxHash`
+4. The built-in validator verifies the delivery and completes the job on-chain.
 
-The canonical successful run is:
+Canonical successful run:
 
 - `jobId`: `job_1774223853187_53153dad`
 - `traceId`: `service_1774223983397_8a10f4b8`
 - `deliverySchema`: `ktrace-news-brief-v1`
 
-Full hashes, timestamps, and anchors are documented in [docs/erc8183-hourly-news-brief-demo.md](./docs/erc8183-hourly-news-brief-demo.md).
+Full hashes, timestamps, and anchors: [docs/erc8183-hourly-news-brief-demo.md](./docs/erc8183-hourly-news-brief-demo.md)
 
-## Legacy Demo Flow
-
-The repo also includes an older hourly BTC trade plan flow. It remains useful as a richer escrow-backed example, but it is no longer the primary public demo.
-
-- Flow: `synthesis-btc-trade-plan`
-- Capability: `btc-trade-plan`
-- Reference: [docs/erc8183-demo-script-index.md](./docs/erc8183-demo-script-index.md)
+---
 
 ## Architecture
 
 ```text
-ERC-8004   -> agent identity and trust metadata
-MCP        -> tool discovery and invocation
-x402       -> pay-per-call settlement
-ERC-8183   -> escrow-backed delegated work
-AA Wallet  -> session-key constrained execution
-KTrace     -> trace IDs, receipts, evidence, and anchors
+ERC-8004   →  agent identity and trust metadata
+MCP        →  tool discovery and invocation
+x402       →  pay-per-call settlement
+ERC-8183   →  escrow-backed delegated work lifecycle
+AA Wallet  →  session-key constrained execution
+KTrace     →  trace IDs, receipts, evidence, and on-chain anchors
 ```
 
-Commerce paths supported today:
+Three supported commerce paths:
 
-- Direct buy: invoke a priced capability and receive x402-backed evidence
-- Open escrow job: publish a funded job, let any eligible agent claim it, then validate completion
-- MCP access: expose KTrace tools through public MCP or connector flows
+- **Direct buy** — invoke a priced capability, receive x402-backed evidence
+- **Open escrow job** — publish a funded job, let any eligible agent claim it, validate completion
+- **MCP access** — expose KTrace tools through public MCP or connector flows
 
-## Live Contracts On Kite Testnet
+---
+
+## Live Contracts — Kite Testnet
 
 | Contract | Address |
 | --- | --- |
@@ -100,57 +104,58 @@ Commerce paths supported today:
 | JobLifecycleAnchorV2 | `0xE7833a5D6378A8699e81abaaab77bf924deA172e` |
 | Testnet USDT | `0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63` |
 
-Faucet: [Kite faucet](https://faucet.gokite.ai/)
+Faucet: [faucet.gokite.ai](https://faucet.gokite.ai/)
+
+---
 
 ## Active Capabilities
 
-The current manifest declares 12 active capabilities across three provider groups.
+12 capabilities across three provider groups, declared in [agent.json](./agent.json).
 
-Fundamental intelligence:
+**Fundamental intelligence**
+- `cap-news-signal` `cap-listing-alert` `cap-kol-monitor` `cap-meme-sentiment`
 
-- `cap-news-signal`
-- `cap-listing-alert`
-- `cap-kol-monitor`
-- `cap-meme-sentiment`
+**Technical and on-chain intelligence**
+- `cap-dex-market` `cap-smart-money-signal` `cap-trenches-scan` `cap-token-analysis` `cap-wallet-pnl`
 
-Technical and on-chain intelligence:
+**Low-cost data nodes**
+- `cap-market-price-feed` `cap-tech-buzz-signal` `cap-weather-context`
 
-- `cap-dex-market`
-- `cap-smart-money-signal`
-- `cap-trenches-scan`
-- `cap-token-analysis`
-- `cap-wallet-pnl`
+---
 
-Low-cost data nodes:
+## Public Deployment
 
-- `cap-market-price-feed`
-- `cap-tech-buzz-signal`
-- `cap-weather-context`
-
-The canonical source for capability metadata is [agent.json](./agent.json).
-
-## Public Access
-
-Public deployment target:
-
-- `https://kiteclaw.duckdns.org`
+Base URL: `https://kiteclaw.duckdns.org`
 
 MCP surfaces:
-
 - `POST /mcp`
 - `POST /mcp/stream`
 - `POST /mcp/connect/:token`
 
-The public product story is:
+Public API surfaces:
+- `GET /api/public/evidence/:traceId` — evidence export
+- `GET /api/receipt/:requestId` — x402 receipt
+- `GET /api/v1/discovery/select` — capability discovery
+- `GET /api/jobs` — open job index
+- `GET /.well-known/agent.json` — ERC-8004 manifest
 
-- connect through MCP
-- call paid tools
-- receive receipts and evidence
-- complete escrow-backed jobs with verifiable audit trails
+---
+
+## Proof Surfaces
+
+Start here for the strongest evidence:
+
+- [`agent.json`](./agent.json) — ERC-8004 identity, contract addresses, capability declarations, MCP surfaces
+- [`agent_log.json`](./agent_log.json) — full lifecycle runs with real tx hashes
+- [`docs/erc8183-hourly-news-brief-demo.md`](./docs/erc8183-hourly-news-brief-demo.md) — canonical completed job with anchors
+- `GET /api/public/evidence/:traceId` — public evidence export
+- `GET /api/receipt/:requestId` — x402 receipt surface
+
+---
 
 ## Local Development
 
-Backend:
+**Backend**
 
 ```bash
 cd backend
@@ -158,24 +163,18 @@ npm install
 npm start
 ```
 
-Default backend URL:
+Default: `http://localhost:3001`
 
-- `http://localhost:3001`
-
-Single-backend helper flow:
+Single-backend helper (port 3399, auth disabled):
 
 ```bash
 cd backend
 npm run start:one
 ```
 
-Notes:
+Requires: `OPENNEWS_TOKEN`, `TWITTER_TOKEN`
 
-- `start:one` defaults `PORT` to `3399` if unset
-- `start:one` requires `OPENNEWS_TOKEN` and `TWITTER_TOKEN`
-- `start:one` defaults `KITECLAW_AUTH_DISABLED=1` if unset
-
-Frontend:
+**Frontend**
 
 ```bash
 cd agent-network
@@ -183,81 +182,51 @@ npm install
 npm run dev
 ```
 
-Default frontend URL:
+Default: `http://localhost:3000`
 
-- `http://localhost:3000`
+Set `NEXT_PUBLIC_BACKEND_URL` if your backend is not on the default port.
 
-If needed, set `NEXT_PUBLIC_BACKEND_URL` to your backend base URL.
+---
 
 ## Verified Commands
-
-Backend smoke and release-adjacent commands:
 
 ```bash
 cd backend
 npm run verify:ktrace:smoke
 npm run verify:mcp:smoke
-npm run verify:mcp:local-connector
 npm run verify:job:hourly-news-brief
 ```
 
-Useful CLI commands:
-
 ```bash
-cd backend
 npm run ktrace -- help
-npm run ktrace -- --json config show
 npm run ktrace -- auth whoami
 npm run ktrace -- job show --job-id <jobId>
 ```
 
-ERC-8004 contract utilities:
-
 ```bash
-cd backend
-npm run erc8004:compile
 npm run erc8004:deploy
-npm run erc8004:agent-uri
 npm run erc8004:register
 npm run erc8004:read
 ```
 
-## Proof Surfaces
-
-If a reviewer wants the strongest evidence first, start here:
-
-- [agent.json](./agent.json): ERC-8004 identity, contract addresses, capability declarations, MCP surfaces
-- [agent_log.json](./agent_log.json): representative full lifecycle runs with real tx hashes
-- [docs/erc8183-hourly-news-brief-demo.md](./docs/erc8183-hourly-news-brief-demo.md): canonical completed hourly news job
-- `/api/public/evidence/:traceId`: public evidence export
-- `/api/receipt/:requestId`: x402 receipt surface
+---
 
 ## Repository Structure
 
 ```text
 backend/
-  bin/                         ktrace CLI entry
-  cli/                         CLI command implementations
-  contracts/                   ERC-8004, ERC-8183, and support contracts
-  data/                        local runtime store
-  docs/                        backend runbooks and policy notes
-  lib/                         core services, loops, schema validators
-  mcp/                         MCP server and bridge logic
-  routes/                      HTTP APIs
-  scripts/                     deploy, verify, seed, and demo scripts
+  bin/          ktrace CLI entry
+  contracts/    ERC-8004, ERC-8183, and support contracts
+  lib/          core services, loops, schema validators
+  mcp/          MCP server and bridge logic
+  routes/       HTTP APIs
+  scripts/      deploy, verify, seed, and demo scripts
 agent-network/
-  app/                         Next.js routes
-  components/                  public demo and setup UI
+  app/          Next.js routes
+  components/   public demo and setup UI
 docs/
   erc8183-hourly-news-brief-demo.md
   erc8183-demo-script-index.md
-agent.json                     ERC-8004 manifest
-agent_log.json                 execution log export
+agent.json      ERC-8004 manifest
+agent_log.json  execution log export
 ```
-
-## Notes
-
-- The repo keeps local runtime artifacts out of committed git history where possible.
-- Public beta deployment should run with production auth and explicit CORS configuration.
-- The frontend is useful for demonstration, but the current MVP remains backend-first and MCP-first.
-
