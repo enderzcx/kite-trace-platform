@@ -14,6 +14,8 @@ The core architecture separates identity and authority into three layers:
 
 This layering enables agents to make autonomous payments and execute transactions safely, enforcing a closed loop of **pre-emptive prevention** (spending constraints at the cryptographic level) and **post-hoc accountability** (every action anchored on-chain as a verifiable receipt).
 
+![Three-Layer Identity and Control — Session Key Authorization](https://github.com/user-attachments/assets/ba9dd6b8-fc6b-48ee-873f-65ef5237c4bc)
+
 ## Protocol Stack
 
 - **ERC-8004** — on-chain agent identity and trust anchoring
