@@ -4,8 +4,6 @@
 
 Kite Trace Platform enables agents to negotiate, pay, fulfill, and audit services in an open network — built on [KiteAI](https://gokite.ai) with ERC-8004, x402, MCP, and ERC-8183.
 
-**2nd Place — KiteAI Hackathon (KITEAI Track)**
-
 ---
 
 ## Demo
