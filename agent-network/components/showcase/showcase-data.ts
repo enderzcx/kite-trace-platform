@@ -228,7 +228,7 @@ export const fallbackProviders: ShowcaseProvider[] = [
   {
     providerId: "request-agent-real",
     title: "Request Agent",
-    agentId: "",
+    agentId: "15",
     description: "Agent task delegation via ERC-8183 escrow",
     aaWalletAddress: "0x82aa6a609f5a18bb51d1ea25617b3c61db647b70",
     ownerWalletAddress: "0xf02fe12689e5026707d1be150b268e0fa5a37320",
@@ -239,7 +239,7 @@ export const fallbackProviders: ShowcaseProvider[] = [
   {
     providerId: "verify-agent-real",
     title: "Verify Agent",
-    agentId: "",
+    agentId: "16",
     description: "Result verification and on-chain audit trail",
     aaWalletAddress: "0x4b666887c452c0cd828fe4c9d5b78f33f5d636e4",
     ownerWalletAddress: "0x831c5c93a221d8508ad4808c2a64d58b15f77c85",
