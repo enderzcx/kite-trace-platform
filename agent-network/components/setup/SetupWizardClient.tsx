@@ -4094,6 +4094,15 @@ export default function SetupWizardClient({ capabilities }: Props) {
               onOpenSessionStep={() => openStep(3)}
             />
           )}
+
+          {step > 2 && step !== 4 && (
+            <DoneRow
+              n={5}
+              title="Connect via MCP"
+              sub="Set up Claude Code or Cursor to use your KTrace session."
+              onClick={() => openStep(4)}
+            />
+          )}
         </div>
 
         {/* Footer links */}
