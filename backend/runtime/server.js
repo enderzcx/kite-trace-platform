@@ -40,31 +40,50 @@ export function applyRuntimeServerMiddleware(app, deps = {}) {
     allowedOrigins = [],
     adminKey = ''
   } = deps;
+  const fallbackPublicOrigin = (() => {
+    try {
+      const raw = String(process.env.BACKEND_PUBLIC_URL || '').trim();
+      return raw ? new URL(raw).origin : '';
+    } catch {
+      return '';
+    }
+  })();
   const normalizedAllowedOrigins = Array.isArray(allowedOrigins)
-    ? allowedOrigins.map((item) => String(item || '').trim()).filter(Boolean)
-    : [];
+    ? Array.from(
+        new Set(
+          [
+            ...allowedOrigins.map((item) => String(item || '').trim()).filter(Boolean),
+            fallbackPublicOrigin
+          ].filter(Boolean)
+        )
+      )
+    : fallbackPublicOrigin
+      ? [fallbackPublicOrigin]
+      : [];
 
   app.use(
     cors((req, callback) => {
       const origin = String(req.headers.origin || '').trim();
       const path = String(req.path || req.originalUrl || '').trim();
-      const hasExplicitAllowlist = normalizedAllowedOrigins.length > 0;
       const isApprovalSurface = path.startsWith('/api/approvals');
 
       let corsOptions;
       if (!origin) {
         corsOptions = {
-          origin: true,
+          origin: false,
           credentials: false,
           exposedHeaders: ['x-trace-id', 'x-request-id']
         };
-      } else if (
-        normalizedAllowedOrigins.includes(origin) ||
-        (!hasExplicitAllowlist && !(adminKey && isApprovalSurface))
-      ) {
+      } else if (normalizedAllowedOrigins.includes(origin)) {
         corsOptions = {
           origin: true,
           credentials: true,
+          exposedHeaders: ['x-trace-id', 'x-request-id']
+        };
+      } else if (adminKey && isApprovalSurface) {
+        corsOptions = {
+          origin: false,
+          credentials: false,
           exposedHeaders: ['x-trace-id', 'x-request-id']
         };
       } else {

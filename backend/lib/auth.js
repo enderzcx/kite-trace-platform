@@ -148,7 +148,7 @@ export function createAuthHelpers({
       allowOnboardingCookie = false
     } = {}
   ) {
-    if (AUTH_DISABLED || !authConfigured()) {
+    if (AUTH_DISABLED) {
       applyAuthContext(req, {
         role: 'dev-open',
         authSource: 'dev-open'
@@ -157,6 +157,15 @@ export function createAuthHelpers({
         ok: true,
         role: 'dev-open',
         authSource: 'dev-open'
+      };
+    }
+
+    if (!authConfigured()) {
+      return {
+        ok: false,
+        status: 401,
+        code: 'auth_not_configured',
+        message: 'Authentication is not configured.'
       };
     }
 

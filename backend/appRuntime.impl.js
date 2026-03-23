@@ -307,6 +307,37 @@ const {
   ERC8183_EXECUTOR_OWNER_ADDRESS,
   ERC8183_VALIDATOR_OWNER_ADDRESS
 } = runtimeConfig;
+
+const NODE_ENV = String(process.env.NODE_ENV || '').trim().toLowerCase();
+const IS_PRODUCTION = NODE_ENV === 'production';
+if (IS_PRODUCTION) {
+  if (AUTH_DISABLED) {
+    throw new Error(
+      'Production startup blocked: KITECLAW_AUTH_DISABLED must be 0.'
+    );
+  }
+  const effectiveAllowedOrigins = Array.from(
+    new Set(
+      [
+        ...((Array.isArray(KTRACE_ALLOWED_ORIGINS) ? KTRACE_ALLOWED_ORIGINS : []).map((item) =>
+          String(item || '').trim()
+        )),
+        (() => {
+          try {
+            return BACKEND_PUBLIC_URL ? new URL(BACKEND_PUBLIC_URL).origin : '';
+          } catch {
+            return '';
+          }
+        })()
+      ].filter(Boolean)
+    )
+  );
+  if (!effectiveAllowedOrigins.length) {
+    throw new Error(
+      'Production startup blocked: configure KTRACE_ALLOWED_ORIGINS or BACKEND_PUBLIC_URL.'
+    );
+  }
+}
 let onboardingSetupHelpers = null;
 let claudeConnectorAuthHelpers = null;
 const { authConfigured, extractApiKey, resolveRoleByApiKey, resolveAuthRequest, requireRole } = createAuthHelpers({

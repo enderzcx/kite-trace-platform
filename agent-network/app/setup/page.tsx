@@ -3,9 +3,9 @@ import SetupWizardClient from "@/components/setup/SetupWizardClient";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Setup — Kite Trace",
+  title: "Setup | Kite Trace",
   description:
-    "Connect your wallet, authorize a session, and access 5 specialized AI agents via MCP.",
+    "Connect your wallet, authorize a session, generate an API key, and access KTrace through the public MCP endpoint.",
 };
 
 export interface CapabilityInfo {

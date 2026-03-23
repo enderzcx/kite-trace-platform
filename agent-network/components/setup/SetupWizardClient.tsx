@@ -208,13 +208,16 @@ const IDENTITY_REGISTRY_ABI = [
 ];
 const DEFAULT_IDENTITY_REGISTRY = process.env.NEXT_PUBLIC_IDENTITY_REGISTRY?.trim() || "";
 const SUGGEST_SETTLEMENT = "0.5";
-const KTRACE_SETUP_MODE = process.env.NEXT_PUBLIC_KTRACE_SETUP_MODE?.trim().toLowerCase() === "remote"
-  ? "remote"
-  : "local";
+const KTRACE_SETUP_MODE = process.env.NEXT_PUBLIC_KTRACE_SETUP_MODE?.trim().toLowerCase() === "local"
+  ? "local"
+  : "remote";
 const KITE_READ_RPC_URL = process.env.NEXT_PUBLIC_KITE_RPC_URL?.trim() || "";
 const LOCAL_CONNECTOR_CLIENT = "inspector";
 const LOCAL_CONNECTOR_CLIENT_ID = "local-setup";
 const LOCAL_BACKEND_BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://127.0.0.1:3217").replace(/\/+$/, "");
+const PUBLIC_KTRACE_BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "https://kiteclaw.duckdns.org").replace(/\/+$/, "");
+const PUBLIC_MCP_ENDPOINT = `${PUBLIC_KTRACE_BASE_URL}/mcp`;
+const PUBLIC_MCP_WELL_KNOWN = `${PUBLIC_KTRACE_BASE_URL}/.well-known/mcp.json`;
 const LOCAL_SESSION_RUNTIME_STORAGE_KEY = "ktrace.localSessionRuntime.v1";
 
 function getEthereum(): EthProvider | undefined {
@@ -3091,19 +3094,38 @@ function DeveloperSetupPanel({
 
   const hasFullKey = Boolean(apiKey);
   const keyDisplay = hasFullKey ? apiKey : "<generate_a_new_ktrace_sk_key>";
-  const sessionRuntimePath = "<path-to-ktrace-session-runtime.json>";
-  const claudeCodeCommands = [
-    `claude mcp add --transport stdio ktrace "ktrace" "mcp" "bridge" --base-url ${LOCAL_BACKEND_BASE_URL} --api-key "${keyDisplay}" --session-runtime "${sessionRuntimePath}"`,
+  const publicMcpConfig = `{
+  "mcpServers": {
+    "ktrace": {
+      "type": "streamable-http",
+      "url": "${PUBLIC_MCP_ENDPOINT}",
+      "headers": {
+        "x-api-key": "${keyDisplay}"
+      }
+    }
+  }
+}`;
+  const localBridgeCommands = [
+    `claude mcp add --transport stdio ktrace "ktrace" "mcp" "bridge" --base-url ${LOCAL_BACKEND_BASE_URL} --api-key "${keyDisplay}" --session-runtime "<path-to-ktrace-session-runtime.json>"`,
     "claude mcp list",
     "claude mcp get ktrace",
   ].join("\n");
+  const usesLocalMode = KTRACE_SETUP_MODE === "local";
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-start gap-3 rounded-2xl border border-[rgba(90,80,50,0.12)] bg-[rgba(58,66,32,0.04)] px-4 py-3">
         <Terminal className="mt-0.5 size-4 shrink-0 text-[#7a6e56]" />
         <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-          Run the local <strong>ktrace mcp bridge</strong> on your machine. It signs x402 payments with your local session key and forwards requests to the KTrace server — your private key never leaves this device.
+          {usesLocalMode ? (
+            <>
+              Run the local <strong>ktrace mcp bridge</strong> on your machine. It signs x402 payments with your local session key and forwards requests to the KTrace server.
+            </>
+          ) : (
+            <>
+              Connect your MCP client directly to the public <strong>/mcp</strong> endpoint. Public clients only need an account-scoped API key.
+            </>
+          )}
         </p>
       </div>
 
@@ -3177,58 +3199,84 @@ function DeveloperSetupPanel({
           </div>
 
           <div className="flex flex-col gap-4 border-t border-[rgba(90,80,50,0.1)] pt-4">
-            <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="size-4 text-[#7a6e56]" />
-                <span className="text-[13px] font-semibold text-[#18180e]">Local Session Runtime</span>
-              </div>
-              {localSessionRuntimeExport ? (
-                <>
-                  <p className="text-[12px] leading-relaxed text-[#7a6e56]">
-                    Download this JSON and keep it on your machine. It contains your session key and is required for paid MCP replay through the local bridge.
-                  </p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <PrimaryBtn
-                      onClick={() => downloadJsonFile("ktrace-session-runtime.json", localSessionRuntimeExport)}
-                    >
-                      <ShieldCheck className="size-3.5" />
-                      Download Local Session Runtime
-                    </PrimaryBtn>
-                    <p className="text-[11px] text-[#9e8e76]">
-                      Suggested filename: <code className="font-mono">ktrace-session-runtime.json</code>
-                    </p>
-                  </div>
-                </>
-              ) : (
-                <div className="flex flex-col gap-3">
-                  <ErrorBanner msg="Paid MCP needs a local session runtime file. Open the Session step on this device, authorize or renew once, then return here to download it." />
-                  {onOpenSessionStep && (
-                    <GhostBtn onClick={onOpenSessionStep}>
-                      <RefreshCw className="size-3.5" />
-                      Open Session Step
-                    </GhostBtn>
-                  )}
+            {usesLocalMode ? (
+              <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="size-4 text-[#7a6e56]" />
+                  <span className="text-[13px] font-semibold text-[#18180e]">Local Session Runtime</span>
                 </div>
-              )}
-            </div>
+                {localSessionRuntimeExport ? (
+                  <>
+                    <p className="text-[12px] leading-relaxed text-[#7a6e56]">
+                      Download this JSON and keep it on your machine. It contains your session key and is required for paid MCP replay through the local bridge.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <PrimaryBtn
+                        onClick={() => downloadJsonFile("ktrace-session-runtime.json", localSessionRuntimeExport)}
+                      >
+                        <ShieldCheck className="size-3.5" />
+                        Download Local Session Runtime
+                      </PrimaryBtn>
+                      <p className="text-[11px] text-[#9e8e76]">
+                        Suggested filename: <code className="font-mono">ktrace-session-runtime.json</code>
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    <ErrorBanner msg="Paid MCP needs a local session runtime file. Open the Session step on this device, authorize or renew once, then return here to download it." />
+                    {onOpenSessionStep && (
+                      <GhostBtn onClick={onOpenSessionStep}>
+                        <RefreshCw className="size-3.5" />
+                        Open Session Step
+                      </GhostBtn>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
+                <div className="flex items-center gap-2">
+                  <Link2 className="size-4 text-[#7a6e56]" />
+                  <span className="text-[13px] font-semibold text-[#18180e]">Public MCP Endpoint</span>
+                </div>
+                <MonoField value={PUBLIC_MCP_ENDPOINT} />
+                <p className="text-[11px] text-[#9e8e76]">
+                  Well-known metadata: <code className="font-mono">{PUBLIC_MCP_WELL_KNOWN}</code>
+                </p>
+              </div>
+            )}
 
             <div className="flex items-center gap-2">
               <Terminal className="size-4 text-[#7a6e56]" />
-              <span className="text-[13px] font-semibold text-[#18180e]">Claude Code Example</span>
+              <span className="text-[13px] font-semibold text-[#18180e]">
+                {usesLocalMode ? "Claude Code Example" : "MCP Client Example"}
+              </span>
             </div>
             {!hasFullKey && (
               <p className="text-[11px] text-[#b43c28]">
                 The commands below use a placeholder because only a masked key is available right now. Generate or rotate a key to get the full secret.
               </p>
             )}
-            <CodeBlock lang="bash" code={claudeCodeCommands} />
+            <CodeBlock lang={usesLocalMode ? "bash" : "json"} code={usesLocalMode ? localBridgeCommands : publicMcpConfig} />
             <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
               <p className="text-[12px] font-medium text-[#18180e]">What to run next</p>
               <ol className="flex flex-col gap-2 text-[11px] text-[#7a6e56]">
-                <li>1. Download your local session runtime JSON and keep it private.</li>
-                <li>2. Add `ktrace mcp bridge` as a stdio MCP server in Claude Code.</li>
-                <li>3. Check that Claude Code lists the `ktrace` server and saved the command arguments correctly.</li>
-                <li>4. Use the bridge for all tools — it signs payments locally and forwards to the KTrace server.</li>
+                {usesLocalMode ? (
+                  <>
+                    <li>1. Download your local session runtime JSON and keep it private.</li>
+                    <li>2. Add `ktrace mcp bridge` as a stdio MCP server in Claude Code.</li>
+                    <li>3. Check that Claude Code lists the `ktrace` server and saved the command arguments correctly.</li>
+                    <li>4. Use the bridge for all tools - it signs payments locally and forwards to the KTrace server.</li>
+                  </>
+                ) : (
+                  <>
+                    <li>1. Generate or rotate an account-scoped API key.</li>
+                    <li>2. Add the public KTrace MCP server using the JSON config above.</li>
+                    <li>3. Confirm your client can reach <code className="font-mono">/.well-known/mcp.json</code> and list KTrace tools.</li>
+                    <li>4. Start using paid tools directly through <code className="font-mono">/mcp</code>.</li>
+                  </>
+                )}
               </ol>
             </div>
           </div>
@@ -3267,7 +3315,9 @@ function ConnectStep4({
             <div>
               <h2 className="text-[15px] font-semibold text-[#18180e]">Connect via MCP</h2>
               <p className="mt-0.5 text-[12px] text-[#9e8e76]">
-                Generate an API key, download your local session runtime, then connect Claude Code to the local KTrace bridge.
+                {KTRACE_SETUP_MODE === "local"
+                  ? "Generate an API key, download your local session runtime, then connect Claude Code to the local KTrace bridge."
+                  : "Generate an API key, then connect Claude Code or any MCP client directly to the public KTrace /mcp endpoint."}
               </p>
             </div>
           </div>
