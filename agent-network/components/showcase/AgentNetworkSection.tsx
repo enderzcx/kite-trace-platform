@@ -448,21 +448,6 @@ export default function AgentNetworkSection({
           ))}
         </div>
 
-        <motion.p
-          initial={{ opacity: 0 }}
-          whileInView={{ opacity: 1 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.4, delay: 0.3 }}
-          className="mt-8 text-center text-[12px] text-[#b0a08a]"
-        >
-          Discoverable via{" "}
-          <code
-            className="rounded bg-[rgba(90,80,50,0.08)] px-1.5 py-0.5 text-[11px] text-[#7a6e56]"
-            style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
-          >
-            GET /api/v1/discovery/select?capability=&lt;cap-id&gt;
-          </code>
-        </motion.p>
       </div>
     </section>
   );
