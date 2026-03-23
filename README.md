@@ -1,4 +1,4 @@
-# Kite Trace Platform
+# [Kite Trace Platform](https://kiteclaw.duckdns.org/)
 
 **The Audit Layer for Agent Commerce.**
 Open infrastructure for trust, x402 payments, and verifiable on-chain evidence in autonomous agent networks.
