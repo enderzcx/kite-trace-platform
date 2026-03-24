@@ -1,3 +1,3 @@
-import { shutdownServer, startServer } from './appRuntime.impl.js';
+import { shutdownServer, startServer } from './bootstrap/index.js';
 
 export { startServer, shutdownServer };
