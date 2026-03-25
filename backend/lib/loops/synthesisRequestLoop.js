@@ -188,7 +188,10 @@ export function createSynthesisRequestLoop({
   async function fundJob(jobId) {
     const prep = await postInternal(`/api/jobs/${jobId}/prepare-funding`, {});
     if (!prep.ok && prep.status !== 409) {
-      return { ok: false, error: `prepare-funding failed: ${normalizeText(prep.data?.error?.message || prep.data?.error?.code || prep.data?.reason || String(prep.data?.error || ''))}` };
+      const prepErr = normalizeText(prep.data?.error?.message || prep.data?.error?.code || prep.data?.reason || String(prep.data?.error || ''));
+      const isClientPayReq = /runtime_not_found|session_not_configured/.test(prepErr) ||
+        /runtime_not_found|session_not_configured/.test(prep.data?.error?.code || '');
+      return { ok: false, clientPaymentRequired: isClientPayReq, error: `prepare-funding failed: ${prepErr}` };
     }
 
     const fund = await postInternal(`/api/jobs/${jobId}/fund`, { async: false });
@@ -294,8 +297,14 @@ export function createSynthesisRequestLoop({
 
       const fund = await fundJob(job.jobId);
       if (!fund.ok) {
-        loopState.lastStatus = 'job_fund_failed';
-        loopState.lastError = fund.error;
+        if (fund.clientPaymentRequired) {
+          // Self-custodial job — server cannot sign UserOp. Client proxy will fund via submit-client-payment.
+          loopState.lastStatus = 'awaiting_client_payment';
+          loopState.lastError = '';
+        } else {
+          loopState.lastStatus = 'job_fund_failed';
+          loopState.lastError = fund.error;
+        }
         return;
       }
 

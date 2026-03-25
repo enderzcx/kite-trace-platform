@@ -201,6 +201,7 @@ function buildPaymentRequiredPreviewResult(tool = {}, payload = {}, traceId = ''
       recipient: normalizeText(quote?.recipient || ''),
       amount: normalizeText(quote?.amount || ''),
       x402,
+      signingContext: x402?.accepts?.[0]?.signingContext ?? null,
       result: previewResult
     }
   };

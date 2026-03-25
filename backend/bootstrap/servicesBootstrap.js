@@ -123,7 +123,12 @@ export async function servicesBootstrap(ctx) {
     x402Price: X402_PRICE, x402TtlMs: X402_TTL_MS,
     settlementToken: SETTLEMENT_TOKEN, merchantAddress: MERCHANT_ADDRESS,
     kiteNetworkAuditMaxEvents: KITE_NETWORK_AUDIT_MAX_EVENTS,
-    erc8004IdentityRegistry: ERC8004_IDENTITY_REGISTRY, erc8004AgentId: ERC8004_AGENT_ID
+    erc8004IdentityRegistry: ERC8004_IDENTITY_REGISTRY, erc8004AgentId: ERC8004_AGENT_ID,
+    bundlerUrl: BACKEND_BUNDLER_URL,
+    entryPointAddress: BACKEND_ENTRYPOINT_ADDRESS,
+    accountFactoryAddress: KITE_AA_FACTORY_ADDRESS,
+    accountImplementationAddress: KITE_AA_ACCOUNT_IMPLEMENTATION,
+    chainId: 2368
   });
 
   // ── Identity verification ─────────────────────────────────────────────────

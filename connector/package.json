@@ -1,0 +1,21 @@
+{
+  "name": "ktrace-connector",
+  "version": "1.0.0",
+  "description": "KTrace local signing proxy — bridges Claude Code MCP to KTrace backend with self-custodial x402 payment signing",
+  "type": "module",
+  "main": "local-signing-proxy.js",
+  "bin": {
+    "ktrace-connector": "./local-signing-proxy.js"
+  },
+  "scripts": {
+    "start": "node local-signing-proxy.js",
+    "setup": "node setup.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ethers": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

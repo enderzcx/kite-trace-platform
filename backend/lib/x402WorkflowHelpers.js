@@ -16,7 +16,12 @@ export function createX402WorkflowHelpers({
   merchantAddress,
   kiteNetworkAuditMaxEvents,
   erc8004IdentityRegistry,
-  erc8004AgentId
+  erc8004AgentId,
+  bundlerUrl = '',
+  entryPointAddress = '',
+  accountFactoryAddress = '',
+  accountImplementationAddress = '',
+  chainId = 2368
 }) {
   function computeX402StatusCounts(rows = [], now = Date.now()) {
     const items = Array.isArray(rows) ? rows : [];
@@ -248,6 +253,16 @@ export function createX402WorkflowHelpers({
   }
 
   function buildPaymentRequiredResponse(reqItem, reason = '') {
+    const signingCtx =
+      bundlerUrl || entryPointAddress || accountFactoryAddress
+        ? {
+            bundlerUrl: String(bundlerUrl || ''),
+            entryPointAddress: String(entryPointAddress || ''),
+            accountFactoryAddress: String(accountFactoryAddress || ''),
+            accountImplementationAddress: String(accountImplementationAddress || ''),
+            chainId: Number(chainId || 2368)
+          }
+        : undefined;
     return {
       error: 'payment_required',
       reason,
@@ -262,7 +277,8 @@ export function createX402WorkflowHelpers({
             tokenAddress: reqItem.tokenAddress,
             amount: reqItem.amount,
             recipient: reqItem.recipient,
-            decimals: 18
+            decimals: 18,
+            ...(signingCtx && { signingContext: signingCtx })
           }
         ]
       }
