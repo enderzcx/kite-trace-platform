@@ -47,15 +47,20 @@ function resolveRequiredRole(body = null) {
   return 'viewer';
 }
 
-function resolvePaymentMode(req, auth = {}) {
+function resolvePaymentMode(req, auth = {}, deps = {}) {
   const headerValue = normalizeLower(req.headers['x-ktrace-mcp-payment-mode'] || '');
   if (headerValue === 'agent') return 'agent';
   if (headerValue === 'hosted') return 'hosted';
-  // Connector-grant users have a server-managed session runtime; use hosted
-  // payment so the backend can perform on-chain payment automatically.
-  if (auth.authSource === 'connector-grant' && auth.ownerEoa) return 'hosted';
-  // All other MCP calls default to agent mode so the invoke route never falls
-  // into the slow hosted payment path without a known session runtime.
+  // Use hosted payment only if the server holds the owner's private key (backend-managed account).
+  // Self-custodial connector grants (user_grant_self_custodial) do NOT give the server the key,
+  // so hosted payment would fail with session_not_configured for those users.
+  if (auth.authSource === 'connector-grant' && auth.ownerEoa) {
+    const ownerKey =
+      typeof deps.resolveSessionOwnerPrivateKey === 'function'
+        ? String(deps.resolveSessionOwnerPrivateKey(auth.ownerEoa) || '').trim()
+        : '';
+    if (ownerKey) return 'hosted';
+  }
   return 'agent';
 }
 
@@ -400,7 +405,7 @@ async function handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter) {
 
     registerTools(server, tools, invokeAdapter, {
       apiKey: auth.apiKey,
-      paymentMode: resolvePaymentMode(req, auth),
+      paymentMode: resolvePaymentMode(req, auth, deps),
       ownerEoa: auth.ownerEoa,
       aaWallet: auth.aaWallet,
       authSource: auth.authSource,

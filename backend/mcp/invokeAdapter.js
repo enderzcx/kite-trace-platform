@@ -171,13 +171,18 @@ function buildPaymentRequiredPreviewResult(tool = {}, payload = {}, traceId = ''
   const reason =
     normalizeText(payload?.reason || payload?.error || '') ||
     'Payment is required before this tool can produce a fresh result.';
+  const previewSummary =
+    normalizeText(payload?.receipt?.result?.summary || '') ||
+    normalizeText(payload?.result?.summary || '');
+  const text = previewSummary ? `${reason}\n\nPreview: ${previewSummary}` : reason;
+  const previewResult = payload?.result ?? payload?.receipt?.result ?? null;
 
   return {
     isError: true,
     content: [
       {
         type: 'text',
-        text: reason
+        text
       }
     ],
     structuredContent: {
@@ -195,7 +200,8 @@ function buildPaymentRequiredPreviewResult(tool = {}, payload = {}, traceId = ''
       tokenAddress: normalizeText(quote?.tokenAddress || ''),
       recipient: normalizeText(quote?.recipient || ''),
       amount: normalizeText(quote?.amount || ''),
-      x402
+      x402,
+      result: previewResult
     }
   };
 }

@@ -188,7 +188,7 @@ export function createSynthesisRequestLoop({
   async function fundJob(jobId) {
     const prep = await postInternal(`/api/jobs/${jobId}/prepare-funding`, {});
     if (!prep.ok && prep.status !== 409) {
-      return { ok: false, error: `prepare-funding failed: ${normalizeText(prep.data?.error || '')}` };
+      return { ok: false, error: `prepare-funding failed: ${normalizeText(prep.data?.error?.message || prep.data?.error?.code || prep.data?.reason || String(prep.data?.error || ''))}` };
     }
 
     const fund = await postInternal(`/api/jobs/${jobId}/fund`, { async: false });
