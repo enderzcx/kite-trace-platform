@@ -331,6 +331,28 @@ export function endPaymentConfirmWait(span, result = {}) {
   });
 }
 
+/** Payment verify span — client-side payment proof verification. */
+export function startPaymentVerify(parentSpan) {
+  return safe(() => {
+    const ctx = trace.setSpan(context.active(), parentSpan);
+    return getTracer().startSpan('paytrace.payment_verify', { kind: SpanKind.INTERNAL }, ctx);
+  }, noopSpan());
+}
+
+export function endPaymentVerify(span, result = {}) {
+  safeVoid(() => {
+    if (result.txHash) span.setAttribute('paytrace.payment.tx_hash', result.txHash);
+    if (result.verifyMode) span.setAttribute('paytrace.payment.verify_mode', result.verifyMode);
+    if (result.latencyMs != null) span.setAttribute('paytrace.payment.verify_latency_ms', result.latencyMs);
+    if (result.validationError) span.setAttribute('paytrace.payment.validation_error', result.validationError);
+    span.setStatus(result.ok
+      ? { code: SpanStatusCode.OK }
+      : { code: SpanStatusCode.ERROR, message: result.error || 'payment_verify_failed' }
+    );
+    span.end();
+  });
+}
+
 /**
  * Extract a W3C traceparent header from a span for cross-process propagation.
  * Format: 00-{traceId}-{spanId}-{flags}

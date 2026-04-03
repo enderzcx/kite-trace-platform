@@ -13,7 +13,7 @@ import {
   fetchWeatherContext
 } from '../lib/externalFeeds.js';
 import { createTrustLayerHelpers } from '../lib/trustLayerHelpers.js';
-import { traceServiceInvoke, recordInvocation, recordSuccess, recordFailure, recordStageDuration, recordPaymentVolume, spanToTraceparent } from '../lib/paytrace/instrument.js';
+import { traceServiceInvoke, recordInvocation, recordSuccess, recordFailure, recordStageDuration, recordPaymentVolume, spanToTraceparent, startPaymentVerify, endPaymentVerify } from '../lib/paytrace/instrument.js';
 import crypto from 'crypto';
 
 export function registerMarketAgentServiceRoutes(app, deps) {
@@ -1709,9 +1709,12 @@ export function registerMarketAgentServiceRoutes(app, deps) {
               });
             }
             if (normalizeText(evidenceRequest?.status || '') !== 'paid') {
+              const _verifySpan = startPaymentVerify(_traced.rootSpan);
+              const _verifyStart = Date.now();
               const effectivePaymentProof = suppliedPaymentProof || storedPaymentProof;
               const paymentValidationError = validatePaymentProof(evidenceRequest, effectivePaymentProof);
               if (paymentValidationError) {
+                endPaymentVerify(_verifySpan, { ok: false, error: 'validation_failed', validationError: paymentValidationError, latencyMs: Date.now() - _verifyStart });
                 return res.status(402).json({
                   ...buildExternalFeedPaymentRequiredResponse(evidenceRequest, paymentValidationError),
                   traceId,
@@ -1721,6 +1724,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
               }
               const verification = await verifyProofOnChain(evidenceRequest, effectivePaymentProof);
               if (!verification?.ok) {
+                endPaymentVerify(_verifySpan, { ok: false, error: 'onchain_verify_failed', latencyMs: Date.now() - _verifyStart, verifyMode: 'on-chain' });
                 return res.status(402).json({
                   ...buildExternalFeedPaymentRequiredResponse(
                     evidenceRequest,
@@ -1732,6 +1736,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
                 });
               }
               txHash = normalizeText(effectivePaymentProof?.txHash || '');
+              endPaymentVerify(_verifySpan, { ok: true, txHash, verifyMode: 'on-chain', latencyMs: Date.now() - _verifyStart });
               userOpHash = normalizeText(body?.paymentUserOpHash || '');
               evidenceWorkflow.txHash = txHash;
               evidenceWorkflow.userOpHash = userOpHash;
