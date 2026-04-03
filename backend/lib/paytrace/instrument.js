@@ -13,7 +13,6 @@
  */
 
 import { trace, context, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api';
-import crypto from 'crypto';
 import { NodeTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { Resource } from '@opentelemetry/resources';
@@ -101,17 +100,16 @@ export function startCapability(opts = {}) {
     if (opts.capabilityId) attributes['paytrace.capability.id'] = opts.capabilityId;
     if (opts.sessionStrategy) attributes['paytrace.session.strategy'] = opts.sessionStrategy;
 
-    // Derive OTel traceId from business traceId so both systems share one ID.
-    // Hash the business ID to a valid 128-bit (32 hex char) W3C trace ID.
-    // Note: the synthetic parent spanId will appear as an orphan reference in
-    // Jaeger — this is a known cosmetic trade-off of forcing a traceId in OTel JS.
+    // If opts.traceId is a valid 32-char hex string, use it directly as the OTel
+    // traceId — no hashing, no fake parent. The route handler generates W3C-
+    // compliant hex IDs so the same ID works for both Jaeger and evidence/receipts.
+    // spanId must be non-zero (W3C spec rejects all-zero), use a minimal sentinel.
     let parentCtx = context.active();
-    if (opts.traceId) {
-      const derivedTraceId = crypto.createHash('md5').update(opts.traceId).digest('hex');
-      const spanId = crypto.randomBytes(8).toString('hex');
+    const tid = String(opts.traceId || '').toLowerCase();
+    if (/^(?!0{32}$)[0-9a-f]{32}$/.test(tid)) {
       parentCtx = trace.setSpanContext(parentCtx, {
-        traceId: derivedTraceId,
-        spanId,
+        traceId: tid,
+        spanId: '0000000000000001',
         traceFlags: TraceFlags.SAMPLED,
         isRemote: false,
       });

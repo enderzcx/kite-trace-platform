@@ -14,6 +14,7 @@ import {
 } from '../lib/externalFeeds.js';
 import { createTrustLayerHelpers } from '../lib/trustLayerHelpers.js';
 import { traceServiceInvoke } from '../lib/paytrace/instrument.js';
+import crypto from 'crypto';
 
 export function registerMarketAgentServiceRoutes(app, deps) {
   const {
@@ -1263,7 +1264,9 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       body?.input && typeof body.input === 'object' && !Array.isArray(body.input)
         ? body.input
         : body;
-    const traceId = resolveWorkflowTraceId(body.traceId || createTraceId('service'));
+    // Generate a W3C-compliant 32-char hex traceId that doubles as the OTel traceId.
+    // This eliminates the dual-ID problem — one ID for Jaeger AND evidence/receipts.
+    const traceId = resolveWorkflowTraceId(body.traceId || crypto.randomBytes(16).toString('hex'));
     const authSource = normalizeText(body.authSource || '').toLowerCase();
     const requestedOwner = runtimeLookup.requestedOwner || '';
     if (
