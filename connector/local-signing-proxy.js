@@ -31,6 +31,60 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { GokiteAASDK } from './lib/gokite-aa-sdk.js';
 
+// ── PayTrace: lightweight OTel tracing for payment sub-spans ────────────────
+import { trace, context, SpanKind, SpanStatusCode, TraceFlags, diag, DiagLogLevel } from '@opentelemetry/api';
+import crypto from 'crypto';
+import { NodeTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { Resource } from '@opentelemetry/resources';
+
+// Silence OTel diagnostics to prevent stdout pollution in MCP stdio channel
+diag.setLogger({ error(){}, warn(){}, info(){}, debug(){}, verbose(){} }, DiagLogLevel.NONE);
+
+const OTEL_ENDPOINT = process.env.PAYTRACE_TRACE_ENDPOINT || 'http://170.106.183.160:4318/v1/traces';
+let _proxyTracer = null;
+let _proxyProvider = null;
+try {
+  const resource = new Resource({ 'service.name': 'ktrace-proxy', 'paytrace.sdk.version': '0.1.0' });
+  const provider = new NodeTracerProvider({ resource });
+  provider.addSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter({ url: OTEL_ENDPOINT })));
+  provider.register();
+  _proxyProvider = provider;
+  _proxyTracer = trace.getTracer('paytrace-sdk', '0.1.0');
+  process.on('SIGTERM', () => provider.shutdown().catch(() => {}));
+  console.error(`[ktrace-proxy] PayTrace tracing → ${OTEL_ENDPOINT}`);
+} catch (e) {
+  console.error('[ktrace-proxy] PayTrace tracing disabled:', e.message);
+}
+
+function _startSpan(name, parentCtx, attrs = {}) {
+  if (!_proxyTracer) return null;
+  try {
+    return _proxyTracer.startSpan(name, { kind: SpanKind.CLIENT, attributes: attrs }, parentCtx || context.active());
+  } catch { return null; }
+}
+
+function _endSpan(span, ok, attrs = {}) {
+  if (!span) return;
+  try {
+    for (const [k, v] of Object.entries(attrs)) { if (v != null) span.setAttribute(k, v); }
+    span.setStatus(ok ? { code: SpanStatusCode.OK } : { code: SpanStatusCode.ERROR, message: attrs['paytrace.payment.bundler_reason'] || 'failed' });
+    span.end();
+  } catch {}
+}
+
+function _traceIdToContext(traceId) {
+  if (!_proxyTracer || !traceId || !/^[0-9a-f]{32}$/.test(traceId)) return context.active();
+  try {
+    return trace.setSpanContext(context.active(), {
+      traceId,
+      spanId: crypto.randomBytes(8).toString('hex'),
+      traceFlags: TraceFlags.SAMPLED,
+      isRemote: true,
+    });
+  } catch { return context.active(); }
+}
+
 // ── HTTP fetch with optional proxy support ───────────────────────────────────
 const PROXY_URL = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || '';
 const proxyDispatcher = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined;
@@ -139,7 +193,7 @@ async function callBackendTool(toolName, args) {
 // ── Payment handling (using GokiteAASDK) ─────────────────────────────────────
 
 async function handlePaymentAndRetry(toolName, originalArgs, paymentData) {
-  const { x402, signingContext, requestId } = paymentData;
+  const { x402, signingContext, requestId, traceId } = paymentData;
   const accepts = Array.isArray(x402?.accepts) ? x402.accepts : [];
   const quote = accepts[0];
 
@@ -157,9 +211,14 @@ async function handlePaymentAndRetry(toolName, originalArgs, paymentData) {
   if (!sessionId) throw new Error('KTRACE_SESSION_ID not configured in proxy');
   if (!aaWallet) throw new Error('KTRACE_AA_WALLET not configured in proxy');
 
+  // ── PayTrace: create parent context from backend's traceId ────────
+  const _parentCtx = _traceIdToContext(traceId);
+
   console.error(`[ktrace-proxy] Signing x402 payment: ${amount} ${tokenAddress} → ${recipient}`);
 
   // Use the same SDK as the backend
+  const _sdkInitSpan = _startSpan('paytrace.payment.sdk_init', _parentCtx, { 'paytrace.payment.rpc_url': ctx.rpcUrl || '' });
+  const _sdkInitStart = Date.now();
   const sdk = new GokiteAASDK({
     network: 'kite_testnet',
     rpcUrl: ctx.rpcUrl || 'https://rpc-testnet.gokite.ai/',
@@ -174,6 +233,7 @@ async function handlePaymentAndRetry(toolName, originalArgs, paymentData) {
   if (config.ownerEoa) {
     sdk.config.ownerAddress = config.ownerEoa;
   }
+  _endSpan(_sdkInitSpan, true, { 'paytrace.payment.rpc_latency_ms': Date.now() - _sdkInitStart });
 
   const amountRaw = typeof amount === 'string' && amount.includes('.')
     ? ethers.parseUnits(amount, decimals)
@@ -205,6 +265,9 @@ async function handlePaymentAndRetry(toolName, originalArgs, paymentData) {
 
     console.error(`[ktrace-proxy] Payment attempt ${attempt}/${MAX_PAYMENT_ATTEMPTS}...`);
     const ATTEMPT_TIMEOUT_MS = 30_000;
+
+    // ── PayTrace: bundler_submit span per attempt ──────────────
+    const _bundlerSpan = _startSpan('paytrace.payment.bundler_submit', _parentCtx, { 'paytrace.payment.bundler_attempt': attempt });
     const paymentPromise = sdk.sendSessionTransferWithAuthorizationAndProvider(
       {
         sessionId,
@@ -220,17 +283,34 @@ async function handlePaymentAndRetry(toolName, originalArgs, paymentData) {
         preVerificationGas: 120000n
       }
     );
+
+    // ── PayTrace: confirm_wait span wraps Promise.race ─────────
+    const _confirmSpan = _startSpan('paytrace.payment.confirm_wait', _parentCtx);
+    const _confirmStart = Date.now();
     const timeoutPromise = new Promise(resolve =>
       setTimeout(() => resolve({ status: 'failed', reason: 'Timeout: payment not confirmed within 30s' }), ATTEMPT_TIMEOUT_MS)
     );
-    const result = await Promise.race([paymentPromise, timeoutPromise]);
+    let result;
+    try {
+      result = await Promise.race([paymentPromise, timeoutPromise]);
+    } catch (raceErr) {
+      _endSpan(_bundlerSpan, false, { 'paytrace.payment.bundler_status': 'exception', 'paytrace.payment.bundler_reason': raceErr?.message || 'unknown' });
+      _endSpan(_confirmSpan, false, { 'paytrace.payment.confirm_wait_ms': Date.now() - _confirmStart, 'paytrace.payment.confirm_status': 'exception' });
+      throw raceErr;
+    }
+    const _confirmMs = Date.now() - _confirmStart;
 
     if (result.status === 'success' && result.transactionHash) {
       txHash = result.transactionHash;
+      _endSpan(_bundlerSpan, true, { 'paytrace.payment.user_op_hash': result.userOpHash || '', 'paytrace.payment.bundler_status': 'success' });
+      _endSpan(_confirmSpan, true, { 'paytrace.payment.confirm_wait_ms': _confirmMs, 'paytrace.payment.tx_hash': txHash, 'paytrace.payment.confirm_status': 'confirmed' });
       break;
     }
 
     const reason = String(result.reason || '');
+    _endSpan(_bundlerSpan, false, { 'paytrace.payment.bundler_status': 'failed', 'paytrace.payment.bundler_reason': reason, 'paytrace.payment.user_op_hash': result.userOpHash || '' });
+    _endSpan(_confirmSpan, false, { 'paytrace.payment.confirm_wait_ms': _confirmMs, 'paytrace.payment.confirm_status': reason.includes('Timeout') ? 'timeout' : 'failed' });
+
     const isRetryable = reason.includes('Timeout') || reason.includes('fee too low') || reason.includes('replacement');
     if (!isRetryable || attempt >= MAX_PAYMENT_ATTEMPTS) {
       throw new Error(`SDK payment failed: ${reason || result.status || 'unknown'}`);
