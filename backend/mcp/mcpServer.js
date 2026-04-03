@@ -17,7 +17,8 @@ function buildRoleRank(role = '') {
   if (normalizedRole === 'admin') return 3;
   if (normalizedRole === 'agent') return 2;
   if (normalizedRole === 'viewer') return 1;
-  if (normalizedRole === 'dev-open') return 99;
+  // Finding 13 fix: dev-open only allowed in development, not production
+  if (normalizedRole === 'dev-open' && process.env.NODE_ENV !== 'production') return 99;
   return 0;
 }
 
@@ -138,7 +139,7 @@ function applyConnectorGrantAuth(req, grant = {}) {
     : null;
 }
 
-function buildRequestAuth(req, deps) {
+async function buildRequestAuth(req, deps) {
   function resolveAccountRuntimeContext(current = {}) {
     const authSource = normalizeLower(current.authSource || '');
     const explicitOwner = normalizeText(current.ownerEoa || '');
@@ -181,6 +182,71 @@ function buildRequestAuth(req, deps) {
       ownerEoa: explicitOwner || (ownerMatches ? runtimeOwner : ''),
       aaWallet: explicitAaWallet || (ownerMatches ? runtimeAaWallet : '')
     };
+  }
+
+  // Self-custodial session-key auth: proxy signs timestamp with session key, no stored grant needed
+  // Finding 12 fix: replay protection with nonce tracking
+  const _sessionReplayCache = buildRoleRank._sessionReplayCache || (buildRoleRank._sessionReplayCache = new Map());
+  const SESSION_AUTH_WINDOW_MS = 60 * 1000; // 60s window (reduced from 5 min)
+  // Cleanup stale replay entries every 2 minutes
+  if (!buildRoleRank._sessionReplayCleanup) {
+    buildRoleRank._sessionReplayCleanup = setInterval(() => {
+      const cutoff = Date.now() - SESSION_AUTH_WINDOW_MS * 3;
+      for (const [k, v] of _sessionReplayCache) {
+        if (v < cutoff) _sessionReplayCache.delete(k);
+      }
+    }, SESSION_AUTH_WINDOW_MS * 2);
+    if (buildRoleRank._sessionReplayCleanup.unref) buildRoleRank._sessionReplayCleanup.unref();
+  }
+
+  const sessionSignature = normalizeText(req.headers?.['x-ktrace-session-signature'] || '');
+  const sessionAddress = normalizeText(req.headers?.['x-ktrace-session-address'] || '');
+  const sessionTimestamp = normalizeText(req.headers?.['x-ktrace-session-timestamp'] || '');
+  if (sessionSignature && sessionAddress && sessionTimestamp) {
+    try {
+      const ts = Number(sessionTimestamp);
+      const drift = Math.abs(Date.now() - ts);
+      if (drift > SESSION_AUTH_WINDOW_MS) {
+        return { ok: false, status: 401, message: 'Session signature timestamp too old or in the future.', code: -32001 };
+      }
+      // Replay detection: reject duplicate (address, timestamp) pairs
+      const replayKey = `${sessionAddress.toLowerCase()}:${sessionTimestamp}`;
+      if (_sessionReplayCache.has(replayKey)) {
+        return { ok: false, status: 401, message: 'Session signature replay detected.', code: -32001 };
+      }
+      _sessionReplayCache.set(replayKey, Date.now());
+      const { ethers: _ethers } = await import('ethers');
+      const message = `ktrace-session:${sessionTimestamp}`;
+      const recovered = _ethers.verifyMessage(message, sessionSignature);
+      if (recovered.toLowerCase() !== sessionAddress.toLowerCase()) {
+        return { ok: false, status: 401, message: 'Session signature does not match sessionAddress.', code: -32001 };
+      }
+      const ownerEoa = normalizeText(req.headers?.['x-ktrace-owner-eoa'] || '');
+      const aaWallet = normalizeText(req.headers?.['x-ktrace-aa-wallet'] || '');
+      const sessionId = normalizeText(req.headers?.['x-ktrace-session-id'] || '');
+      applyConnectorGrantAuth(req, {
+        ownerEoa,
+        aaWallet,
+        grantId: `session-key:${sessionAddress}`,
+        agentId: normalizeText(req.headers?.['x-ktrace-agent-id'] || ''),
+        identityRegistry: normalizeText(req.headers?.['x-ktrace-identity-registry'] || ''),
+        allowedBuiltinTools: []
+      });
+      return {
+        ok: true,
+        role: 'agent',
+        authSource: 'session-key',
+        apiKey: '',
+        ownerEoa,
+        aaWallet,
+        grantId: `session-key:${sessionAddress}`,
+        agentId: normalizeText(req.headers?.['x-ktrace-agent-id'] || ''),
+        identityRegistry: normalizeText(req.headers?.['x-ktrace-identity-registry'] || ''),
+        allowedBuiltinTools: []
+      };
+    } catch (err) {
+      return { ok: false, status: 401, message: 'Session signature verification failed.', code: -32001 };
+    }
   }
 
   const connectorToken = normalizeText(req.params?.token || '');
@@ -374,8 +440,22 @@ function registerTools(server, tools, invokeAdapter, requestContext) {
   }
 }
 
+// Finding 11 fix: concurrency limiter for MCP requests
+const MCP_MAX_CONCURRENT = Number(process.env.MCP_MAX_CONCURRENT || 20);
+let _mcpActiveCount = 0;
+
 async function handleMcpRequest(req, res, deps, toolsAdapter, invokeAdapter) {
-  const auth = buildRequestAuth(req, deps);
+  // Reject if too many concurrent MCP requests
+  if (_mcpActiveCount >= MCP_MAX_CONCURRENT) {
+    return sendJsonRpcError(res, req, 429, 'Too many concurrent MCP requests. Try again shortly.', -32000, {
+      traceId: normalizeText(req.traceId || ''),
+      activeSessions: _mcpActiveCount
+    });
+  }
+  _mcpActiveCount++;
+  res.once('close', () => { _mcpActiveCount = Math.max(0, _mcpActiveCount - 1); });
+
+  const auth = await buildRequestAuth(req, deps);
   if (!auth.ok) {
     return sendJsonRpcError(res, req, auth.status, auth.message, auth.code, {
       traceId: normalizeText(req.traceId || '')

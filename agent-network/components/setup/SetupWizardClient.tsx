@@ -1767,7 +1767,12 @@ function FundStep({
 
 // 鈹€鈹€鈹€ Step 2: Authorize / Renew Session 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-const DEFAULT_CAPS = ["cap-dex-market", "cap-news-signal", "cap-kol-monitor", "cap-market-price-feed"];
+const DEFAULT_CAPS = [
+  "cap-dex-market", "cap-news-signal", "cap-kol-monitor", "cap-market-price-feed",
+  "cap-smart-money-signal", "cap-tech-buzz-signal", "cap-listing-alert",
+  "cap-weather-context", "cap-token-analysis", "cap-meme-sentiment",
+  "cap-wallet-pnl", "cap-trenches-scan",
+];
 
 function AuthorizeStep({
   address,
@@ -1809,7 +1814,7 @@ function AuthorizeStep({
           }
     );
   const capList = normalizedCaps.length > 0 ? normalizedCaps : DEFAULT_CAPS.map((id) => ({ id, name: id, group: "" }));
-  const [selected, setSelected] = useState<Set<string>>(new Set(capList.slice(0, 3).map((c) => c.id)));
+  const [selected, setSelected] = useState<Set<string>>(new Set(capList.map((c) => c.id)));
   const [singleLimit, setSingleLimit] = useState("0.01");
   const [dailyLimit, setDailyLimit] = useState("0.10");
   const [sessionValidityHours, setSessionValidityHours] = useState("24");
@@ -3209,6 +3214,51 @@ function DeveloperSetupPanel({
                         Suggested filename: <code className="font-mono">ktrace-session-runtime.json</code>
                       </p>
                     </div>
+                    <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
+                      <div className="flex items-center gap-2">
+                        <Terminal className="size-4 text-[#7a6e56]" />
+                        <span className="text-[13px] font-semibold text-[#18180e]">One-Click Install</span>
+                      </div>
+                      <p className="text-[12px] leading-relaxed text-[#7a6e56]">
+                        Download and double-click to install. It sets up the local signing proxy and connects to Claude Code automatically. Session key stays on your machine.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <PrimaryBtn
+                          onClick={() => {
+                            const r = localSessionRuntimeExport.runtime;
+                            const backendUrl = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://kiteclaw.duckdns.org").replace(/\/+$/, "");
+                            const bat = [
+                              "@echo off",
+                              "chcp 65001 >nul",
+                              "echo [KTrace] Installing local signing proxy...",
+                              "echo.",
+                              `set BACKEND_URL=${backendUrl}`,
+                              `set AA_WALLET=${r.aaWallet}`,
+                              `set SESSION_ID=${r.sessionId}`,
+                              `set OWNER_EOA=${r.owner}`,
+                              `set SESSION_KEY=${r.sessionPrivateKey}`,
+                              `powershell -ExecutionPolicy Bypass -Command "& { $env:BACKEND_URL='%BACKEND_URL%'; $env:AA_WALLET='%AA_WALLET%'; $env:SESSION_ID='%SESSION_ID%'; $env:OWNER_EOA='%OWNER_EOA%'; $env:SESSION_KEY='%SESSION_KEY%'; irm %BACKEND_URL%/connector/install.ps1 | iex }"`,
+                              "echo.",
+                              "echo [KTrace] Done! Restart Claude Code to activate.",
+                              "pause",
+                            ].join("\r\n");
+                            const blob = new Blob([bat], { type: "application/bat" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = "ktrace-install.bat";
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                        >
+                          <Terminal className="size-3.5" />
+                          Download Installer (.bat)
+                        </PrimaryBtn>
+                      </div>
+                      <p className="text-[10px] text-[#9e8e76]">
+                        Requires Node.js 18+. macOS / Linux: <code className="font-mono">curl -sL {(process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://kiteclaw.duckdns.org").replace(/\/+$/, "")}/connector/install.sh | bash</code>
+                      </p>
+                    </div>
                   </>
                 ) : (
                   <div className="flex flex-col gap-3">
@@ -3282,6 +3332,81 @@ function DeveloperSetupPanel({
   );
 }
 
+function SelfCustodialInstallPanel({ export: exp }: { export: LocalSessionRuntimeExport }) {
+  const [copiedCmd, setCopiedCmd] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const isWin = typeof navigator !== "undefined" && /win/i.test(navigator.platform);
+  const [shell, setShell] = useState<"ps" | "bash">(isWin ? "ps" : "bash");
+
+  const r = exp.runtime;
+  const backendUrl = typeof window !== "undefined" ? window.location.origin : "https://kiteclaw.xyz";
+  const mask = "0x" + "\u2022".repeat(62);
+
+  const buildBash = (keyValue: string) => [
+    `curl -sL ${backendUrl}/connector/install.sh |`,
+    `  BACKEND_URL=${backendUrl}`,
+    `  AA_WALLET=${r.aaWallet}`,
+    `  SESSION_ID=${r.sessionId}`,
+    `  OWNER_EOA=${r.owner}`,
+    `  SESSION_KEY=${keyValue}`,
+    `  bash`,
+  ].join(" \\\n");
+
+  const buildPs = (keyValue: string) => [
+    `$env:BACKEND_URL="${backendUrl}"`,
+    `$env:AA_WALLET="${r.aaWallet}"`,
+    `$env:SESSION_ID="${r.sessionId}"`,
+    `$env:OWNER_EOA="${r.owner}"`,
+    `$env:SESSION_KEY="${keyValue}"`,
+    `irm ${backendUrl}/connector/install.ps1 | iex`,
+  ].join("\n");
+
+  const build = shell === "ps" ? buildPs : buildBash;
+  const displayCmd = build(revealed ? r.sessionPrivateKey : mask);
+  const copyCmd = build(r.sessionPrivateKey);
+
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
+      <p className="text-[12px] leading-relaxed text-[#7a6e56]">
+        One-line install for Claude Code. Session key signs every request locally — never sent to the server.
+      </p>
+      <div className="flex items-center gap-2 mb-1">
+        <button
+          onClick={() => setShell("ps")}
+          className={`rounded-md px-2.5 py-1 text-[10px] font-medium ${shell === "ps" ? "bg-[#3a4220] text-[#faf7f1]" : "text-[#9e8e76] hover:text-[#18180e]"}`}
+        >
+          PowerShell
+        </button>
+        <button
+          onClick={() => setShell("bash")}
+          className={`rounded-md px-2.5 py-1 text-[10px] font-medium ${shell === "bash" ? "bg-[#3a4220] text-[#faf7f1]" : "text-[#9e8e76] hover:text-[#18180e]"}`}
+        >
+          Bash / macOS
+        </button>
+      </div>
+      <div className="relative rounded-xl bg-[#18180e] p-3 font-mono text-[10px] leading-relaxed text-[#d4c9a8]">
+        <pre className="whitespace-pre-wrap break-all pr-12">{displayCmd}</pre>
+        <button
+          onClick={() => setRevealed(v => !v)}
+          className="absolute right-10 top-2 rounded px-1.5 py-0.5 text-[9px] text-[#9e8e76] hover:text-[#d4c9a8]"
+        >
+          {revealed ? "hide key" : "show key"}
+        </button>
+        <button
+          onClick={() => { void navigator.clipboard.writeText(copyCmd).then(() => { setCopiedCmd(true); setTimeout(() => setCopiedCmd(false), 1600); }); }}
+          className="absolute right-2 top-2 rounded p-1 text-[#9e8e76] hover:text-[#d4c9a8]"
+          title="Copy"
+        >
+          {copiedCmd ? <Check className="size-3" /> : <Copy className="size-3" />}
+        </button>
+      </div>
+      <p className="text-[10px] text-[#9e8e76]">
+        Auto-patches <code className="rounded bg-[rgba(0,0,0,0.06)] px-1">~/.claude/claude.json</code> and clears the command from shell history. Restart Claude Code after running.
+      </p>
+    </div>
+  );
+}
+
 function ConnectStep4({
   address: _address,
   runtime: _runtime,
@@ -3301,20 +3426,82 @@ function ConnectStep4({
           <div className="flex items-center gap-3">
             <StepBadge n={5} active done={false} />
             <div>
-              <h2 className="text-[15px] font-semibold text-[#18180e]">Connect via MCP</h2>
+              <h2 className="text-[15px] font-semibold text-[#18180e]">Install Connector</h2>
               <p className="mt-0.5 text-[12px] text-[#9e8e76]">
-                {KTRACE_SETUP_MODE === "local"
-                  ? "Generate an API key, download your local session runtime, then connect Claude Code to the local KTrace bridge."
-                  : "Generate an API key, then connect Claude Code or any MCP client directly to the public KTrace MCP endpoint."}
+                Install the local signing proxy for Claude Code. Session key stays on your machine.
               </p>
             </div>
           </div>
         </CardHeader>
         <CardBody>
-          <DeveloperSetupPanel
-            localSessionRuntimeExport={localSessionRuntimeExport}
-            onOpenSessionStep={onOpenSessionStep}
-          />
+          <div className="flex flex-col gap-6">
+            {localSessionRuntimeExport ? (
+              <>
+                <div className="flex flex-col gap-4 rounded-2xl border border-[rgba(90,80,50,0.14)] bg-[rgba(58,66,32,0.04)] p-4">
+                  <div className="flex items-center gap-2">
+                    <Terminal className="size-4 text-[#7a6e56]" />
+                    <span className="text-[13px] font-semibold text-[#18180e]">One-Click Install</span>
+                  </div>
+                  <p className="text-[12px] leading-relaxed text-[#7a6e56]">
+                    Download and double-click to install. Sets up the local signing proxy and registers it with Claude Code automatically.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <PrimaryBtn
+                      onClick={() => {
+                        const r = localSessionRuntimeExport.runtime;
+                        const backendUrl = typeof window !== "undefined" ? window.location.origin : "https://kiteclaw.duckdns.org";
+                        const bat = [
+                          "@echo off",
+                          "chcp 65001 >nul",
+                          "echo [KTrace] Installing local signing proxy...",
+                          "echo.",
+                          `set BACKEND_URL=${backendUrl}`,
+                          `set AA_WALLET=${r.aaWallet}`,
+                          `set SESSION_ID=${r.sessionId}`,
+                          `set OWNER_EOA=${r.owner}`,
+                          `set SESSION_KEY=${r.sessionPrivateKey}`,
+                          `powershell -ExecutionPolicy Bypass -Command "& { $env:BACKEND_URL='%BACKEND_URL%'; $env:AA_WALLET='%AA_WALLET%'; $env:SESSION_ID='%SESSION_ID%'; $env:OWNER_EOA='%OWNER_EOA%'; $env:SESSION_KEY='%SESSION_KEY%'; irm %BACKEND_URL%/connector/install.ps1 | iex }"`,
+                          "echo.",
+                          "echo [KTrace] Done! Restart Claude Code to activate.",
+                          "pause",
+                        ].join("\r\n");
+                        const blob = new Blob([bat], { type: "application/bat" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = "ktrace-install.bat";
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
+                      <Terminal className="size-3.5" />
+                      Download Installer (.bat)
+                    </PrimaryBtn>
+                    <GhostBtn
+                      onClick={() => downloadJsonFile("ktrace-session-runtime.json", localSessionRuntimeExport)}
+                    >
+                      <ShieldCheck className="size-3.5" />
+                      Download Session Backup (.json)
+                    </GhostBtn>
+                  </div>
+                  <p className="text-[10px] text-[#9e8e76]">
+                    Requires Node.js 18+. After running the installer, restart Claude Code to activate the connector.
+                  </p>
+                </div>
+                <SelfCustodialInstallPanel export={localSessionRuntimeExport} />
+              </>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <ErrorBanner msg="Session runtime not available. Go back to the Session step and authorize a session first." />
+                {onOpenSessionStep && (
+                  <GhostBtn onClick={onOpenSessionStep}>
+                    <RefreshCw className="size-3.5" />
+                    Open Session Step
+                  </GhostBtn>
+                )}
+              </div>
+            )}
+          </div>
         </CardBody>
       </Card>
   );

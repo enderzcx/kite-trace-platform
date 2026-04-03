@@ -130,9 +130,11 @@ contract JobEscrowV4 is ReentrancyGuard {
         emit TraceAnchorGuardChangeCancelled(cancelled);
     }
 
-    /// @notice Emergency: owner can set guard immediately. Use proposeTraceAnchorGuard for normal changes.
-    /// @dev Retained for initial setup only. Consider removing after first guard is set.
+    /// @notice Set guard immediately. Only works before the first guard is set.
+    /// @dev After initial setup, use proposeTraceAnchorGuard + timelock path.
     function setTraceAnchorGuard(address guard) external onlyOwner {
+        // Finding 21 fix: only allow direct set when no guard exists yet
+        require(traceAnchorGuard == address(0), "Guard already set, use timelock path");
         traceAnchorGuard = guard;
         emit TraceAnchorGuardSet(guard);
     }

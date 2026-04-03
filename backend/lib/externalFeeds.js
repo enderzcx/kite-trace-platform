@@ -15,6 +15,46 @@ const DEFAULT_TIMEOUT_MS = Math.max(5_000, Number(process.env.EXTERNAL_FEED_TIME
 const ONCHAINOS_TIMEOUT_MS = 12_000;
 const ONCHAINOS_RETRY_BACKOFF_MS = [300, 800];
 const PUBLIC_FEED_RETRY_BACKOFF_MS = [200, 600];
+
+// ── Circuit breaker for external services ───────────────────────
+// If a service fails too many times in a window, stop calling it temporarily.
+const _circuitBreakers = new Map();
+const CIRCUIT_FAILURE_THRESHOLD = Number(process.env.CIRCUIT_FAILURE_THRESHOLD || 5);
+const CIRCUIT_RESET_MS = Number(process.env.CIRCUIT_RESET_MS || 60_000);
+
+function getCircuitBreaker(serviceKey) {
+  if (!_circuitBreakers.has(serviceKey)) {
+    _circuitBreakers.set(serviceKey, { failures: 0, lastFailure: 0, open: false });
+  }
+  return _circuitBreakers.get(serviceKey);
+}
+
+function checkCircuit(serviceKey) {
+  const cb = getCircuitBreaker(serviceKey);
+  if (!cb.open) return true;
+  if (Date.now() - cb.lastFailure > CIRCUIT_RESET_MS) {
+    cb.open = false;
+    cb.failures = 0;
+    return true;
+  }
+  return false;
+}
+
+function recordCircuitSuccess(serviceKey) {
+  const cb = getCircuitBreaker(serviceKey);
+  cb.failures = 0;
+  cb.open = false;
+}
+
+function recordCircuitFailure(serviceKey) {
+  const cb = getCircuitBreaker(serviceKey);
+  cb.failures += 1;
+  cb.lastFailure = Date.now();
+  if (cb.failures >= CIRCUIT_FAILURE_THRESHOLD) {
+    cb.open = true;
+  }
+}
+// ────────────────────────────────────────────────────────────────
 const DAILY_NEWS_CATEGORY_CACHE_TTL_MS = 10 * 60 * 1000;
 const execFileAsync = promisify(execFile);
 
@@ -429,6 +469,14 @@ async function fetchJsonWithRetry(
   options = {},
   retryBackoffMs = PUBLIC_FEED_RETRY_BACKOFF_MS
 ) {
+  // Circuit breaker check
+  const serviceKey = (() => {
+    try { return new URL(url).hostname; } catch { return 'unknown'; }
+  })();
+  if (!checkCircuit(serviceKey)) {
+    throw new Error(`circuit_open: ${serviceKey} is temporarily unavailable (too many failures)`);
+  }
+
   const delays = Array.isArray(retryBackoffMs) ? retryBackoffMs : [];
   const maxAttempts = Math.max(1, 1 + delays.length);
   let lastError = null;
@@ -436,9 +484,12 @@ async function fetchJsonWithRetry(
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (parentSignal?.aborted) throw new DOMException('The operation was aborted', 'AbortError');
     try {
-      return await fetchJsonWithTimeout(url, timeoutMs, options);
+      const result = await fetchJsonWithTimeout(url, timeoutMs, options);
+      recordCircuitSuccess(serviceKey);
+      return result;
     } catch (error) {
       lastError = error;
+      recordCircuitFailure(serviceKey);
       if (parentSignal?.aborted) throw error;
       const reason =
         error?.name === 'AbortError' || error?.code === 'ETIMEDOUT'
@@ -468,6 +519,11 @@ function buildTokenHeaders(token) {
 
 function buildUrl(pathname, query = {}) {
   const url = new URL(pathname, API_BASE);
+  // Finding 16 fix: prevent SSRF via origin mismatch
+  const expectedOrigin = new URL(API_BASE).origin;
+  if (url.origin !== expectedOrigin) {
+    throw new Error(`SSRF blocked: constructed URL origin ${url.origin} does not match ${expectedOrigin}`);
+  }
   for (const [key, value] of Object.entries(query)) {
     if (value === undefined || value === null) continue;
     const normalized = typeof value === 'string' ? normalizeText(value) : value;
@@ -563,12 +619,39 @@ function shouldRetryOnchainosReason(reason = '') {
   );
 }
 
+// Finding 15 fix: sanitize args passed to execFile to prevent flag injection
+function sanitizeExecArg(arg = '') {
+  const s = String(arg || '').trim();
+  if (!s || s.length > 1024) return '';
+  // Reject args that look like flags (start with -)
+  if (s.startsWith('-')) return '';
+  return s;
+}
+
+function sanitizeAddress(addr = '') {
+  const s = String(addr || '').trim();
+  return /^0x[0-9a-fA-F]{1,64}$/.test(s) ? s : '';
+}
+
+const ALLOWED_CHAINS = new Set([
+  'eth', 'ethereum', 'bsc', 'polygon', 'arbitrum', 'base', 'optimism',
+  'avalanche', 'solana', 'tron', 'fantom', 'cronos', 'celo', 'gnosis',
+  'linea', 'scroll', 'zksync', 'sui', 'aptos',
+]);
+
+function sanitizeChain(chain = '') {
+  const s = normalizeLower(chain || '');
+  return ALLOWED_CHAINS.has(s) ? s : '';
+}
+
 async function runOnchainosJson(args = [], timeoutMs = ONCHAINOS_TIMEOUT_MS) {
   const binary = normalizeText(process.env.ONCHAINOS_BIN) || (process.platform === 'win32' ? 'onchainos.exe' : 'onchainos');
+  // Prepend '--' to prevent flag injection from user-controlled args
+  const safeArgs = ['--', ...args.map(a => sanitizeExecArg(a)).filter(Boolean)];
   const maxAttempts = 1 + ONCHAINOS_RETRY_BACKOFF_MS.length;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const { stdout } = await execFileAsync(binary, args, {
+      const { stdout } = await execFileAsync(binary, safeArgs, {
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
         windowsHide: true,

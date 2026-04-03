@@ -7,9 +7,24 @@ export function createApiRateLimit({
 
   function getRateKey(req) {
     const key = extractApiKey(req);
-    if (key) return `k:${key.slice(0, 8)}`;
+    // Finding 9 fix: use hash of full API key to avoid prefix collisions
+    if (key) {
+      const crypto = require('crypto');
+      return `k:${crypto.createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+    }
     return `ip:${String(req.ip || req.socket?.remoteAddress || 'unknown')}`;
   }
+
+  // Finding 4 fix: periodic cleanup of expired rate limit entries
+  const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of rateLimitStore) {
+      if (now - value.startMs >= rateLimitWindowMs * 2) {
+        rateLimitStore.delete(key);
+      }
+    }
+  }, rateLimitWindowMs * 2);
+  if (cleanupInterval.unref) cleanupInterval.unref();
 
   return function apiRateLimit(req, res, next) {
     const now = Date.now();
@@ -99,10 +114,13 @@ export function applyRuntimeServerMiddleware(app, deps = {}) {
   );
   app.use(express.json());
   app.use((req, res, next) => {
-    const incoming =
+    // Finding 8 fix: validate incoming traceId (alphanumeric + hyphens + underscores, max 128 chars)
+    const TRACE_ID_PATTERN = /^[a-zA-Z0-9_\-:.]{1,128}$/;
+    const rawIncoming =
       String(req.headers['x-trace-id'] || '').trim() ||
       String(req.query.traceId || '').trim() ||
       String(req.body?.traceId || '').trim();
+    const incoming = rawIncoming && TRACE_ID_PATTERN.test(rawIncoming) ? rawIncoming : '';
     const traceId = incoming || createTraceId('req');
     req.traceId = traceId;
     req.requestId = traceId;

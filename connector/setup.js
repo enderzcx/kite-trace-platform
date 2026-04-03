@@ -6,9 +6,13 @@
 
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { createInterface } from 'readline';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 import { ethers } from 'ethers';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROXY_PATH = join(__dirname, 'local-signing-proxy.js');
 
 const CONFIG_DIR = join(homedir(), '.ktrace-connector');
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
@@ -74,7 +78,7 @@ async function main() {
   console.error(JSON.stringify({
     "ktrace-proxy": {
       "command": "node",
-      "args": [CONFIG_PATH.replace('config.json', '../connector/local-signing-proxy.js')]
+      "args": [PROXY_PATH]
     }
   }, null, 2));
 }

@@ -211,6 +211,8 @@ contract AgenticCommerceOfficialMinimal is Ownable, ReentrancyGuard {
 
     function claimRefund(uint256 jobId) external nonReentrant {
         Job storage job = _mustGetJob(jobId);
+        // Finding 22 fix: only the job client can claim refund
+        require(msg.sender == job.client, "Only client can claim refund");
         if (block.timestamp < job.expiredAt) revert WrongStatus();
         if (
             job.status == JobStatus.Completed ||

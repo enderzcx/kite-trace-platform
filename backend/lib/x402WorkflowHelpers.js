@@ -17,6 +17,7 @@ export function createX402WorkflowHelpers({
   kiteNetworkAuditMaxEvents,
   erc8004IdentityRegistry,
   erc8004AgentId,
+  rpcUrl = '',
   bundlerUrl = '',
   entryPointAddress = '',
   accountFactoryAddress = '',
@@ -232,7 +233,8 @@ export function createX402WorkflowHelpers({
 
   function createX402Request(query, payer, action = 'kol-score', options = {}) {
     const now = Date.now();
-    const requestId = `x402_${now}_${crypto.randomBytes(4).toString('hex')}`;
+    // Finding 7 fix: use 16 bytes (128 bits) of randomness instead of 4
+    const requestId = `x402_${now}_${crypto.randomBytes(16).toString('hex')}`;
     return {
       requestId,
       action,
@@ -256,6 +258,7 @@ export function createX402WorkflowHelpers({
     const signingCtx =
       bundlerUrl || entryPointAddress || accountFactoryAddress
         ? {
+            rpcUrl: String(rpcUrl || ''),
             bundlerUrl: String(bundlerUrl || ''),
             entryPointAddress: String(entryPointAddress || ''),
             accountFactoryAddress: String(accountFactoryAddress || ''),

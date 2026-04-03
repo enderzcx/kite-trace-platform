@@ -24,6 +24,7 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         address agent;
         bool active;
         uint64 ruleCount;
+        uint256 expiresAt; // Finding 20 fix: session expiration timestamp (0 = no expiry)
     }
 
     struct WindowSpend {
@@ -109,6 +110,7 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event SupportedTokenUpdated(address indexed token, bool supported);
     event SessionCreated(bytes32 indexed sessionId, address indexed agent, uint256 ruleCount);
+    event SessionRevoked(bytes32 indexed sessionId, address indexed agent);
     event SessionSelectorPermissionUpdated(
         bytes32 indexed sessionId,
         address indexed target,
@@ -220,8 +222,26 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         emit SessionCreated(sessionId, agent, rules.length);
     }
 
+    // Finding 18 fix: allow owner to revoke a session
+    function revokeSession(bytes32 sessionId) external onlyOwner {
+        SessionConfig storage session = _sessions[sessionId];
+        if (!session.active) revert InvalidSession();
+        session.active = false;
+        emit SessionRevoked(sessionId, session.agent);
+    }
+
+    // Finding 20 fix: allow owner to set session expiry
+    function setSessionExpiry(bytes32 sessionId, uint256 expiresAt) external onlyOwner {
+        SessionConfig storage session = _sessions[sessionId];
+        if (!session.active) revert InvalidSession();
+        session.expiresAt = expiresAt;
+    }
+
     function sessionExists(bytes32 sessionId) external view returns (bool) {
-        return _sessions[sessionId].active;
+        SessionConfig storage session = _sessions[sessionId];
+        if (!session.active) return false;
+        if (session.expiresAt > 0 && block.timestamp >= session.expiresAt) return false;
+        return true;
     }
 
     function getSessionAgent(bytes32 sessionId) external view returns (address) {
@@ -265,6 +285,10 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         }
     }
 
+    /// @notice Check if a payment amount is within session spending rules.
+    /// @dev When timeWindow == 0, the rule acts as a per-transaction cap (not cumulative budget).
+    ///      Each individual transaction is checked against rule.budget independently.
+    ///      To enforce a total lifetime budget, use a non-zero timeWindow instead.
     function checkSpendingRules(
         bytes32 sessionId,
         uint256 normalizedAmount,
@@ -272,6 +296,7 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
     ) public view returns (bool) {
         SessionConfig storage session = _sessions[sessionId];
         if (!session.active || session.agent == address(0)) return false;
+        if (session.expiresAt > 0 && block.timestamp >= session.expiresAt) return false;
         if (session.ruleCount == 0) return false;
 
         bool matchedRule = false;
@@ -378,6 +403,8 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         metadata;
         SessionConfig storage session = _sessions[sessionId];
         if (!session.active || session.agent == address(0)) revert InvalidSession();
+        // Finding 20 fix: check session expiry
+        if (session.expiresAt > 0 && block.timestamp >= session.expiresAt) revert InvalidSession();
         if (!_supportedTokens[auth.token]) revert UnsupportedToken();
         if (auth.from != address(this)) revert InvalidAuthorization();
         if (block.timestamp < auth.validAfter || block.timestamp > auth.validBefore) {
@@ -455,6 +482,7 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         metadata;
         SessionConfig storage session = _sessions[sessionId];
         if (!session.active || session.agent == address(0)) return false;
+        if (session.expiresAt > 0 && block.timestamp >= session.expiresAt) return false;
         if (_recoverPersonalSigner(userOpHash, userOp.signature) != session.agent) return false;
         if (auth.from != address(this)) return false;
         if (!_supportedTokens[auth.token]) return false;
@@ -482,6 +510,7 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         actionId;
         SessionConfig storage session = _sessions[sessionId];
         if (!session.active || session.agent == address(0)) return false;
+        if (session.expiresAt > 0 && block.timestamp >= session.expiresAt) return false;
         if (_recoverPersonalSigner(userOpHash, userOp.signature) != session.agent) return false;
         if (value != 0 || authz.length != 0) return false;
         return _isSessionGenericAllowed(sessionId, target, data);
@@ -502,7 +531,9 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         address target,
         bytes memory data
     ) internal view returns (bool) {
-        if (!_sessions[sessionId].active) return false;
+        SessionConfig storage session = _sessions[sessionId];
+        if (!session.active) return false;
+        if (session.expiresAt > 0 && block.timestamp >= session.expiresAt) return false;
         if (target == address(0) || data.length < 4) return false;
         bytes4 innerSelector = _selectorOf(data);
         SelectorPermission storage permission = _selectorPermissions[sessionId][target][innerSelector];

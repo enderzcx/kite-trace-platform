@@ -670,6 +670,82 @@ export function createClaudeConnectorAuthHelpers({
     return updated;
   }
 
+  // Issues a persistent grant directly (no install-code flow).
+  // Used for self-custodial connectors where session key ownership is verified externally.
+  function issueSelfCustodialGrant({
+    ownerEoa = '',
+    aaWallet = '',
+    sessionId = '',
+    agentId = '',
+    identityRegistry = '',
+    allowedBuiltinTools = [],
+    client = 'claude',
+    clientId = ''
+  } = {}) {
+    const normalizedOwner = normalizeAddress(ownerEoa || '');
+    const normalizedAaWallet = normalizeAddress(aaWallet || '');
+    const normalizedClient = normalizeClient(client || 'claude');
+    const normalizedClientId = normalizeClientId(clientId || '');
+    const normalizedAgentId = normalizeAgentId(agentId || '');
+    const normalizedIdentityRegistry = normalizeAddress(identityRegistry || defaultIdentityRegistry || '');
+    const normalizedAllowedBuiltinTools = normalizeBuiltinToolList(
+      Array.isArray(allowedBuiltinTools) && allowedBuiltinTools.length > 0
+        ? allowedBuiltinTools
+        : defaultBuiltinTools
+    );
+    if (!ethers.isAddress(normalizedOwner)) {
+      return { ok: false, statusCode: 400, code: 'connector_setup_incomplete', reason: 'A valid ownerEoa is required.' };
+    }
+    if (!normalizedAgentId) {
+      return { ok: false, statusCode: 409, code: 'connector_identity_required', reason: 'agentId is required.' };
+    }
+    if (!ethers.isAddress(normalizedIdentityRegistry)) {
+      return { ok: false, statusCode: 409, code: 'connector_identity_registry_required', reason: 'identityRegistry is required.' };
+    }
+
+    // Revoke any existing active grant for this owner+client combo first
+    const existing = findActiveGrantByOwner(normalizedOwner, {
+      client: normalizedClient, clientId: normalizedClientId,
+      agentId: normalizedAgentId, identityRegistry: normalizedIdentityRegistry
+    });
+    if (existing) {
+      const now2 = Date.now();
+      writeNormalizedGrants(listGrants().map(row =>
+        row.grantId === existing.grantId ? { ...row, revokedAt: now2, revocationReason: 'self_custodial_reissue' } : row
+      ));
+    }
+
+    const now = Date.now();
+    const secret = `ktrace_cc_${createBase58Value(crypto.randomBytes(32))}`;
+    const grant = sanitizeGrantRow(normalizeAddress, {
+      grantId: createTraceId?.('cc_grant') || `cc_grant_${now}`,
+      ownerEoa: normalizedOwner,
+      aaWallet: normalizedAaWallet,
+      sessionId: normalizeText(sessionId || ''),
+      tokenHash: hashToken(secret),
+      prefix: secret.slice(0, Math.min(secret.length, 20)),
+      maskedPreview: buildMaskedPreview(secret),
+      client: normalizedClient,
+      clientId: normalizedClientId,
+      agentId: normalizedAgentId,
+      identityRegistry: normalizedIdentityRegistry,
+      allowedBuiltinTools: normalizedAllowedBuiltinTools,
+      authType: 'user_grant_self_custodial',
+      createdAt: now,
+      claimedAt: now,
+      lastUsedAt: 0,
+      expiresAt: now + grantTtlMs,
+      revokedAt: 0,
+      revocationReason: ''
+    });
+
+    const nextGrants = listGrants();
+    nextGrants.unshift(grant);
+    writeNormalizedGrants(nextGrants);
+
+    return { ok: true, token: secret, grant, publicRecord: buildGrantPublicRecord(grant) };
+  }
+
   return {
     installCodeTtlMs,
     listInstallCodes,
@@ -678,6 +754,7 @@ export function createClaudeConnectorAuthHelpers({
     findActiveGrantByOwner,
     issueInstallCode,
     issueSessionConnector: issueInstallCode,
+    issueSelfCustodialGrant,
     revokeGrant,
     claimInstallCode,
     resolveConnectorToken,

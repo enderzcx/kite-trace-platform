@@ -392,10 +392,47 @@ export function registerAutomationX402Routes(app, deps) {
       const body = req.body || {};
       const requestId = String(body.requestId || '').trim();
       requestIdForCatch = requestId;
+
+      // ── Finding 2 fix: requestId is REQUIRED ──────────────────
+      if (!requestId) {
+        return failSessionPay(400, {
+          error: 'request_id_required',
+          reason: 'requestId is required. A valid pending x402 request must exist before payment.',
+          details: { traceId: req.traceId || '' }
+        });
+      }
+      // ──────────────────────────────────────────────────────────
+
       const x402Request =
         requestId
           ? readX402Requests().find((item) => String(item?.requestId || '').trim() === requestId) || null
           : null;
+
+      // ── Finding 1 fix: validate x402 request exists and is pending ──
+      if (!x402Request) {
+        return failSessionPay(404, {
+          error: 'x402_request_not_found',
+          reason: `No x402 request found for requestId: ${requestId}`,
+          details: { requestId }
+        });
+      }
+      const x402Status = String(x402Request.status || '').trim().toLowerCase();
+      if (x402Status === 'paid') {
+        return failSessionPay(409, {
+          error: 'x402_already_paid',
+          reason: `x402 request ${requestId} has already been paid.`,
+          details: { requestId, status: x402Status }
+        });
+      }
+      if (x402Status !== 'pending') {
+        return failSessionPay(409, {
+          error: 'x402_request_not_pending',
+          reason: `x402 request ${requestId} is in status '${x402Status}', expected 'pending'.`,
+          details: { requestId, status: x402Status }
+        });
+      }
+      // ──────────────────────────────────────────────────────────
+
       const requestedOwner = normalizeAddress(body.owner || '');
       const requestedPayer = normalizeAddress(body.payer || body.aaWallet || x402Request?.payer || '');
       let runtime = resolveSessionRuntime({
@@ -499,6 +536,35 @@ export function registerAutomationX402Routes(app, deps) {
       if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
         return failSessionPay(400, { error: 'invalid_amount', reason: 'amount must be a positive number.' });
       }
+
+      // ── Finding 5 fix: validate payment params match x402 request ──
+      if (x402Request) {
+        const expectedRecipient = normalizeAddress(x402Request.recipient || '');
+        const expectedAmount = String(x402Request.amount || '').trim();
+        const expectedToken = normalizeAddress(x402Request.tokenAddress || '');
+        if (expectedRecipient && normalizeAddress(recipient) !== expectedRecipient) {
+          return failSessionPay(400, {
+            error: 'recipient_mismatch',
+            reason: `Payment recipient does not match x402 request. expected=${expectedRecipient}, got=${normalizeAddress(recipient)}`,
+            details: { requestId }
+          });
+        }
+        if (expectedAmount && String(amount).trim() !== expectedAmount) {
+          return failSessionPay(400, {
+            error: 'amount_mismatch',
+            reason: `Payment amount does not match x402 request. expected=${expectedAmount}, got=${amount}`,
+            details: { requestId }
+          });
+        }
+        if (expectedToken && normalizeAddress(tokenAddress) !== expectedToken) {
+          return failSessionPay(400, {
+            error: 'token_mismatch',
+            reason: `Payment token does not match x402 request. expected=${expectedToken}, got=${normalizeAddress(tokenAddress)}`,
+            details: { requestId }
+          });
+        }
+      }
+      // ──────────────────────────────────────────────────────────
   
       const decimals = 18;
       const amountRaw = ethers.parseUnits(String(amount), decimals);
