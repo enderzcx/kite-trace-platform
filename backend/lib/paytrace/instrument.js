@@ -381,6 +381,7 @@ export function recordPaymentVolume(amount, labels = {}) {
 export function traceServiceInvoke(opts = {}) {
   const { span: rootSpan, ctx: rootCtx } = startCapability(opts);
   let _ended = false;
+  let _lastStage = 'init';
 
   function markEnded() { _ended = true; }
 
@@ -392,21 +393,25 @@ export function traceServiceInvoke(opts = {}) {
     get ended() { return _ended; },
 
     discover(result) {
+      _lastStage = 'discover';
       const s = startDiscover(rootSpan);
       endDiscover(s, result);
     },
 
     negotiate(result) {
+      _lastStage = 'negotiate';
       const s = startNegotiate(rootSpan);
       endNegotiate(s, result);
     },
 
     payment(result) {
+      _lastStage = 'payment';
       const s = startPayment(rootSpan);
       endPayment(s, result);
     },
 
     fulfillStart() {
+      _lastStage = 'fulfill';
       return startFulfill(rootSpan);
     },
 
@@ -415,13 +420,15 @@ export function traceServiceInvoke(opts = {}) {
     },
 
     receiptBind(result) {
+      _lastStage = 'receipt_bind';
       const s = startReceiptBind(rootSpan);
       endReceiptBind(s, result);
     },
 
-    /** Mark root span as failed and end it. */
+    /** Mark root span as failed and end it. Records which stage failed. */
     fail(errorCode, message) {
       if (_ended) return;
+      safeVoid(() => rootSpan.setAttribute('paytrace.error.stage', _lastStage));
       failSpan(rootSpan, errorCode, message);
       markEnded();
     },
@@ -439,6 +446,7 @@ export function traceServiceInvoke(opts = {}) {
      */
     ensureEnded() {
       if (_ended) return;
+      safeVoid(() => rootSpan.setAttribute('paytrace.error.stage', _lastStage));
       endCapability(rootSpan, false);
       markEnded();
     },
