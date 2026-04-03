@@ -13,6 +13,7 @@ import { registerSynthesisRoutes } from '../routes/synthesisRoutes.js';
 import { registerMcpRoutes } from '../mcp/mcpServer.js';
 import { registerX402DiscoveryRoutes } from '../routes/x402DiscoveryRoutes.js';
 import { createRuntimeServerLifecycle } from '../runtime/server.js';
+import { initTracing } from '../lib/paytrace/instrument.js';
 
 function assertRouteDependencies(routeName = '', deps = {}, requiredKeys = []) {
   const missing = requiredKeys.filter((key) => typeof deps[key] === 'undefined');
@@ -516,6 +517,7 @@ export function routesBootstrap(ctx) {
     findPendingClaudeConnectorInstallCode: claudeConnectorAuthHelpers.findPendingInstallCodeByOwner,
     findActiveClaudeConnectorGrant: claudeConnectorAuthHelpers.findActiveGrantByOwner,
     issueClaudeConnectorInstallCode: claudeConnectorAuthHelpers.issueInstallCode,
+    issueSelfCustodialConnectorGrant: claudeConnectorAuthHelpers.issueSelfCustodialGrant,
     revokeClaudeConnectorGrant: claudeConnectorAuthHelpers.revokeGrant,
     resolveClaudeConnectorToken: claudeConnectorAuthHelpers.resolveConnectorToken,
     claimClaudeConnectorInstallCode: claudeConnectorAuthHelpers.claimInstallCode,
@@ -535,6 +537,13 @@ export function routesBootstrap(ctx) {
     withSessionUserOpLock,
     ERC8183_TRACE_ANCHOR_GUARD,
     synthesisLoop
+  });
+
+  // ── PayTrace: initialize OTel tracing ─────────────────────────────────────
+  initTracing({
+    serviceName: 'ktrace-backend',
+    serviceVersion: ctx?.PACKAGE_VERSION || '1.0.0',
+    traceEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
   });
 
   // ── Route registrations ───────────────────────────────────────────────────

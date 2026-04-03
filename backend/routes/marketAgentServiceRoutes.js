@@ -13,6 +13,7 @@ import {
   fetchWeatherContext
 } from '../lib/externalFeeds.js';
 import { createTrustLayerHelpers } from '../lib/trustLayerHelpers.js';
+import { traceServiceInvoke } from '../lib/paytrace/instrument.js';
 
 export function registerMarketAgentServiceRoutes(app, deps) {
   const {
@@ -1383,6 +1384,16 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       createdAt: now,
       updatedAt: now
     };
+    // ── PayTrace: create traced wrapper (moved inside try to prevent span leak) ──
+    const _traced = traceServiceInvoke({
+      traceId,
+      payer,
+      providerId: effectiveProvider,
+      providerKind: isExternalFeedCapability ? 'external_feed' : 'internal',
+      capabilityId,
+    });
+    // ─────────────────────────────────────────────────────────────
+
     let invocationPersisted = false;
     function persistInvocation(record = invocation) {
       upsertServiceInvocation(record);
@@ -1417,6 +1428,13 @@ export function registerMarketAgentServiceRoutes(app, deps) {
     });
 
     try {
+      // ── PayTrace: discover span (inside try to ensure ensureEnded catches failures) ──
+      _traced.discover({
+        candidateCount: 1,
+        selectedProvider: effectiveProvider,
+        selectionMode: 'direct',
+      });
+
       const internalApiKey = getInternalAgentApiKey();
       const headers = { 'Content-Type': 'application/json' };
       if (internalApiKey) headers['x-api-key'] = internalApiKey;
@@ -1483,6 +1501,14 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         evidenceWorkflow.authorityPublic = authorityPublic;
         evidenceWorkflow.policySnapshotHash = policySnapshotHash;
         evidenceWorkflow.intentId = intentId;
+        // ── PayTrace: negotiate span ────────────────────────────
+        _traced.negotiate({
+          requestId: evidenceRequest?.requestId || '',
+          amount: evidenceRequest?.amount || '',
+          tokenAddress: evidenceRequest?.tokenAddress || invocation.tokenAddress || '',
+          recipient: evidenceRequest?.recipient || invocation.recipient || '',
+        });
+        // ─────────────────────────────────────────────────────────
         if (!Array.isArray(evidenceWorkflow?.steps) || evidenceWorkflow.steps.length === 0) {
           appendServiceWorkflowStep(evidenceWorkflow, 'challenge_issued', 'ok', {
             requestId: evidenceRequest?.requestId || '',
@@ -1510,6 +1536,9 @@ export function registerMarketAgentServiceRoutes(app, deps) {
           ? cachedPreview
           : null;
         if (!externalResult) {
+          const _fulfillSpan = _traced.fulfillStart();
+          const _fulfillStart = Date.now();
+          try {
           const signalOpts = { signal: invokeSignal };
           if (isFundamentalExternalCapability) {
             if (capabilityId === 'cap-listing-alert') externalResult = await fetchListingAlert(input, signalOpts);
@@ -1526,6 +1555,32 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             if (capabilityId === 'cap-weather-context') externalResult = await fetchWeatherContext(input, signalOpts);
             else if (capabilityId === 'cap-tech-buzz-signal') externalResult = await fetchTechBuzzSignal(input, signalOpts);
             else if (capabilityId === 'cap-market-price-feed') externalResult = await fetchMarketPriceFeed(input, signalOpts);
+          }
+          // ── PayTrace: end fulfill span ──────────────────────────
+          if (externalResult) {
+            _traced.fulfillEnd(_fulfillSpan, {
+              httpStatus: externalResult.ok ? 200 : 500,
+              providerLatencyMs: Date.now() - _fulfillStart,
+              resultState: externalResult.ok ? 'ok' : (externalResult.error || 'failed'),
+              error: externalResult.ok ? undefined : (externalResult.error || 'external_feed_failed'),
+            });
+          } else {
+            _traced.fulfillEnd(_fulfillSpan, {
+              httpStatus: 0,
+              providerLatencyMs: Date.now() - _fulfillStart,
+              resultState: 'no_match',
+              error: 'no_matching_capability',
+            });
+          }
+          // ─────────────────────────────────────────────────────────
+          } catch (_fetchErr) {
+            _traced.fulfillEnd(_fulfillSpan, {
+              httpStatus: 500,
+              providerLatencyMs: Date.now() - _fulfillStart,
+              resultState: 'error',
+              error: _fetchErr?.message || 'fetch_failed',
+            });
+            throw _fetchErr;
           }
         }
         if (externalResult) {
@@ -1897,6 +1952,22 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             requestId: normalizeText(next.requestId),
             traceId: normalizeText(next.traceId)
           });
+
+          // ── PayTrace: payment + receipt_bind + end ────────────
+          _traced.payment({
+            status: 'confirmed',
+            txHash: txHash || '',
+            userOpHash: userOpHash || '',
+            protocol: 'x402',
+            asset: invocation.tokenAddress || '',
+          });
+          _traced.receiptBind({
+            receiptRef: `/api/receipts/${evidenceRequest?.requestId || ''}`,
+            evidenceRef: `/api/evidence/export?traceId=${traceId}`,
+            anchorStatus: trust?.publicationTxHash ? 'anchored' : 'pending',
+          });
+          _traced.end(true);
+          // ─────────────────────────────────────────────────────────
 
           return res.json({
             ok: true,
@@ -2305,6 +2376,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
           failureReason
         });
       }
+      // ── PayTrace: trace failure ───────────────────────────────
+      _traced.fail(failureReason, `invoke failed: ${failureReason}`);
+      // ─────────────────────────────────────────────────────────
+
       return res.status(500).json({
         ok: false,
         error: 'invoke_failed',
@@ -2314,6 +2389,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         traceId,
         workflow: evidenceWorkflow
       });
+    } finally {
+      // ── PayTrace: safety net — end root span if not already ended ──
+      _traced.ensureEnded();
+      // ──────────────────────────────────────────────────────────────
     }
   });
   
