@@ -12,7 +12,8 @@
  *   initTracing();  // call once at server startup
  */
 
-import { trace, context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { trace, context, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api';
+import crypto from 'crypto';
 import { NodeTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { Resource } from '@opentelemetry/resources';
@@ -100,11 +101,25 @@ export function startCapability(opts = {}) {
     if (opts.capabilityId) attributes['paytrace.capability.id'] = opts.capabilityId;
     if (opts.sessionStrategy) attributes['paytrace.session.strategy'] = opts.sessionStrategy;
 
+    // Derive OTel traceId from business traceId so both systems share one ID.
+    // Hash the business ID to a valid 128-bit (32 hex char) W3C trace ID.
+    let parentCtx = context.active();
+    if (opts.traceId) {
+      const derivedTraceId = crypto.createHash('md5').update(opts.traceId).digest('hex');
+      const spanId = crypto.randomBytes(8).toString('hex');
+      parentCtx = trace.setSpanContext(parentCtx, {
+        traceId: derivedTraceId,
+        spanId,
+        traceFlags: TraceFlags.SAMPLED,
+        isRemote: true,
+      });
+    }
+
     const span = tracer.startSpan('paytrace.capability', {
       kind: SpanKind.SERVER,
       attributes,
-    });
-    const ctx = trace.setSpan(context.active(), span);
+    }, parentCtx);
+    const ctx = trace.setSpan(parentCtx, span);
     return { span, ctx };
   }, { span: noopSpan(), ctx: context.active() });
 }
