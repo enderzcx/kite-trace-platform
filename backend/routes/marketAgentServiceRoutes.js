@@ -2158,6 +2158,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             traceId: normalizeText(next.traceId),
             failureReason: ''
           });
+          _traced.end(true);
           return res.status(resp.status).json({
             ...payload,
             traceId: next.traceId,
@@ -2307,6 +2308,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         failureReason: normalizeText(next.error)
       });
   
+      _traced.end(resp.ok && payload?.ok !== false);
       return res.status(resp.status).json({
         ...payload,
         serviceId,
