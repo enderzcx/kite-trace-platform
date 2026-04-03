@@ -249,6 +249,7 @@ export function createSessionPayHelpers({
     const internalApiKey = getInternalAgentApiKey();
     const headers = { 'Content-Type': 'application/json' };
     if (internalApiKey) headers['x-api-key'] = internalApiKey;
+    if (options.traceparent) headers['traceparent'] = options.traceparent;
 
     const parentSignal = options.signal || null;
     let lastError = null;

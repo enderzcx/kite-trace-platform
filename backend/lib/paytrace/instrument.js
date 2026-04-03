@@ -266,6 +266,105 @@ export function endReceiptBind(span, result = {}) {
   });
 }
 
+// ── Payment Sub-Spans (RPC / Bundler / Confirm) ────────────────
+
+/** RPC connect span — measures provider connection time. */
+export function startPaymentRpc(parentSpan) {
+  return safe(() => {
+    const ctx = trace.setSpan(context.active(), parentSpan);
+    return getTracer().startSpan('paytrace.payment.rpc_connect', { kind: SpanKind.CLIENT }, ctx);
+  }, noopSpan());
+}
+
+export function endPaymentRpc(span, result = {}) {
+  safeVoid(() => {
+    if (result.rpcUrl) span.setAttribute('paytrace.payment.rpc_url', result.rpcUrl);
+    if (result.latencyMs != null) span.setAttribute('paytrace.payment.rpc_latency_ms', result.latencyMs);
+    span.setStatus(result.ok !== false
+      ? { code: SpanStatusCode.OK }
+      : { code: SpanStatusCode.ERROR, message: result.error || 'rpc_connect_failed' }
+    );
+    span.end();
+  });
+}
+
+/** Bundler submit span — one per attempt in the retry loop. */
+export function startPaymentBundlerSubmit(parentSpan) {
+  return safe(() => {
+    const ctx = trace.setSpan(context.active(), parentSpan);
+    return getTracer().startSpan('paytrace.payment.bundler_submit', { kind: SpanKind.CLIENT }, ctx);
+  }, noopSpan());
+}
+
+export function endPaymentBundlerSubmit(span, result = {}) {
+  safeVoid(() => {
+    if (result.attempt != null) span.setAttribute('paytrace.payment.bundler_attempt', result.attempt);
+    if (result.userOpHash) span.setAttribute('paytrace.payment.user_op_hash', result.userOpHash);
+    if (result.status) span.setAttribute('paytrace.payment.bundler_status', result.status);
+    if (result.reason) span.setAttribute('paytrace.payment.bundler_reason', result.reason);
+    span.setStatus(result.status === 'submitted' || result.status === 'success'
+      ? { code: SpanStatusCode.OK }
+      : { code: SpanStatusCode.ERROR, message: result.reason || `bundler_${result.status || 'failed'}` }
+    );
+    span.end();
+  });
+}
+
+/** Confirm wait span — waitForUserOperation polling. */
+export function startPaymentConfirmWait(parentSpan) {
+  return safe(() => {
+    const ctx = trace.setSpan(context.active(), parentSpan);
+    return getTracer().startSpan('paytrace.payment.confirm_wait', { kind: SpanKind.CLIENT }, ctx);
+  }, noopSpan());
+}
+
+export function endPaymentConfirmWait(span, result = {}) {
+  safeVoid(() => {
+    if (result.waitMs != null) span.setAttribute('paytrace.payment.confirm_wait_ms', result.waitMs);
+    if (result.txHash) span.setAttribute('paytrace.payment.tx_hash', result.txHash);
+    if (result.status) span.setAttribute('paytrace.payment.confirm_status', result.status);
+    span.setStatus(result.status === 'confirmed'
+      ? { code: SpanStatusCode.OK }
+      : { code: SpanStatusCode.ERROR, message: result.error || `confirm_${result.status || 'failed'}` }
+    );
+    span.end();
+  });
+}
+
+/**
+ * Extract a W3C traceparent header from a span for cross-process propagation.
+ * Format: 00-{traceId}-{spanId}-{flags}
+ */
+export function spanToTraceparent(span) {
+  return safe(() => {
+    const sc = span.spanContext();
+    const flags = (sc.traceFlags ?? TraceFlags.SAMPLED) & 0xff;
+    return `00-${sc.traceId}-${sc.spanId}-${flags.toString(16).padStart(2, '0')}`;
+  }, '');
+}
+
+/**
+ * Restore a parent span context from a traceparent header.
+ * Returns a Context that child spans can use as parent.
+ */
+export function traceparentToContext(traceparent) {
+  return safe(() => {
+    const parts = String(traceparent || '').split('-');
+    if (parts.length < 4) return context.active();
+    const [version, traceId, spanId, flags] = parts;
+    if (version === 'ff') return context.active();
+    if (!/^[0-9a-f]{32}$/.test(traceId) || traceId === '00000000000000000000000000000000') return context.active();
+    if (!/^[0-9a-f]{16}$/.test(spanId) || spanId === '0000000000000000') return context.active();
+    const traceFlags = parseInt(flags, 16);
+    return trace.setSpanContext(context.active(), {
+      traceId,
+      spanId,
+      traceFlags: Number.isFinite(traceFlags) ? traceFlags : TraceFlags.SAMPLED,
+      isRemote: true,
+    });
+  }, context.active());
+}
+
 /** Fail any span with classified error. */
 export function failSpan(span, errorCode, message) {
   safeVoid(() => {

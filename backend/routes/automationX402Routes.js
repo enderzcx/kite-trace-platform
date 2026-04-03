@@ -1,4 +1,10 @@
 import { createKiteRpcProvider } from '../lib/kiteRpc.js';
+import { trace as otelTrace } from '@opentelemetry/api';
+import {
+  traceparentToContext, startPaymentRpc, endPaymentRpc,
+  startPaymentBundlerSubmit, endPaymentBundlerSubmit,
+  startPaymentConfirmWait, endPaymentConfirmWait
+} from '../lib/paytrace/instrument.js';
 
 export function registerAutomationX402Routes(app, deps) {
   const {
@@ -389,6 +395,13 @@ export function registerAutomationX402Routes(app, deps) {
           }
         });
       };
+      // ── PayTrace: restore parent span context from traceparent header ──
+      const _payParentCtx = traceparentToContext(req.headers?.traceparent);
+      const _ptrace = (() => {
+        try { return otelTrace.getSpan(_payParentCtx) || null; }
+        catch { return null; }
+      })();
+
       const body = req.body || {};
       const requestId = String(body.requestId || '').trim();
       requestIdForCatch = requestId;
@@ -579,10 +592,13 @@ export function registerAutomationX402Routes(app, deps) {
         });
       }
   
+      const _rpcSpan = _ptrace ? startPaymentRpc(_ptrace) : null;
+      const _rpcStart = Date.now();
       const provider = createKiteRpcProvider(ethers, BACKEND_RPC_URL, {
         timeoutMs: Math.min(90_000, Math.max(15_000, Number(KITE_BUNDLER_RPC_TIMEOUT_MS || 0) * 4))
       });
       const sessionWallet = new ethers.Wallet(runtime.sessionPrivateKey, provider);
+      if (_rpcSpan) endPaymentRpc(_rpcSpan, { ok: true, rpcUrl: BACKEND_RPC_URL, latencyMs: Date.now() - _rpcStart });
       const sessionSignerAddress = await sessionWallet.getAddress();
       const serviceProvider = getServiceProviderBytes32(action);
 
@@ -751,6 +767,8 @@ export function registerAutomationX402Routes(app, deps) {
         const innerQueueWaitMs = Math.max(0, Date.now() - queueStartedAt);
         for (let i = 0; i < maxAttempts; i += 1) {
           innerAttempts = i + 1;
+          const _bundlerSpan = _ptrace ? startPaymentBundlerSubmit(_ptrace) : null;
+          try {
           innerResult = await sdk.sendSessionTransferWithAuthorizationAndProvider(
             {
               sessionId,
@@ -769,8 +787,26 @@ export function registerAutomationX402Routes(app, deps) {
           const submittedUserOpHash = String(
             innerResult?.userOpHash || extractUserOpHashFromReason(String(innerResult?.reason || '').trim())
           ).trim();
+          if (_bundlerSpan) endPaymentBundlerSubmit(_bundlerSpan, {
+            attempt: innerAttempts,
+            userOpHash: submittedUserOpHash || '',
+            status: innerResult?.status === 'success' ? 'success' : (submittedUserOpHash ? 'submitted' : 'failed'),
+            reason: innerResult?.reason || '',
+          });
+          } catch (_bundlerErr) {
+            if (_bundlerSpan) endPaymentBundlerSubmit(_bundlerSpan, { attempt: innerAttempts, status: 'error', reason: _bundlerErr?.message || 'bundler_exception' });
+            throw _bundlerErr;
+          }
           if ((!innerResult || innerResult.status !== 'success' || !innerResult.transactionHash) && submittedUserOpHash) {
+            const _confirmSpan = _ptrace ? startPaymentConfirmWait(_ptrace) : null;
+            const _confirmStart = Date.now();
             const tracked = await trackInflightSessionPay(payerLockKey, submittedUserOpHash, sdk);
+            if (_confirmSpan) endPaymentConfirmWait(_confirmSpan, {
+              waitMs: Date.now() - _confirmStart,
+              txHash: tracked?.transactionHash || '',
+              status: tracked?.success ? 'confirmed' : (tracked?.error ? 'failed' : 'timeout'),
+              error: tracked?.error || '',
+            });
             const recoveredResult = buildTrackedSessionPayResult(tracked);
             if (recoveredResult) {
               innerResult = recoveredResult;

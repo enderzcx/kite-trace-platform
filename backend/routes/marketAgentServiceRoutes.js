@@ -13,7 +13,7 @@ import {
   fetchWeatherContext
 } from '../lib/externalFeeds.js';
 import { createTrustLayerHelpers } from '../lib/trustLayerHelpers.js';
-import { traceServiceInvoke, recordInvocation, recordSuccess, recordFailure, recordStageDuration, recordPaymentVolume } from '../lib/paytrace/instrument.js';
+import { traceServiceInvoke, recordInvocation, recordSuccess, recordFailure, recordStageDuration, recordPaymentVolume, spanToTraceparent } from '../lib/paytrace/instrument.js';
 import crypto from 'crypto';
 
 export function registerMarketAgentServiceRoutes(app, deps) {
@@ -1815,7 +1815,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
                 action: capabilityId || effectiveAction,
                 query: normalizeText(evidenceRequest?.query || `${service?.name || serviceId} ${effectiveAction}`)
               },
-              { maxAttempts: 2, timeoutMs: 45_000, signal: invokeSignal }
+              { maxAttempts: 2, timeoutMs: 45_000, signal: invokeSignal, traceparent: spanToTraceparent(_traced.rootSpan) }
             );
             const payBody = pay?.body || {};
             txHash = normalizeText(payBody?.payment?.txHash || '');
