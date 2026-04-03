@@ -17,12 +17,20 @@ import { NodeTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trace
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { Resource } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+import { MeterProvider } from '@opentelemetry/sdk-metrics';
+import { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
 
 const TRACER_NAME = 'paytrace-sdk';
 const SDK_VERSION = '0.1.0';
 
 let _initialized = false;
 let _tracer = null;
+let _meter = null;
+let _invocationCount = null;
+let _invocationSuccess = null;
+let _invocationFailure = null;
+let _stageDuration = null;
+let _paymentVolume = null;
 
 /**
  * Initialize OTel tracing. Call once at server startup.
@@ -49,6 +57,35 @@ export function initTracing(opts = {}) {
     provider.register();
 
     _tracer = trace.getTracer(TRACER_NAME, SDK_VERSION);
+
+    // ── Metrics: Prometheus exporter on :9464/metrics ───────────
+    const metricsPort = Number(opts.metricsPort) || 9464;
+    try {
+      const promExporter = new PrometheusExporter({ port: metricsPort });
+      const meterProvider = new MeterProvider({ resource, readers: [promExporter] });
+      _meter = meterProvider.getMeter(TRACER_NAME, SDK_VERSION);
+
+      _invocationCount = _meter.createCounter('paytrace_invocation_count', {
+        description: 'Total number of payment invocations',
+      });
+      _invocationSuccess = _meter.createCounter('paytrace_invocation_success', {
+        description: 'Successful payment invocations',
+      });
+      _invocationFailure = _meter.createCounter('paytrace_invocation_failure', {
+        description: 'Failed payment invocations',
+      });
+      _stageDuration = _meter.createHistogram('paytrace_stage_duration_ms', {
+        description: 'Duration of each payment stage in milliseconds',
+        unit: 'ms',
+      });
+      _paymentVolume = _meter.createCounter('paytrace_payment_volume', {
+        description: 'Total payment volume in smallest token unit',
+      });
+      console.log(`[paytrace] Metrics exporter → http://0.0.0.0:${metricsPort}/metrics`);
+    } catch (mErr) {
+      console.warn('[paytrace] Metrics initialization failed (suppressed):', mErr?.message || mErr);
+    }
+
     _initialized = true;
     console.log(`[paytrace] Tracing initialized → ${traceEndpoint}`);
   } catch (err) {
@@ -268,6 +305,52 @@ for (const c of SETTLEMENT) LAYER_MAP[c] = 'SETTLEMENT';
 
 export function classifyErrorLayer(code) {
   return LAYER_MAP[String(code || '').trim()] || 'UNKNOWN';
+}
+
+// ── Metrics Recording ──────────────────────────────────────────
+
+function buildMetricLabels(labels = {}) {
+  const result = {};
+  if (labels.providerId) result.provider_id = labels.providerId;
+  if (labels.capabilityId) result.capability_id = labels.capabilityId;
+  if (labels.chain) result.chain = labels.chain;
+  return result;
+}
+
+export function recordInvocation(labels = {}) {
+  safeVoid(() => { _invocationCount?.add(1, buildMetricLabels(labels)); });
+}
+
+export function recordSuccess(labels = {}) {
+  safeVoid(() => { _invocationSuccess?.add(1, buildMetricLabels(labels)); });
+}
+
+export function recordFailure(labels = {}) {
+  safeVoid(() => {
+    _invocationFailure?.add(1, {
+      ...buildMetricLabels(labels),
+      ...(labels.errorType ? { error_type: labels.errorType } : {}),
+    });
+  });
+}
+
+export function recordStageDuration(durationMs, labels = {}) {
+  safeVoid(() => {
+    _stageDuration?.record(durationMs, {
+      stage: labels.stage || 'unknown',
+      ...(labels.providerId ? { provider_id: labels.providerId } : {}),
+    });
+  });
+}
+
+export function recordPaymentVolume(amount, labels = {}) {
+  safeVoid(() => {
+    _paymentVolume?.add(amount, {
+      ...(labels.asset ? { asset: labels.asset } : {}),
+      ...(labels.providerId ? { provider_id: labels.providerId } : {}),
+      ...(labels.capabilityId ? { capability_id: labels.capabilityId } : {}),
+    });
+  });
 }
 
 // ── High-level convenience: trace a full service invocation ─────

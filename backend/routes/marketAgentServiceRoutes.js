@@ -13,7 +13,7 @@ import {
   fetchWeatherContext
 } from '../lib/externalFeeds.js';
 import { createTrustLayerHelpers } from '../lib/trustLayerHelpers.js';
-import { traceServiceInvoke } from '../lib/paytrace/instrument.js';
+import { traceServiceInvoke, recordInvocation, recordSuccess, recordFailure, recordStageDuration, recordPaymentVolume } from '../lib/paytrace/instrument.js';
 import crypto from 'crypto';
 
 export function registerMarketAgentServiceRoutes(app, deps) {
@@ -1395,6 +1395,9 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       providerKind: isExternalFeedCapability ? 'external_feed' : 'internal',
       capabilityId,
     });
+    const _metricLabels = { providerId: effectiveProvider, capabilityId };
+    recordInvocation(_metricLabels);
+    const _invokeStartMs = Date.now();
     // ─────────────────────────────────────────────────────────────
 
     let invocationPersisted = false;
@@ -1575,6 +1578,7 @@ export function registerMarketAgentServiceRoutes(app, deps) {
               error: 'no_matching_capability',
             });
           }
+          recordStageDuration(Date.now() - _fulfillStart, { stage: 'fulfill', providerId: effectiveProvider });
           // ─────────────────────────────────────────────────────────
           } catch (_fetchErr) {
             _traced.fulfillEnd(_fulfillSpan, {
@@ -1970,6 +1974,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             anchorStatus: trust?.publicationTxHash ? 'anchored' : 'pending',
           });
           _traced.end(true);
+          recordSuccess(_metricLabels);
+          recordStageDuration(Date.now() - _invokeStartMs, { stage: 'total', providerId: effectiveProvider });
+          const _payAmount = Number(evidenceRequest?.amount || 0);
+          if (_payAmount > 0) recordPaymentVolume(_payAmount, { asset: invocation.tokenAddress || '', ..._metricLabels });
           // ─────────────────────────────────────────────────────────
 
           return res.json({
@@ -2159,6 +2167,8 @@ export function registerMarketAgentServiceRoutes(app, deps) {
             failureReason: ''
           });
           _traced.end(true);
+          recordSuccess(_metricLabels);
+          recordStageDuration(Date.now() - _invokeStartMs, { stage: 'total', providerId: effectiveProvider });
           return res.status(resp.status).json({
             ...payload,
             traceId: next.traceId,
@@ -2308,7 +2318,11 @@ export function registerMarketAgentServiceRoutes(app, deps) {
         failureReason: normalizeText(next.error)
       });
   
-      _traced.end(resp.ok && payload?.ok !== false);
+      const _internalOk = resp.ok && payload?.ok !== false;
+      _traced.end(_internalOk);
+      recordStageDuration(Date.now() - _invokeStartMs, { stage: 'total', providerId: effectiveProvider });
+      if (_internalOk) recordSuccess(_metricLabels);
+      else recordFailure({ ..._metricLabels, errorType: 'internal_workflow_failed' });
       return res.status(resp.status).json({
         ...payload,
         serviceId,
@@ -2383,6 +2397,10 @@ export function registerMarketAgentServiceRoutes(app, deps) {
       }
       // ── PayTrace: trace failure ───────────────────────────────
       _traced.fail(failureReason, `invoke failed: ${failureReason}`);
+      // Normalize errorType to classified layer to prevent high-cardinality labels
+      const _errorType = failureReason === 'invoke_timeout' ? 'invoke_timeout'
+        : (failureReason.length <= 40 ? failureReason : 'unknown_error');
+      recordFailure({ ..._metricLabels, errorType: _errorType });
       // ─────────────────────────────────────────────────────────
 
       return res.status(500).json({
