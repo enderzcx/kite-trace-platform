@@ -103,6 +103,8 @@ export function startCapability(opts = {}) {
 
     // Derive OTel traceId from business traceId so both systems share one ID.
     // Hash the business ID to a valid 128-bit (32 hex char) W3C trace ID.
+    // Note: the synthetic parent spanId will appear as an orphan reference in
+    // Jaeger — this is a known cosmetic trade-off of forcing a traceId in OTel JS.
     let parentCtx = context.active();
     if (opts.traceId) {
       const derivedTraceId = crypto.createHash('md5').update(opts.traceId).digest('hex');
@@ -111,7 +113,7 @@ export function startCapability(opts = {}) {
         traceId: derivedTraceId,
         spanId,
         traceFlags: TraceFlags.SAMPLED,
-        isRemote: true,
+        isRemote: false,
       });
     }
 
