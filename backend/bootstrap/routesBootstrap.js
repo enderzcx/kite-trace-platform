@@ -12,6 +12,8 @@ import { registerAgentCardRoutes } from '../routes/agentCardRoutes.js';
 import { registerSynthesisRoutes } from '../routes/synthesisRoutes.js';
 import { registerMcpRoutes } from '../mcp/mcpServer.js';
 import { registerX402DiscoveryRoutes } from '../routes/x402DiscoveryRoutes.js';
+import { registerA2aAgentRegistryRoutes } from '../routes/a2aAgentRegistryRoutes.js';
+import { registerA2aCommerceRoutes } from '../routes/a2aCommerceRoutes.js';
 import { createRuntimeServerLifecycle } from '../runtime/server.js';
 import { initTracing } from '../lib/paytrace/instrument.js';
 
@@ -655,6 +657,27 @@ export function routesBootstrap(ctx) {
       name: 'x402DiscoveryRoutes',
       register: registerX402DiscoveryRoutes,
       requiredKeys: ['ensureServiceCatalog']
+    },
+    {
+      name: 'a2aAgentRegistryRoutes',
+      register: registerA2aAgentRegistryRoutes,
+      requiredKeys: ['requireRole']
+    },
+    {
+      name: 'a2aCommerceRoutes',
+      register: registerA2aCommerceRoutes,
+      requiredKeys: [
+        'createX402Request',
+        'buildPaymentRequiredResponse',
+        'readX402Requests',
+        'writeX402Requests',
+        'ensureServiceCatalog',
+        'validatePaymentProof',
+        'verifyProofOnChain',
+        'appendNetworkAuditEvent',
+        'createTraceId',
+        'requireRole'
+      ]
     }
   ];
 

@@ -28,9 +28,9 @@ const NETWORKS = {
   },
   hashkey_testnet: {
     chainId: 133,
-    entryPoint: process.env.KITE_ENTRYPOINT_ADDRESS || '0x5FF137D4b0FCDd83d469EB4F01b52EDc6ff5A2B3',
-    accountFactory: process.env.KITE_AA_FACTORY_ADDRESS || '',
-    accountImplementation: process.env.KITE_AA_ACCOUNT_IMPLEMENTATION || ''
+    entryPoint: process.env.KITE_ENTRYPOINT_ADDRESS || '0x0Cfe99621287c13533F6ebc3B93a9Ade6580a598',
+    accountFactory: process.env.KITE_AA_FACTORY_ADDRESS || '0xF43E94E2163F14c4D62242D8DD45AbAacaa6DB5a',
+    accountImplementation: process.env.KITE_AA_ACCOUNT_IMPLEMENTATION || '0x2DbBfCdAd28b3A2094BD634Cce4326B1b3D0595C'
   }
 };
 const bundlerDirectDispatcher = new Agent();

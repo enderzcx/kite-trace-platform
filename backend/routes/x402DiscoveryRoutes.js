@@ -62,7 +62,12 @@ function buildX402ServiceDescriptor(service, baseUrl) {
     inputSchema: service.exampleInput ? { example: service.exampleInput } : {},
     slaMs,
     rateLimitPerMinute: Number(service.rateLimitPerMinute) || 10,
-    paymentMode: normalizeText(service.paymentMode || 'agent')
+    paymentMode: normalizeText(service.paymentMode || 'agent'),
+    agentIdentity: {
+      agentId: normalizeText(service.providerAgentId || ''),
+      agentWallet: normalizeText(service.recipient || ''),
+      identityRegistry: '0x901A2b1c67daB5AC09A4e02bE9c1c8D52Cce650B'
+    }
   };
 }
 
