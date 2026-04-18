@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 export function createApiRateLimit({
   extractApiKey,
   rateLimitMax,
@@ -9,8 +11,7 @@ export function createApiRateLimit({
     const key = extractApiKey(req);
     // Finding 9 fix: use hash of full API key to avoid prefix collisions
     if (key) {
-      const crypto = require('crypto');
-      return `k:${crypto.createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+      return `k:${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
     }
     return `ip:${String(req.ip || req.socket?.remoteAddress || 'unknown')}`;
   }
