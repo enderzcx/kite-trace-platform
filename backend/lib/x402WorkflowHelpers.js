@@ -22,7 +22,7 @@ export function createX402WorkflowHelpers({
   entryPointAddress = '',
   accountFactoryAddress = '',
   accountImplementationAddress = '',
-  chainId = 2368
+  chainId = Number(process.env.KITE_CHAIN_ID) || 2368
 }) {
   function computeX402StatusCounts(rows = [], now = Date.now()) {
     const items = Array.isArray(rows) ? rows : [];

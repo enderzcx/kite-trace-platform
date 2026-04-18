@@ -27,9 +27,9 @@ function buildAgentCard(req, deps = {}) {
       identity_registry: '0x60BF18964FCB1B2E987732B0477E51594B3659B1'
     },
     chain: {
-      name: 'KiteAI Testnet',
-      chain_id: 2368,
-      rpc_url: 'https://rpc-testnet.gokite.ai/',
+      name: process.env.KITE_NETWORK_NAME || 'KiteAI Testnet',
+      chain_id: Number(process.env.KITE_CHAIN_ID) || 2368,
+      rpc_url: process.env.KITEAI_RPC_URL || 'https://rpc-testnet.gokite.ai/',
       contracts: {
         identity_registry: '0x60BF18964FCB1B2E987732B0477E51594B3659B1',
         trust_anchor: '0xAcdcF151F4A28fFd07e45c62FfE9DAEDe9556823',

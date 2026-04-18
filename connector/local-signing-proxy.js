@@ -32,11 +32,15 @@ import { join } from 'path';
 import { GokiteAASDK } from './lib/gokite-aa-sdk.js';
 
 // ── PayTrace: lightweight OTel tracing for payment sub-spans ────────────────
-import { trace, context, SpanKind, SpanStatusCode, TraceFlags, diag, DiagLogLevel } from '@opentelemetry/api';
+import otelApi from '@opentelemetry/api';
+const { trace, context, SpanKind, SpanStatusCode, TraceFlags, diag, DiagLogLevel } = otelApi;
 import crypto from 'crypto';
-import { NodeTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { Resource } from '@opentelemetry/resources';
+import otelSdk from '@opentelemetry/sdk-trace-node';
+const { NodeTracerProvider, SimpleSpanProcessor } = otelSdk;
+import otelExporter from '@opentelemetry/exporter-trace-otlp-http';
+const { OTLPTraceExporter } = otelExporter;
+import otelResources from '@opentelemetry/resources';
+const { Resource, resourceFromAttributes } = otelResources;
 
 // Silence OTel diagnostics to prevent stdout pollution in MCP stdio channel
 diag.setLogger({ error(){}, warn(){}, info(){}, debug(){}, verbose(){} }, DiagLogLevel.NONE);
@@ -45,9 +49,10 @@ const OTEL_ENDPOINT = process.env.PAYTRACE_TRACE_ENDPOINT || 'http://170.106.183
 let _proxyTracer = null;
 let _proxyProvider = null;
 try {
-  const resource = new Resource({ 'service.name': 'ktrace-proxy', 'paytrace.sdk.version': '0.1.0' });
-  const provider = new NodeTracerProvider({ resource });
-  provider.addSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter({ url: OTEL_ENDPOINT })));
+  const resource = resourceFromAttributes({ 'service.name': 'ktrace-proxy', 'paytrace.sdk.version': '0.1.0' });
+  const exporter = new OTLPTraceExporter({ url: OTEL_ENDPOINT });
+  const processor = new SimpleSpanProcessor(exporter);
+  const provider = new NodeTracerProvider({ resource, spanProcessors: [processor] });
   provider.register();
   _proxyProvider = provider;
   _proxyTracer = trace.getTracer('paytrace-sdk', '0.1.0');
@@ -212,6 +217,7 @@ async function handlePaymentAndRetry(toolName, originalArgs, paymentData) {
   if (!aaWallet) throw new Error('KTRACE_AA_WALLET not configured in proxy');
 
   // ── PayTrace: create parent context from backend's traceId ────────
+  console.error(`[ktrace-proxy] PayTrace: traceId=${traceId}, tracer=${!!_proxyTracer}`);
   const _parentCtx = _traceIdToContext(traceId);
 
   console.error(`[ktrace-proxy] Signing x402 payment: ${amount} ${tokenAddress} → ${recipient}`);
@@ -220,7 +226,7 @@ async function handlePaymentAndRetry(toolName, originalArgs, paymentData) {
   const _sdkInitSpan = _startSpan('paytrace.payment.sdk_init', _parentCtx, { 'paytrace.payment.rpc_url': ctx.rpcUrl || '' });
   const _sdkInitStart = Date.now();
   const sdk = new GokiteAASDK({
-    network: 'kite_testnet',
+    network: ctx.network || 'kite_testnet',
     rpcUrl: ctx.rpcUrl || 'https://rpc-testnet.gokite.ai/',
     bundlerUrl: ctx.bundlerUrl,
     entryPointAddress: ctx.entryPointAddress,

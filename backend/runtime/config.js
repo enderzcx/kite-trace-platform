@@ -67,7 +67,8 @@ export function createRuntimeConfig() {
     }
   })();
   const STARTED_AT_MS = Date.now();
-  const KITE_NETWORK_NAME = 'kite-testnet';
+  const KITE_NETWORK_NAME = process.env.KITE_NETWORK_NAME || 'kite-testnet';
+  const KITE_CHAIN_ID = Number(process.env.KITE_CHAIN_ID) || 2368;
   const dataPath = path.resolve('data', 'records.json');
   const x402Path = path.resolve('data', 'x402_requests.json');
   const policyFailurePath = path.resolve('data', 'policy_failures.json');
@@ -469,6 +470,7 @@ export function createRuntimeConfig() {
     PACKAGE_VERSION,
     STARTED_AT_MS,
     KITE_NETWORK_NAME,
+    KITE_CHAIN_ID,
     dataPath,
     x402Path,
     policyFailurePath,

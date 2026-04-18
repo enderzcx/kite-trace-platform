@@ -165,8 +165,8 @@ export function registerSynthesisRoutes(app, deps = {}) {
       operator_wallet: normalizeText(process.env.KITE_AA_WALLET || ''),
       identity_registry: '0x60BF18964FCB1B2E987732B0477E51594B3659B1',
       chain: {
-        name: 'KiteAI Testnet',
-        chain_id: 2368
+        name: process.env.KITE_NETWORK_NAME || 'KiteAI Testnet',
+        chain_id: Number(process.env.KITE_CHAIN_ID) || 2368
       },
       loop: {
         enabled: loopStatus.enabled,

@@ -232,8 +232,8 @@ export function createEscrowHelpers({
     erc20_approve_escrow: erc20ApproveInterface.getFunction('approve').selector
   };
   const staticNetwork = ethers.Network.from({
-    chainId: 2368,
-    name: 'kite_testnet'
+    chainId: Number(process.env.KITE_CHAIN_ID) || 2368,
+    name: process.env.KITE_NETWORK_NAME || 'kite_testnet'
   });
   const providerRequest =
     !backendSigner?.provider && rpcUrl

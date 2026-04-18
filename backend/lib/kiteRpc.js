@@ -1,8 +1,8 @@
 import { applyNodeEnvProxyPreference, shouldRouteKiteRpcViaProxy } from './envProxy.js';
 import { Agent, ProxyAgent, fetch as undiciFetch } from 'undici';
 
-const DEFAULT_CHAIN_ID = 2368;
-const DEFAULT_NETWORK_NAME = 'kite_testnet';
+const DEFAULT_CHAIN_ID = Number(process.env.KITE_CHAIN_ID) || 2368;
+const DEFAULT_NETWORK_NAME = process.env.KITE_NETWORK_NAME || 'kite_testnet';
 const directDispatcher = new Agent();
 let rpcProxyDispatcher = null;
 

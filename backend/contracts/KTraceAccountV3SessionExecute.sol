@@ -95,8 +95,7 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     uint256 private constant SIG_VALIDATION_FAILED = 1;
 
-    address private constant ENTRY_POINT = 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108;
-
+    address private _entryPoint;
     address private _owner;
     uint256 private _reentrancyLock;
 
@@ -155,9 +154,11 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         _disableInitializers();
     }
 
-    function initialize(address owner_) external initializer {
+    function initialize(address owner_, address entryPoint_) external initializer {
         if (owner_ == address(0)) revert ZeroAddress();
+        if (entryPoint_ == address(0)) revert ZeroAddress();
         _owner = owner_;
+        _entryPoint = entryPoint_;
         emit OwnershipTransferred(address(0), owner_);
     }
 
@@ -165,8 +166,8 @@ contract KTraceAccountV3SessionExecute is Initializable, UUPSUpgradeable, IAccou
         return _owner;
     }
 
-    function entryPoint() public pure returns (address) {
-        return ENTRY_POINT;
+    function entryPoint() public view returns (address) {
+        return _entryPoint;
     }
 
     function version() external pure returns (string memory) {

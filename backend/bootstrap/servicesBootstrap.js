@@ -55,7 +55,7 @@ import { createPolicyConfigHelpers } from '../lib/addressPolicyHelpers.js';
 export async function servicesBootstrap(ctx) {
   const {
     ANALYSIS_PROVIDER, X_READER_MAX_CHARS_DEFAULT,
-    BACKEND_RPC_URL, BACKEND_BUNDLER_URL, BACKEND_ENTRYPOINT_ADDRESS,
+    BACKEND_RPC_URL, BACKEND_BUNDLER_URL, BACKEND_ENTRYPOINT_ADDRESS, KITE_CHAIN_ID,
     KITE_AA_FACTORY_ADDRESS, KITE_AA_ACCOUNT_IMPLEMENTATION,
     BUNDLER_RPC_BACKOFF_POLICY, KITE_BUNDLER_RPC_TIMEOUT_MS, KITE_BUNDLER_RPC_RETRIES,
     KITE_BUNDLER_RECEIPT_POLL_INTERVAL_MS, KTRACE_ESCROW_USEROP_SUBMIT_TIMEOUT_MS,
@@ -129,7 +129,7 @@ export async function servicesBootstrap(ctx) {
     entryPointAddress: BACKEND_ENTRYPOINT_ADDRESS,
     accountFactoryAddress: KITE_AA_FACTORY_ADDRESS,
     accountImplementationAddress: KITE_AA_ACCOUNT_IMPLEMENTATION,
-    chainId: 2368
+    chainId: KITE_CHAIN_ID
   });
 
   // ── Identity verification ─────────────────────────────────────────────────
