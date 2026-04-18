@@ -148,7 +148,7 @@ export default function HeroSection({ stats }: HeroSectionProps) {
           style={{ fontFamily: "var(--font-dm-sans)" }}
         >
           Open infrastructure for trust, x402 payments, and verifiable on-chain
-          evidence in autonomous agent networks. Built on Kite Testnet.
+          evidence in autonomous agent networks. Built on HashKey Testnet.
         </motion.p>
 
         {/* Stats strip */}

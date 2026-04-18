@@ -1,10 +1,7 @@
 "use client";
 
 import { AlertCircle, CheckCircle2, Clock3, ExternalLink, ShieldCheck, XCircle } from "lucide-react";
-
-const KITE_EXPLORER = (
-  process.env.NEXT_PUBLIC_KITE_EXPLORER || "https://testnet.kitescan.ai"
-).replace(/\/+$/, "");
+import { txUrl, addressUrl } from "@/lib/chain-config";
 
 export type TraceAnchor = {
   anchorRequired?: boolean;
@@ -153,11 +150,11 @@ function formatDurationMs(value?: number) {
 }
 
 function explorerTxUrl(hash = "") {
-  return `${KITE_EXPLORER}/tx/${hash}`;
+  return txUrl(hash);
 }
 
 function explorerAddressUrl(address = "") {
-  return `${KITE_EXPLORER}/address/${address}`;
+  return addressUrl(address);
 }
 
 function toAbsoluteUrl(baseUrl: string, ref = "") {

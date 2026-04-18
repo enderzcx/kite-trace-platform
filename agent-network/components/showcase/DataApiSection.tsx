@@ -3,8 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { CheckCircle2, Copy, Database, Newspaper } from "lucide-react";
-
-const BASE_URL = "https://kiteclaw.duckdns.org";
+import { BACKEND_URL } from "@/lib/chain-config";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,7 +47,7 @@ const API_GROUPS: ApiGroup[] = [
         name: "Weather Context",
         description: "3-day daily weather forecast with condition summaries. Source: Open-Meteo.",
         params: "?lat=40.71&lon=-74.01",
-        exampleUrl: `${BASE_URL}/api/data/weather?lat=40.71&lon=-74.01`,
+        exampleUrl: `${BACKEND_URL}/api/data/weather?lat=40.71&lon=-74.01`,
       },
       {
         id: "tech-buzz",
@@ -57,7 +56,7 @@ const API_GROUPS: ApiGroup[] = [
         name: "Tech Buzz Signal",
         description: "Top HackerNews stories with score and comment count, normalized for feed use.",
         params: "?limit=5",
-        exampleUrl: `${BASE_URL}/api/data/tech-buzz?limit=5`,
+        exampleUrl: `${BACKEND_URL}/api/data/tech-buzz?limit=5`,
       },
       {
         id: "market-price",
@@ -66,7 +65,7 @@ const API_GROUPS: ApiGroup[] = [
         name: "Market Price Feed",
         description: "Real-time crypto market prices from CoinGecko with rank and 24h change.",
         params: "?ids=bitcoin,ethereum&vs=usd",
-        exampleUrl: `${BASE_URL}/api/data/market-price?ids=bitcoin,ethereum&vs=usd`,
+        exampleUrl: `${BACKEND_URL}/api/data/market-price?ids=bitcoin,ethereum&vs=usd`,
       },
     ],
   },
@@ -86,7 +85,7 @@ const API_GROUPS: ApiGroup[] = [
         name: "News Categories",
         description: "Available news category definitions with normalized IDs.",
         params: "",
-        exampleUrl: `${BASE_URL}/api/news/categories`,
+        exampleUrl: `${BACKEND_URL}/api/news/categories`,
       },
       {
         id: "news-hot",
@@ -95,7 +94,7 @@ const API_GROUPS: ApiGroup[] = [
         name: "Hot News",
         description: "Top trending news items across all categories, ranked by AI score.",
         params: "?limit=5",
-        exampleUrl: `${BASE_URL}/api/news/hot?limit=5`,
+        exampleUrl: `${BACKEND_URL}/api/news/hot?limit=5`,
       },
       {
         id: "news-signals",
@@ -104,7 +103,7 @@ const API_GROUPS: ApiGroup[] = [
         name: "News Signals",
         description: "Market signal articles normalized to long / short / neutral.",
         params: "?limit=5",
-        exampleUrl: `${BASE_URL}/api/news/signals?limit=5`,
+        exampleUrl: `${BACKEND_URL}/api/news/signals?limit=5`,
       },
       {
         id: "news-listings",
@@ -113,7 +112,7 @@ const API_GROUPS: ApiGroup[] = [
         name: "Listing Alerts",
         description: "New token listing and exchange announcement articles.",
         params: "?limit=5",
-        exampleUrl: `${BASE_URL}/api/news/listings?limit=5`,
+        exampleUrl: `${BACKEND_URL}/api/news/listings?limit=5`,
       },
       {
         id: "news-memes",
@@ -122,7 +121,7 @@ const API_GROUPS: ApiGroup[] = [
         name: "Meme Sentiment",
         description: "Meme coin social sentiment articles with source URL and publishedAt.",
         params: "?limit=5",
-        exampleUrl: `${BASE_URL}/api/news/memes?limit=5`,
+        exampleUrl: `${BACKEND_URL}/api/news/memes?limit=5`,
       },
     ],
   },

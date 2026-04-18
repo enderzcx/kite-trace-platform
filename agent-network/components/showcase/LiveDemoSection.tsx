@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fallbackCapabilities, type ShowcaseCapability } from "@/components/showcase/showcase-data";
+import { BACKEND_URL } from "@/lib/chain-config";
 
 type DemoPhase = "idle" | "discovering" | "session" | "payment" | "result" | "complete" | "error";
 type EvidencePayload = {
@@ -157,7 +158,7 @@ export default function LiveDemoSection({
   capabilities = fallbackCapabilities,
   selectedCapabilityId,
   onCapabilityChange,
-  publicEvidenceBaseUrl = "https://kiteclaw.duckdns.org",
+  publicEvidenceBaseUrl = BACKEND_URL,
 }: LiveDemoSectionProps) {
   const [activeCapabilityId, setActiveCapabilityId] = useState(
     normalizeCapability(capabilities, selectedCapabilityId).capabilityId

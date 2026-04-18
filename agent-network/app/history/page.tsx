@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, RefreshCcw, Search } from "lucide-react";
 
+import { txUrl } from "@/lib/chain-config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -165,7 +166,7 @@ export default function HistoryPage() {
             <div>
               <CardTitle className="text-2xl md:text-3xl">Audit History</CardTitle>
               <CardDescription className="text-slate-300">
-                Built on Kite testnet. Query historical x402 requests and download evidence packages or receipts.
+                Built on HashKey Testnet. Query historical x402 requests and download evidence packages or receipts.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -233,7 +234,7 @@ export default function HistoryPage() {
                           <div>
                             {txHash ? (
                               <a
-                                href={`https://testnet.kitescan.ai/tx/${txHash}`}
+                                href={txUrl(txHash)}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="font-mono text-cyan-300 underline decoration-cyan-400/40 underline-offset-2"

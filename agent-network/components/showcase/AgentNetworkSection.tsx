@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowUpRight, BadgeCheck, CheckCircle2, Copy } from "lucide-react";
 import { fallbackProviders, type ShowcaseCapability, type ShowcaseProvider } from "@/components/showcase/showcase-data";
+import { BACKEND_URL } from "@/lib/chain-config";
 
 interface AgentNetworkSectionProps {
   providers?: ShowcaseProvider[];
@@ -83,7 +84,6 @@ const AGENT_THEME: Record<
 };
 
 const DEFAULT_THEME = AGENT_THEME["fundamental-agent-real"];
-const BASE_URL = "https://kiteclaw.duckdns.org";
 const TABS: { id: CallTab; label: string }[] = [
   { id: "mcp", label: "MCP Tool" },
   { id: "claude", label: "Claude Prompt" },

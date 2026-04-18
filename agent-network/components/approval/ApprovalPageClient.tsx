@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { ethers } from "ethers";
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2, QrCode, ShieldCheck, Wallet } from "lucide-react";
+import { CHAIN_ID_DEC, RPC_URL, BACKEND_URL, ensureChain } from "@/lib/chain-config";
 
 declare global {
   interface Window {
@@ -114,14 +115,7 @@ type StepState = {
   detail: string;
 };
 
-const DEFAULT_BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/+$/, "") ||
-  process.env.BACKEND_URL?.replace(/\/+$/, "") ||
-  "http://127.0.0.1:3399";
-const KITE_CHAIN_ID_DEC = 2368;
-const KITE_CHAIN_HEX = "0x940";
-const KITE_RPC_URL = process.env.NEXT_PUBLIC_KITE_RPC_URL || "https://rpc-testnet.gokite.ai/";
-const KITE_BLOCK_EXPLORER = process.env.NEXT_PUBLIC_KITE_EXPLORER || "https://testnet.kitescan.ai";
+const DEFAULT_BACKEND_URL = BACKEND_URL;
 const WALLETCONNECT_PROJECT_ID = String(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "").trim();
 
 const ACCOUNT_ABI = [
@@ -198,29 +192,7 @@ function createSessionAuthorizationMessage(payload: ApprovalPayload, userEoa: st
 }
 
 async function ensureKiteChain(walletProvider: RequestCapableProvider) {
-  try {
-    await walletProvider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: KITE_CHAIN_HEX }],
-    });
-  } catch {
-    await walletProvider.request({
-      method: "wallet_addEthereumChain",
-      params: [
-        {
-          chainId: KITE_CHAIN_HEX,
-          chainName: "Kite Testnet",
-          nativeCurrency: {
-            name: "KITE",
-            symbol: "KITE",
-            decimals: 18,
-          },
-          rpcUrls: [KITE_RPC_URL],
-          blockExplorerUrls: [KITE_BLOCK_EXPLORER],
-        },
-      ],
-    });
-  }
+  return ensureChain(walletProvider);
 }
 
 async function fetchApproval(backendUrl: string, approvalRequestId: string, token: string) {
@@ -758,18 +730,18 @@ export default function ApprovalPageClient({
     const EthereumProvider = walletConnectModule.default;
     const provider = (await EthereumProvider.init({
       projectId: WALLETCONNECT_PROJECT_ID,
-      chains: [KITE_CHAIN_ID_DEC],
-      optionalChains: [KITE_CHAIN_ID_DEC],
+      chains: [CHAIN_ID_DEC],
+      optionalChains: [CHAIN_ID_DEC],
       rpcMap: {
-        [KITE_CHAIN_ID_DEC]: KITE_RPC_URL,
+        [CHAIN_ID_DEC]: RPC_URL,
       },
       showQrModal: true,
       methods: ["eth_sendTransaction", "personal_sign", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
       events: ["chainChanged", "accountsChanged", "disconnect"],
       metadata: {
-        name: "Kite Trace Platform",
+        name: "KTrace Platform",
         description: "Approve KTRACE agent-first session requests",
-        url: "https://kiteclaw.duckdns.org",
+        url: BACKEND_URL,
         icons: [],
       },
     })) as WalletConnectProviderLike;
@@ -1145,7 +1117,7 @@ export default function ApprovalPageClient({
                   Wallet actions
                 </p>
                 {[
-                  "Connect to Kite Testnet and verify request matches your EOA.",
+                  "Connect to HashKey Testnet and verify request matches your EOA.",
                   "Confirm the KTrace V2 AA wallet is already deployed, then authorize the session address.",
                   "Sign the final KTRACE approval — no owner key leaves the browser.",
                 ].map((line, i) => (

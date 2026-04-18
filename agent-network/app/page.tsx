@@ -7,10 +7,9 @@ import {
   type ShowcaseHealthStats,
   type ShowcaseProvider,
 } from "@/components/showcase/showcase-data";
+import { BACKEND_URL, addressUrl, CONTRACTS } from "@/lib/chain-config";
 
 export const dynamic = "force-dynamic";
-
-const BACKEND_URL = (process.env.BACKEND_URL || "https://kiteclaw.duckdns.org").replace(/\/+$/, "");
 
 function buildHeaders() {
   const apiKey = process.env.DEMO_API_KEY?.trim();
@@ -109,11 +108,11 @@ function mapProviders(
       aaWalletAddress,
       ownerWalletAddress,
       explorerUrl: aaWalletAddress
-        ? `https://testnet.kitescan.ai/address/${aaWalletAddress}`
+        ? addressUrl(aaWalletAddress)
         : fallback.explorerUrl,
       identityRegistryUrl:
         String(identity.registry || "")
-          ? `https://testnet.kitescan.ai/address/${String(identity.registry)}`
+          ? addressUrl(String(identity.registry))
           : fallback.identityRegistryUrl,
       capabilities: capabilities.filter(
         (capability) => capability.providerId === (providerId || fallback.providerId)

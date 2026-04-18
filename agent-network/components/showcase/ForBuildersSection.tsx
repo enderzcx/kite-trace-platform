@@ -5,9 +5,10 @@ import { Check, Copy, ExternalLink } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { BACKEND_URL } from "@/lib/chain-config";
 
 const consumerSnippet = `# Login once
-ktrace auth login --base-url https://kiteclaw.duckdns.org --api-key <agent-key>
+ktrace auth login --base-url ${BACKEND_URL} --api-key <agent-key>
 
 # Invoke in one CLI-only call
 ktrace agent invoke --capability cap-listing-alert --input '{"exchange":"all","limit":3}'
@@ -16,7 +17,7 @@ ktrace agent invoke --capability cap-listing-alert --input '{"exchange":"all","l
 ktrace artifact evidence <traceId>`;
 
 const providerSteps = [
-  "Register ERC-8004 identity on Kite testnet",
+  "Register ERC-8004 identity on HashKey Testnet",
   "Publish a Service Manifest with your endpoint",
   "Get approved and ranked in discovery",
   "Receive forwarded calls and return signed results",

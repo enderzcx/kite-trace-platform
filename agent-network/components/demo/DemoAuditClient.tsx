@@ -2,11 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle, ChevronDown, ExternalLink, FileText, ShieldCheck } from "lucide-react";
+import { BACKEND_URL, txUrl, addressUrl } from "@/lib/chain-config";
 
-const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "").replace(/\/+$/, "");
-const EXPLORER = (
-  process.env.NEXT_PUBLIC_KITE_EXPLORER ?? "https://testnet.kitescan.ai"
-).replace(/\/+$/, "");
+const BACKEND = BACKEND_URL;
 const ENV_JOB_ID = (process.env.NEXT_PUBLIC_DEMO_JOB_ID ?? "").trim();
 const FALLBACK_JOB_IDS = [
   ENV_JOB_ID,
@@ -204,7 +202,7 @@ function TxLink({ hash, label }: { hash?: string; label?: string }) {
   if (!hash) return <span className="text-[#b0a08a]">—</span>;
   return (
     <a
-      href={`${EXPLORER}/tx/${hash}`}
+      href={txUrl(hash)}
       target="_blank"
       rel="noreferrer"
       className="inline-flex items-center gap-1 font-mono text-[11px] text-[#3a4220] transition hover:opacity-70"
@@ -560,7 +558,7 @@ export default function DemoAuditClient() {
                   {label}
                 </span>
                 <a
-                  href={`${EXPLORER}/address/${value}`}
+                  href={addressUrl(value!)}
                   target="_blank"
                   rel="noreferrer"
                   className="min-w-0 truncate font-mono text-[11px] text-[#3a4220] transition hover:opacity-70"
@@ -579,7 +577,7 @@ export default function DemoAuditClient() {
       </main>
 
       <footer className="border-t border-[rgba(90,80,50,0.1)] py-6 text-center text-[11px] text-[#b0a08a]">
-        Kite Trace Platform — Kite Testnet
+        KTrace Platform — HashKey Testnet
       </footer>
     </div>
   );

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserProvider, Contract, JsonRpcProvider, Wallet, getAddress, getBytes, isAddress, keccak256, parseUnits, toBeHex, toUtf8Bytes, zeroPadValue } from "ethers";
+import { CHAIN_ID_DEC as CHAIN_CHAIN_ID_DEC, RPC_URL as CHAIN_RPC_URL, BACKEND_URL as CHAIN_BACKEND_URL, BLOCK_EXPLORER_URL as CHAIN_BLOCK_EXPLORER_URL, CONTRACTS, ensureChain, txUrl, addressUrl } from "@/lib/chain-config";
 import {
   AlertCircle,
   Check,
@@ -176,7 +177,7 @@ type EthProvider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
 };
 
-const KITE_TESTNET_CHAIN_ID = 2368;
+const KITE_TESTNET_CHAIN_ID = CHAIN_CHAIN_ID_DEC;
 const AA_SESSION_ABI = [
   "function addSupportedToken(address token) external",
   "function createSession(bytes32 sessionId, address agent, tuple(uint256 timeWindow,uint160 budget,uint96 initialWindowStartTime,bytes32[] targetProviders)[] rules) external",
@@ -206,16 +207,16 @@ const IDENTITY_REGISTRY_ABI = [
   "function getAgentWallet(uint256 agentId) view returns (address)",
   "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
 ];
-const DEFAULT_IDENTITY_REGISTRY = process.env.NEXT_PUBLIC_IDENTITY_REGISTRY?.trim() || "";
+const DEFAULT_IDENTITY_REGISTRY = CONTRACTS.identityRegistry;
 const SUGGEST_SETTLEMENT = "0.5";
 const KTRACE_SETUP_MODE = process.env.NEXT_PUBLIC_KTRACE_SETUP_MODE?.trim().toLowerCase() === "local"
   ? "local"
   : "remote";
-const KITE_READ_RPC_URL = process.env.NEXT_PUBLIC_KITE_RPC_URL?.trim() || "";
+const KITE_READ_RPC_URL = CHAIN_RPC_URL;
 const LOCAL_CONNECTOR_CLIENT = "inspector";
 const LOCAL_CONNECTOR_CLIENT_ID = "local-setup";
-const LOCAL_BACKEND_BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://127.0.0.1:3217").replace(/\/+$/, "");
-const PUBLIC_KTRACE_BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "https://kiteclaw.duckdns.org").replace(/\/+$/, "");
+const LOCAL_BACKEND_BASE_URL = CHAIN_BACKEND_URL;
+const PUBLIC_KTRACE_BASE_URL = CHAIN_BACKEND_URL;
 const PUBLIC_MCP_ENDPOINT = `${PUBLIC_KTRACE_BASE_URL}/mcp/stream`;
 const PUBLIC_MCP_WELL_KNOWN = `${PUBLIC_KTRACE_BASE_URL}/.well-known/mcp.json`;
 const LOCAL_SESSION_RUNTIME_STORAGE_KEY = "ktrace.localSessionRuntime.v1";
@@ -233,9 +234,9 @@ function getBrowserProvider() {
 let cachedReadOnlyProvider: JsonRpcProvider | null = null;
 
 function getReadOnlyProvider() {
-  if (!KITE_READ_RPC_URL) return null;
+  if (!CHAIN_RPC_URL) return null;
   if (!cachedReadOnlyProvider) {
-    cachedReadOnlyProvider = new JsonRpcProvider(KITE_READ_RPC_URL, "any");
+    cachedReadOnlyProvider = new JsonRpcProvider(CHAIN_RPC_URL, "any");
   }
   return cachedReadOnlyProvider;
 }
@@ -380,7 +381,7 @@ function buildLocalSessionRuntimeExport(
       agentId: runtime.agentId ?? "",
       agentWallet: runtime.agentWallet ?? "",
       identityRegistry: runtime.identityRegistry ?? "",
-      chainId: runtime.chainId ?? "kite-testnet",
+      chainId: runtime.chainId ?? "hashkey-testnet",
       runtimePurpose: "consumer",
       source: "browser_setup_local_only",
     },
@@ -388,17 +389,7 @@ function buildLocalSessionRuntimeExport(
 }
 
 async function ensureKiteTestnet(eth: EthProvider) {
-  const chainHex = `0x${KITE_TESTNET_CHAIN_ID.toString(16)}`;
-  const current = (await eth.request({ method: "eth_chainId" })) as string;
-  if (String(current).toLowerCase() === chainHex.toLowerCase()) return;
-  try {
-    await eth.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: chainHex }],
-    });
-  } catch {
-    throw new Error("Please switch your wallet to KiteAI Testnet before continuing.");
-  }
+  return ensureChain(eth);
 }
 
 async function getBalance(eth: EthProvider, address: string): Promise<number | null> {
@@ -471,7 +462,7 @@ function parseRuntime(json: Record<string, unknown>): SessionRuntime {
         (authorizationPayload.identityRegistry as string | undefined),
       identityRegisterTxHash: pick("identityRegisterTxHash"),
       identityBindTxHash: pick("identityBindTxHash"),
-      chainId: pick("chainId") ?? "kite-testnet",
+      chainId: pick("chainId") ?? "hashkey-testnet",
     payerAaWallet: resolvedPayerAaWallet,
     tokenAddress: pick("tokenAddress"),
     gatewayRecipient: pick("gatewayRecipient"),
@@ -1669,13 +1660,13 @@ function FundStep({
                   <MonoField value={address} wrap copyValue={address} />
                 </div>
                 <a
-                  href="https://faucet.gokite.ai/"
+                  href="https://faucet.hashkeychain.net/"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 self-start rounded-full border border-[rgba(58,66,32,0.22)] bg-[rgba(58,66,32,0.06)] px-4 py-2 text-[12px] font-semibold text-[#3a4220] transition hover:bg-[rgba(58,66,32,0.1)]"
                 >
                   <ExternalLink className="size-3.5" />
-                  Open faucet.gokite.ai
+                  Open faucet.hashkeychain.net
                 </a>
               </div>
             )}
@@ -3226,7 +3217,7 @@ function DeveloperSetupPanel({
                         <PrimaryBtn
                           onClick={() => {
                             const r = localSessionRuntimeExport.runtime;
-                            const backendUrl = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://kiteclaw.duckdns.org").replace(/\/+$/, "");
+                            const backendUrl = CHAIN_BACKEND_URL;
                             const bat = [
                               "@echo off",
                               "chcp 65001 >nul",
@@ -3256,7 +3247,7 @@ function DeveloperSetupPanel({
                         </PrimaryBtn>
                       </div>
                       <p className="text-[10px] text-[#9e8e76]">
-                        Requires Node.js 18+. macOS / Linux: <code className="font-mono">curl -sL {(process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://kiteclaw.duckdns.org").replace(/\/+$/, "")}/connector/install.sh | bash</code>
+                        Requires Node.js 18+. macOS / Linux: <code className="font-mono">curl -sL {CHAIN_BACKEND_URL}/connector/install.sh | bash</code>
                       </p>
                     </div>
                   </>
@@ -3449,7 +3440,7 @@ function ConnectStep4({
                     <PrimaryBtn
                       onClick={() => {
                         const r = localSessionRuntimeExport.runtime;
-                        const backendUrl = typeof window !== "undefined" ? window.location.origin : "https://kiteclaw.duckdns.org";
+                        const backendUrl = typeof window !== "undefined" ? window.location.origin : CHAIN_BACKEND_URL;
                         const bat = [
                           "@echo off",
                           "chcp 65001 >nul",
@@ -3820,7 +3811,7 @@ function RegisterIdentityStep({
               <div className="flex items-center justify-between">
                 <span className="text-[#7a6e56]">Register Tx</span>
                 <a
-                  href={`https://testnet.kitescan.ai/tx/${registerTxHash}`}
+                  href={txUrl(registerTxHash)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1 font-mono text-[11px] text-[#3a4220] hover:underline"
@@ -3833,7 +3824,7 @@ function RegisterIdentityStep({
               <div className="flex items-center justify-between">
                 <span className="text-[#7a6e56]">Bind Wallet Tx</span>
                 <a
-                  href={`https://testnet.kitescan.ai/tx/${walletTxHash}`}
+                  href={txUrl(walletTxHash)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1 font-mono text-[11px] text-[#3a4220] hover:underline"
@@ -4309,7 +4300,7 @@ export default function SetupWizardClient({ capabilities }: Props) {
                 }
                 sub={
                   sessionStepCompleted
-                    ? "Authority recorded on Kite Testnet"
+                    ? "Authority recorded on HashKey Testnet"
                     : setupSnapshot.sessionAuthorized && setupSnapshot.hasLocalSessionExport
                       ? "Authorized session and local runtime already available."
                       : KTRACE_SETUP_MODE === "local"

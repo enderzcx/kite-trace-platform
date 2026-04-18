@@ -1,3 +1,5 @@
+import { CONTRACTS, addressUrl } from "@/lib/chain-config";
+
 export interface ShowcaseHealthStats {
   agentsLive: number;
   capabilityCount: number;
@@ -35,7 +37,7 @@ export interface ShowcaseProvider {
 export const fallbackHealthStats: ShowcaseHealthStats = {
   agentsLive: 5,
   capabilityCount: 20,
-  network: "Kite Testnet",
+  network: "HashKey Testnet",
   standards: "ERC-8004 + ERC-8183",
 };
 
@@ -232,8 +234,8 @@ export const fallbackProviders: ShowcaseProvider[] = [
     description: "Agent task delegation via ERC-8183 escrow",
     aaWalletAddress: "0x82aa6a609f5a18bb51d1ea25617b3c61db647b70",
     ownerWalletAddress: "0xf02fe12689e5026707d1be150b268e0fa5a37320",
-    explorerUrl: "https://testnet.kitescan.ai/address/0x82aa6a609f5a18bb51d1ea25617b3c61db647b70",
-    identityRegistryUrl: "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    explorerUrl: addressUrl("0x82aa6a609f5a18bb51d1ea25617b3c61db647b70"),
+    identityRegistryUrl: addressUrl(CONTRACTS.identityRegistry),
     capabilities: fallbackCapabilities.filter((c) => c.providerId === "request-agent-real"),
   },
   {
@@ -243,8 +245,8 @@ export const fallbackProviders: ShowcaseProvider[] = [
     description: "Result verification and on-chain audit trail",
     aaWalletAddress: "0x4b666887c452c0cd828fe4c9d5b78f33f5d636e4",
     ownerWalletAddress: "0x831c5c93a221d8508ad4808c2a64d58b15f77c85",
-    explorerUrl: "https://testnet.kitescan.ai/address/0x4b666887c452c0cd828fe4c9d5b78f33f5d636e4",
-    identityRegistryUrl: "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    explorerUrl: addressUrl("0x4b666887c452c0cd828fe4c9d5b78f33f5d636e4"),
+    identityRegistryUrl: addressUrl(CONTRACTS.identityRegistry),
     capabilities: fallbackCapabilities.filter((c) => c.providerId === "verify-agent-real"),
   },
   {
@@ -254,9 +256,8 @@ export const fallbackProviders: ShowcaseProvider[] = [
     description: "Low-cost data primitives",
     aaWalletAddress: "0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
     ownerWalletAddress: "0x109654551fb904f9d671d5cfc35c3f90e2a830c5",
-    explorerUrl: "https://testnet.kitescan.ai/address/0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
-    identityRegistryUrl:
-      "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    explorerUrl: addressUrl("0x443b4933447c12ce7c72d0e9c78d154a4578d2c2"),
+    identityRegistryUrl: addressUrl(CONTRACTS.identityRegistry),
     capabilities: fallbackCapabilities.filter(
       (capability) => capability.providerId === "data-node-real"
     ),
@@ -268,9 +269,8 @@ export const fallbackProviders: ShowcaseProvider[] = [
     description: "News & social intelligence",
     aaWalletAddress: "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
     ownerWalletAddress: "0x28172e0d973fff24651b6ed4ca6d1007bc168c94",
-    explorerUrl: "https://testnet.kitescan.ai/address/0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
-    identityRegistryUrl:
-      "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    explorerUrl: addressUrl("0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2"),
+    identityRegistryUrl: addressUrl(CONTRACTS.identityRegistry),
     capabilities: fallbackCapabilities.filter(
       (capability) => capability.providerId === "fundamental-agent-real"
     ),
@@ -282,9 +282,8 @@ export const fallbackProviders: ShowcaseProvider[] = [
     description: "On-chain & DEX intelligence",
     aaWalletAddress: "0x09e116d198318eec9402893f00958123e980521b",
     ownerWalletAddress: "0x4220fc0cec70897575117100d5bc9489ed1b13ac",
-    explorerUrl: "https://testnet.kitescan.ai/address/0x09e116d198318eec9402893f00958123e980521b",
-    identityRegistryUrl:
-      "https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    explorerUrl: addressUrl("0x09e116d198318eec9402893f00958123e980521b"),
+    identityRegistryUrl: addressUrl(CONTRACTS.identityRegistry),
     capabilities: fallbackCapabilities.filter(
       (capability) => capability.providerId === "technical-agent-real"
     ),

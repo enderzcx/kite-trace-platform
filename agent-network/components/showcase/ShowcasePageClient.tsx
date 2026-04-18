@@ -11,6 +11,7 @@ import {
   type ShowcaseProvider,
 } from "@/components/showcase/showcase-data";
 import { Github, Zap } from "lucide-react";
+import { BACKEND_URL, CONTRACTS, addressUrl } from "@/lib/chain-config";
 
 interface ShowcasePageClientProps {
   healthStats?: ShowcaseHealthStats;
@@ -115,7 +116,7 @@ export default function ShowcasePageClient({
             </span>
             <div>
               <p className="text-[13px] font-semibold text-[#18180e]">Kite Trace Platform</p>
-              <p className="text-[12px] text-[#9e8e76]">Trust · Commerce · Audit on Kite Testnet</p>
+              <p className="text-[12px] text-[#9e8e76]">Trust · Commerce · Audit on HashKey Testnet</p>
             </div>
           </div>
           <div className="flex items-center gap-5 text-[12px] text-[#9e8e76]">
@@ -140,7 +141,7 @@ export default function ShowcasePageClient({
               GitHub
             </a>
             <a
-              href="https://testnet.kitescan.ai/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1"
+              href={addressUrl(CONTRACTS.identityRegistry)}
               target="_blank"
               rel="noreferrer"
               className="transition hover:text-[#3a4220]"
@@ -148,7 +149,7 @@ export default function ShowcasePageClient({
               Identity Registry
             </a>
             <a
-              href="https://kiteclaw.duckdns.org/api/public/health"
+              href={`${BACKEND_URL}/api/public/health`}
               target="_blank"
               rel="noreferrer"
               className="transition hover:text-[#3a4220]"

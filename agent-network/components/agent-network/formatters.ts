@@ -1,3 +1,5 @@
+import { txUrl as txUrlFromConfig } from "@/lib/chain-config";
+
 export function shortHash(v: string): string {
   if (!v) return "-";
   if (v.length < 18) return v;
@@ -174,7 +176,7 @@ export function friendlyErrorMessage(error: unknown): string {
 
 export function txExplorerUrl(txHash: string): string {
   if (!/^0x[a-fA-F0-9]{64}$/.test(String(txHash || "").trim())) return "";
-  return `https://testnet.kitescan.ai/tx/${txHash}`;
+  return txUrlFromConfig(txHash);
 }
 
 export function formatTxTime(iso = ""): string {

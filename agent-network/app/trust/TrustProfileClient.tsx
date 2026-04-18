@@ -9,16 +9,7 @@ import {
   ShieldCheck,
   TrendingUp,
 } from "lucide-react";
-
-// ── Config ────────────────────────────────────────────────────────────────────
-
-const BACKEND_URL = (
-  process.env.NEXT_PUBLIC_BACKEND_URL || "https://kiteclaw.duckdns.org"
-).replace(/\/+$/, "");
-
-const KITE_EXPLORER = (
-  process.env.NEXT_PUBLIC_KITE_EXPLORER || "https://testnet.kitescan.ai"
-).replace(/\/+$/, "");
+import { BACKEND_URL, CONTRACTS, txUrl, addressUrl } from "@/lib/chain-config";
 
 const USE_MOCK = process.env.NEXT_PUBLIC_TRUST_MOCK === "true";
 
@@ -71,15 +62,15 @@ const MOCK_PROFILE: ChainProfile = {
   identity: {
     tokenId: "42",
     ownerOf: "0x7C3a98E5B1a3dE1F5c0a9B2e8D4f6A0E9C1b3D5f",
-    registry: "0x60BF18964FCB1B2E987732B0477E51594B3659B1",
-    registryUrl: `${KITE_EXPLORER}/address/0x60BF18964FCB1B2E987732B0477E51594B3659B1`,
+    registry: CONTRACTS.identityRegistry,
+    registryUrl: addressUrl(CONTRACTS.identityRegistry),
   },
   onchain: {
     configured: true,
     anchorCount: 24,
     latestAnchorId: "88",
     latestAnchorTxHash: "0xabc123def456789012345678901234567890abcdef1234567890abcdef123456",
-    registryAddress: "0x60BF18964FCB1B2E987732B0477E51594B3659B1",
+    registryAddress: CONTRACTS.identityRegistry,
   },
   reputation: {
     totalSignals: 24,
@@ -224,12 +215,12 @@ function IdentityCard({ profile }: { profile: ChainProfile }) {
       </p>
       {id.registry ? (
         <a
-          href={`${KITE_EXPLORER}/address/${id.registry}`}
+          href={addressUrl(id.registry)}
           target="_blank"
           rel="noreferrer"
           className="mt-2 inline-flex items-center gap-1 text-[11px] text-[#3a4220] transition hover:underline"
         >
-          Registry on Kitescan
+          Registry on Explorer
           <ExternalLink className="size-3 opacity-60" />
         </a>
       ) : null}
@@ -284,7 +275,7 @@ function AnchorsCard({ profile }: { profile: ChainProfile }) {
       </p>
       {o.latestAnchorTxHash ? (
         <a
-          href={`${KITE_EXPLORER}/tx/${o.latestAnchorTxHash}`}
+          href={txUrl(o.latestAnchorTxHash)}
           target="_blank"
           rel="noreferrer"
           className="mt-2 inline-flex items-center gap-1 text-[11px] text-[#3a4220] transition hover:underline"
@@ -319,7 +310,7 @@ function PublicationsList({ items }: { items: Publication[] }) {
               </span>
               {pub.anchorTxHash ? (
                 <a
-                  href={`${KITE_EXPLORER}/tx/${pub.anchorTxHash}`}
+                  href={txUrl(pub.anchorTxHash)}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 text-[11px] text-[#3a4220] transition hover:underline"
@@ -352,16 +343,16 @@ function VerificationNotice({ registryAddress }: { registryAddress?: string }) {
           <p className="mt-1 text-[11px] leading-relaxed text-[#7a6e56]">
             All on-chain records above can be independently verified via the{" "}
             <span className="font-medium text-[#3a4220]">TrustPublicationAnchorV1</span> contract on
-            Kite Testnet. No trust in this platform is required.
+            HashKey Testnet. No trust in this platform is required.
           </p>
           {registryAddress ? (
             <a
-              href={`${KITE_EXPLORER}/address/${registryAddress}`}
+              href={addressUrl(registryAddress)}
               target="_blank"
               rel="noreferrer"
               className="mt-2 inline-flex items-center gap-1 text-[11px] text-[#3a4220] transition hover:underline"
             >
-              View contract on Kitescan
+              View contract on Explorer
               <ExternalLink className="size-3 opacity-60" />
             </a>
           ) : null}
@@ -482,7 +473,7 @@ export default function TrustProfileClient() {
           </h2>
           <p className="max-w-xl text-[14px] leading-relaxed text-[#7a6e56]">
             Enter an Agent ID to see its full on-chain trust profile — identity, reputation, and
-            anchored publications. Every record is independently verifiable on Kite Testnet.
+            anchored publications. Every record is independently verifiable on HashKey Testnet.
           </p>
         </motion.div>
 

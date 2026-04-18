@@ -1,12 +1,7 @@
 import { notFound } from "next/navigation";
 import JobAuditView from "@/components/jobs/JobAuditView";
 import type { JobAudit, TraceAnchor } from "@/components/jobs/JobAuditView";
-
-const BACKEND_URL = (
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  process.env.BACKEND_URL ||
-  "https://kiteclaw.duckdns.org"
-).replace(/\/+$/, "");
+import { BACKEND_URL } from "@/lib/chain-config";
 
 export const dynamic = "force-dynamic";
 

@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:3399").replace(/\/+$/, "");
+
 export const metadata: Metadata = {
-  title: "Kite Trace Platform",
-  description: "Trust + Commerce + Audit for open agent networks on Kite testnet.",
+  title: "KTrace Platform",
+  description: "Trust + Commerce + Audit for open agent networks on HashKey Testnet.",
   openGraph: {
-    title: "Kite Trace Platform",
-    description: "Discover services, pay via AA sessions, and export audit evidence on Kite testnet.",
-    url: "https://kiteclaw.duckdns.org",
-    siteName: "Kite Trace Platform",
+    title: "KTrace Platform",
+    description: "Discover services, pay via AA sessions, and export audit evidence on HashKey Testnet.",
+    url: BACKEND_URL,
+    siteName: "KTrace Platform",
     type: "website",
   },
 };

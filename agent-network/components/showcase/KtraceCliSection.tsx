@@ -3,8 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { CheckCircle2, Copy } from "lucide-react";
-
-const BASE = "https://kiteclaw.duckdns.org";
+import { BACKEND_URL } from "@/lib/chain-config";
 
 function useClipboard(ms = 1600) {
   const [copied, setCopied] = useState<string | null>(null);
@@ -154,7 +153,7 @@ function StepCard({
   );
 }
 
-const MCP_ENDPOINT = `${BASE}/mcp`;
+const MCP_ENDPOINT = `${BACKEND_URL}/mcp`;
 
 function CopyLine({
   label,

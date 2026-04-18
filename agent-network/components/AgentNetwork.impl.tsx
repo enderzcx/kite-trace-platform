@@ -2459,7 +2459,7 @@ export default function AgentNetwork({ backendBaseUrl, auditMaxEntries = 200 }: 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle className="flex items-center gap-2 text-lg text-emerald-200">
               <Cpu className="size-4" />
-              {tr("Kite Trace Platform", "Kite Trace Platform")}
+              {tr("KTrace Platform", "KTrace Platform")}
             </CardTitle>
             <div className="flex items-center gap-1 rounded-lg border border-white/15 bg-black/30 p-1">
               <Button
@@ -2482,8 +2482,8 @@ export default function AgentNetwork({ backendBaseUrl, auditMaxEntries = 200 }: 
           </div>
           <CardDescription className="text-slate-300">
             {tr(
-              "基于 Kite 测试网打造：BTC K线 + Hyperliquid 测试网仓位 + Agent001 交易计划 + 手动执行。",
-              "Built on Kite testnet: BTC K-line + Hyperliquid testnet positions + Agent001 trade plan + manual execution."
+              "基于 HashKey 测试网打造：BTC K线 + Hyperliquid 测试网仓位 + Agent001 交易计划 + 手动执行。",
+              "Built on HashKey Testnet: BTC K-line + Hyperliquid testnet positions + Agent001 trade plan + manual execution."
             )}
           </CardDescription>
           <div className="flex flex-wrap items-center gap-2">

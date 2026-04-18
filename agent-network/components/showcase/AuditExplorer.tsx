@@ -12,12 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type { JobAudit } from "@/components/jobs/JobAuditView";
-
-// ── Config ────────────────────────────────────────────────────────────────────
-
-const BACKEND_URL = (
-  process.env.NEXT_PUBLIC_BACKEND_URL || "https://kiteclaw.duckdns.org"
-).replace(/\/+$/, "");
+import { BACKEND_URL, txUrl } from "@/lib/chain-config";
 
 const DEMO_JOB_ID = process.env.NEXT_PUBLIC_DEMO_JOB_ID || "";
 
@@ -438,7 +433,7 @@ function ResultCard({ audit }: { audit: JobAudit }) {
                   <div className="flex items-baseline gap-2">
                     <span className="text-[#9e8e76]">anchorTxHash</span>
                     <a
-                      href={`https://testnet.kitescan.ai/tx/${audit.traceAnchor.anchor.txHash}`}
+                      href={txUrl(audit.traceAnchor.anchor.txHash)}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1 text-[#3a4220] transition hover:underline"

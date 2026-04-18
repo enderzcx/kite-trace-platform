@@ -275,7 +275,7 @@ function buildLocalSessionRuntimeExport(
       agentId: runtime.agentId ?? "",
       agentWallet: runtime.agentWallet ?? "",
       identityRegistry: runtime.identityRegistry ?? "",
-      chainId: runtime.chainId ?? "kite-testnet",
+      chainId: runtime.chainId ?? "hashkey-testnet",
       runtimePurpose: "consumer",
       source: "browser_setup_local_only",
     },
@@ -327,7 +327,7 @@ function parseRuntime(json: Record<string, unknown>): SessionRuntime {
     identityRegistry:
       pick("identityRegistry") ??
       (authorizationPayload.identityRegistry as string | undefined),
-    chainId: pick("chainId") ?? "kite-testnet",
+    chainId: pick("chainId") ?? "hashkey-testnet",
     payerAaWallet: resolvedPayerAaWallet,
     tokenAddress: pick("tokenAddress"),
     sessionId: pick("sessionId"),
@@ -385,7 +385,7 @@ function fullyReadyRuntime(): SessionRuntime {
     runtimeHealth: "active_default",
     accountVersion: "GokiteAccountV3-session-execute",
     aaDeployed: true,
-    chainId: "kite-testnet",
+    chainId: "hashkey-testnet",
   };
 }
 
@@ -407,7 +407,7 @@ function fullyReadyLocalExport(owner = "0xowner"): LocalSessionRuntimeExport {
       agentId: "42",
       agentWallet: "0xaawallet",
       identityRegistry: "0xregistry",
-      chainId: "kite-testnet",
+      chainId: "hashkey-testnet",
       runtimePurpose: "consumer",
       source: "browser_setup_local_only",
     },
@@ -501,7 +501,7 @@ describe("extractConnectorToken()", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("buildLocalConnectorUrl()", () => {
   it("builds a local URL from a remote connector URL", () => {
-    const remote = "https://kiteclaw.duckdns.org/mcp/connect/abc123";
+    const remote = "https://kiteclaw.duckdns.org/hashkey/mcp/connect/abc123";
     expect(buildLocalConnectorUrl(remote)).toBe("http://127.0.0.1:3217/mcp/connect/abc123");
   });
 
@@ -584,7 +584,7 @@ describe("parseRuntime()", () => {
       identityRegistry: "0xreg",
       sessionId: "0xsess",
       sessionAddress: "0xsessaddr",
-      chainId: "kite-testnet",
+      chainId: "hashkey-testnet",
     };
     const rt = parseRuntime(json);
     expect(rt.aaWallet).toBe("0xaa");
@@ -638,9 +638,9 @@ describe("parseRuntime()", () => {
     expect(rt.aaWallet).toBe("0xpayer");
   });
 
-  it("defaults chainId to 'kite-testnet' when absent", () => {
+  it("defaults chainId to 'hashkey-testnet' when absent", () => {
     const rt = parseRuntime({});
-    expect(rt.chainId).toBe("kite-testnet");
+    expect(rt.chainId).toBe("hashkey-testnet");
   });
 
   it("infers aaDeployed from accountVersion presence", () => {
@@ -753,7 +753,7 @@ describe("hasUsableLocalSessionRuntime()", () => {
       agentId: "1",
       agentWallet: "0xaw",
       identityRegistry: "0xreg",
-      chainId: "kite-testnet",
+      chainId: "hashkey-testnet",
       runtimePurpose: "consumer" as const,
       source: "browser_setup_local_only",
       ...overrides,
@@ -810,7 +810,7 @@ describe("hasUsableLocalSessionRuntime()", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("buildLocalSessionRuntimeExport()", () => {
   it("produces the correct schema tag", () => {
-    const rt: SessionRuntime = { aaWallet: "0xaa", tokenAddress: "0xtoken", chainId: "kite-testnet" };
+    const rt: SessionRuntime = { aaWallet: "0xaa", tokenAddress: "0xtoken", chainId: "hashkey-testnet" };
     const result = buildLocalSessionRuntimeExport(rt, "0xprivkey", {
       owner: "0xowner",
       sessionAddress: "0xsessaddr",
@@ -850,13 +850,13 @@ describe("buildLocalSessionRuntimeExport()", () => {
     expect(result.runtime.aaWallet).toBe("0xpayer");
   });
 
-  it("defaults chainId to kite-testnet when runtime has none", () => {
+  it("defaults chainId to hashkey-testnet when runtime has none", () => {
     const rt: SessionRuntime = {};
     const result = buildLocalSessionRuntimeExport(rt, "0xpk", {
       owner: "0xo", sessionAddress: "0xsa", sessionId: "0xsi",
       sessionTxHash: "0xtx", singleLimit: "0", dailyLimit: "0",
     });
-    expect(result.runtime.chainId).toBe("kite-testnet");
+    expect(result.runtime.chainId).toBe("hashkey-testnet");
   });
 
   it("sets createdAt close to Date.now()", () => {

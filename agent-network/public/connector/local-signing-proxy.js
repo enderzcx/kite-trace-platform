@@ -111,12 +111,12 @@ async function buildAndSignTransferUserOp({
     entryPointAddress,
     accountFactoryAddress,
     accountImplementationAddress,
-    chainId = 2368
+    chainId = 133
   } = signingContext;
 
   const provider = new ethers.JsonRpcProvider(
     signingContext.rpcUrl || bundlerUrl,
-    { chainId: Number(chainId), name: signingContext.networkName || 'kite_testnet' }
+    { chainId: Number(chainId), name: signingContext.networkName || 'hashkey_testnet' }
   );
 
   // Build callData: ERC20 transfer(recipient, amount)
