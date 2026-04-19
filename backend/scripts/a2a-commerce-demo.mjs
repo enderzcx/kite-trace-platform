@@ -405,10 +405,12 @@ async function main() {
 
     const amountRaw = ethers.parseUnits(quote.amount, quote.decimals || 6);
     const nowSec = Math.floor(Date.now() / 1000);
+    const quoteToken = quote.tokenAddress || quote.asset;
+    const quoteRecipient = quote.recipient || quote.payTo;
     const authPayload = {
       from: aaWalletA,
-      to: quote.payTo,
-      token: quote.asset,
+      to: quoteRecipient,
+      token: quoteToken,
       value: amountRaw,
       validAfter: BigInt(Math.max(0, nowSec - 30)),
       validBefore: BigInt(nowSec + 10 * 60),
@@ -416,7 +418,7 @@ async function main() {
     };
 
     const sessionId = ethers.keccak256(ethers.toUtf8Bytes(`a2a-demo-A-${Date.now()}`));
-    const serviceProvider = ethers.keccak256(ethers.toUtf8Bytes(`x402_payment:requester:${quote.asset}`));
+    const serviceProvider = ethers.keccak256(ethers.toUtf8Bytes(`x402_payment:requester:${quoteToken}`));
 
     log.step('PHASE 4', 'Signing transfer authorization...');
     const authSignature = await paymentSdk.buildTransferAuthorizationSignature(sessionWalletA, authPayload);
@@ -449,8 +451,9 @@ async function main() {
           requestId,
           paymentProof: {
             txHash: paymentResult.transactionHash,
-            tokenAddress: quote.asset,
-            recipient: quote.payTo,
+            requestId,
+            tokenAddress: quoteToken,
+            recipient: quoteRecipient,
             amount: quote.amount
           }
         }

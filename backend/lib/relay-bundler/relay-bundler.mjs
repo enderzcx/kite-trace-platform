@@ -23,9 +23,9 @@ const ENTRYPOINT_ABI = [
 ];
 
 const ENTRYPOINT_V0_7_ABI = [
-  'function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes)[],address) returns',
+  'function handleOps(tuple(address sender,uint256 nonce,bytes initCode,bytes callData,uint256 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature)[] ops, address payable beneficiary) external',
   'function getNonce(address,uint192) view returns (uint256)',
-  'function getUserOpHash((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes)) view returns (bytes32)'
+  'function getUserOpHash(tuple(address sender,uint256 nonce,bytes initCode,bytes callData,uint256 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature)) view returns (bytes32)'
 ];
 
 const RECEIPT_TOPIC = '0x4b2c8e4a7f4f5b3e2d1a0c9b8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8';
@@ -47,16 +47,23 @@ function parseUserOp(obj) {
 }
 
 function userOpToTuple(op) {
+  // EntryPoint v0.7 PackedUserOperation: accountGasLimits and gasFees are packed
+  const accountGasLimits = ethers.solidityPacked(
+    ['uint128', 'uint128'],
+    [op.verificationGasLimit || 0n, op.callGasLimit || 0n]
+  );
+  const gasFees = ethers.solidityPacked(
+    ['uint128', 'uint128'],
+    [op.maxPriorityFeePerGas || 0n, op.maxFeePerGas || 0n]
+  );
   return [
     op.sender,
     op.nonce,
     op.initCode,
     op.callData,
-    op.callGasLimit,
-    op.verificationGasLimit,
+    BigInt(accountGasLimits),
     op.preVerificationGas,
-    op.maxFeePerGas,
-    op.maxPriorityFeePerGas,
+    gasFees,
     op.paymasterAndData,
     op.signature
   ];
