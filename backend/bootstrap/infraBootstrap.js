@@ -822,7 +822,11 @@ export async function infraBootstrap(ctx) {
     }
   }
 
-  await ensureManagedJobLaneRoleRuntimes();
+  if (!String(process.env.KITE_SKIP_MANAGED_ROLES || '').trim()) {
+    await ensureManagedJobLaneRoleRuntimes();
+  } else {
+    console.log('[infra] Skipping managed role runtimes (KITE_SKIP_MANAGED_ROLES set)');
+  }
 
   applyRuntimeServerMiddleware(app, {
     adminKey: KTRACE_ADMIN_KEY,
