@@ -75,16 +75,28 @@ async function fetchJSON(url, opts = {}) {
   return res.json();
 }
 
-async function deployAAWallet(sdk) {
-  const lifecycle = await sdk.getAccountLifecycle();
-  if (lifecycle.deployed) {
-    log.info('WALLET', `AA wallet already deployed: ${lifecycle.accountAddress}`);
-    return lifecycle.accountAddress;
+async function deployAAWallet(sdk, signer) {
+  if (!sdk.config.proxyAddress) {
+    throw new Error('AA wallet address not set. Call ensureAccountAddress(owner) first.');
   }
-  log.step('WALLET', `Deploying AA wallet...`);
-  const txHash = await sdk.deployAccount();
-  log.success('WALLET', `Deployed: ${lifecycle.accountAddress} (tx: ${HASHKEY_CONFIG.explorerUrl}/tx/${txHash})`);
-  return lifecycle.accountAddress;
+  const deployed = await sdk.isAccountDeployed(sdk.config.proxyAddress);
+  if (deployed) {
+    log.info('WALLET', `AA wallet already deployed: ${sdk.config.proxyAddress}`);
+    return sdk.config.proxyAddress;
+  }
+  log.step('WALLET', `Deploying AA wallet via UserOp with initCode...`);
+  const signFunction = async (userOpHash) => signer.signMessage(ethers.getBytes(userOpHash));
+  const result = await sdk.sendRawCallDataUserOperationAndWait('0x', signFunction, {
+    callGasLimit: 420000n,
+    verificationGasLimit: 1800000n,
+    preVerificationGas: 350000n
+  });
+  if (result?.transactionHash) {
+    log.success('WALLET', `Deployed: ${sdk.config.proxyAddress} (tx: ${HASHKEY_CONFIG.explorerUrl}/tx/${result.transactionHash})`);
+  } else {
+    log.error('WALLET', `Deploy failed: ${result?.reason || result?.status || 'unknown'}`);
+  }
+  return sdk.config.proxyAddress;
 }
 
 function createSessionWallet() {
@@ -250,7 +262,7 @@ async function main() {
     aaWalletB = sdkB.ensureAccountAddress(ownerB.address);
     const provider = new ethers.JsonRpcProvider(HASHKEY_CONFIG.rpcUrl);
     const signerB = new ethers.Wallet(ownerKeyB, provider);
-    aaWalletB = await deployAAWallet(sdkB);
+    aaWalletB = await deployAAWallet(sdkB, signerB);
 
     // Create session key for B
     const sessionWalletB = createSessionWallet();
@@ -306,7 +318,7 @@ async function main() {
     aaWalletA = sdkA.ensureAccountAddress(ownerA.address);
     const provider = new ethers.JsonRpcProvider(HASHKEY_CONFIG.rpcUrl);
     const signerA = new ethers.Wallet(ownerKeyA, provider);
-    aaWalletA = await deployAAWallet(sdkA);
+    aaWalletA = await deployAAWallet(sdkA, signerA);
 
     sessionWalletA = createSessionWallet();
     const sessionIdA = ethers.keccak256(ethers.toUtf8Bytes(`a2a-demo-A-${Date.now()}`));
