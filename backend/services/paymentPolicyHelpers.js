@@ -417,6 +417,51 @@ export function createPaymentPolicyHelpers(deps = {}) {
     }
   }
 
+  async function verifySessionPaymentEvent(reqItem, paymentProof) {
+    // Fallback: verify SessionPaymentExecuted event when ERC20 Transfer log is missing
+    // (some testnets omit internal call logs from receipts)
+    try {
+      const txHash = String(paymentProof?.txHash || '').trim();
+      if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) return { ok: false };
+
+      const tokenAddress = normalizeAddress(reqItem?.tokenAddress || '');
+      const recipient = normalizeAddress(reqItem?.recipient || '');
+      if (!tokenAddress || !recipient) return { ok: false };
+
+      const receipt = await fetchReceiptWithRetry(txHash);
+      if (!receipt || parseHexNumber(receipt.status) !== 1) return { ok: false };
+
+      // SessionPaymentExecuted(bytes32 indexed sessionId, address indexed token, address indexed recipient, uint256 amount, bytes32 serviceProvider, bytes32 authorizationNonce)
+      const sessionPayTopic = ethers.id('SessionPaymentExecuted(bytes32,address,address,uint256,bytes32,bytes32)');
+      const aaWallet = normalizeAddress(reqItem?.payer || '');
+
+      for (const log of (receipt.logs || [])) {
+        if (String(log.topics?.[0] || '').toLowerCase() !== sessionPayTopic.toLowerCase()) continue;
+        // topic[1] = sessionId, topic[2] = token, topic[3] = recipient
+        const logToken = normalizeAddress('0x' + String(log.topics?.[2] || '').slice(-40));
+        const logRecipient = normalizeAddress('0x' + String(log.topics?.[3] || '').slice(-40));
+        if (logToken === tokenAddress && logRecipient === recipient) {
+          // Verify the log came from the payer's AA wallet
+          if (aaWallet && normalizeAddress(log.address) !== aaWallet) continue;
+          return {
+            ok: true,
+            details: {
+              txHash,
+              blockNumber: parseHexNumber(receipt.blockNumber),
+              tokenAddress,
+              from: aaWallet,
+              to: logRecipient,
+              valueRaw: 'verified_via_session_event'
+            }
+          };
+        }
+      }
+      return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }
+
   function parseHexNumber(value) {
     if (value === null || value === undefined) return 0;
     if (typeof value === 'number') return value;
@@ -636,6 +681,7 @@ export function createPaymentPolicyHelpers(deps = {}) {
     signResponseHash,
     validatePaymentProof,
     verifyProofOnChain,
+    verifySessionPaymentEvent,
     withSessionUserOpLock
   };
 }

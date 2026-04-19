@@ -188,7 +188,7 @@ export function routesBootstrap(ctx) {
     toPriceNumber,
     // Validate / verify
     validateEscrowJob, validateConsumerAuthority, validatePaymentProof,
-    verifyIdentityChallengeResponse, verifyProofOnChain,
+    verifyIdentityChallengeResponse, verifyProofOnChain, verifySessionPaymentEvent,
     // Consumer authority
     beginConsumerIntent, finalizeConsumerIntent, revokeConsumerAuthorityPolicy,
     writeConsumerAuthorityPolicy,
@@ -503,6 +503,7 @@ export function routesBootstrap(ctx) {
     validatePaymentProof,
     verifyIdentityChallengeResponse,
     verifyProofOnChain,
+    verifySessionPaymentEvent,
     beginConsumerIntent,
     finalizeConsumerIntent,
     revokeConsumerAuthorityPolicy,
@@ -674,6 +675,7 @@ export function routesBootstrap(ctx) {
         'ensureServiceCatalog',
         'validatePaymentProof',
         'verifyProofOnChain',
+        'verifySessionPaymentEvent',
         'appendNetworkAuditEvent',
         'createTraceId',
         'requireRole'

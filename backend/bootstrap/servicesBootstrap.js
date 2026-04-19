@@ -226,7 +226,7 @@ export async function servicesBootstrap(ctx) {
     buildA2ACapabilities, buildPolicySnapshot, buildResponseHash, digestStableObject,
     evaluateTransferPolicy, extractUserOpHashFromReason, logPolicyFailure,
     sendSessionTransferViaEoaRelay, shouldFallbackToEoaRelay, signResponseHash,
-    validatePaymentProof, verifyProofOnChain, withSessionUserOpLock
+    validatePaymentProof, verifyProofOnChain, verifySessionPaymentEvent, withSessionUserOpLock
   } = createPaymentPolicyHelpers({
     BACKEND_RPC_URL, HYPERLIQUID_ORDER_RECIPIENT, KITE_AGENT2_AA_ADDRESS, KITE_AGENT2_ID,
     MERCHANT_ADDRESS, PROOF_RECEIPT_POLL_INTERVAL_MS, PROOF_RECEIPT_WAIT_MS,
@@ -485,7 +485,7 @@ export async function servicesBootstrap(ctx) {
     buildA2ACapabilities, buildPolicySnapshot, buildResponseHash, digestStableObject,
     evaluateTransferPolicy, extractUserOpHashFromReason, logPolicyFailure,
     sendSessionTransferViaEoaRelay, shouldFallbackToEoaRelay, signResponseHash,
-    validatePaymentProof, verifyProofOnChain, withSessionUserOpLock, buildPolicySnapshotHash,
+    validatePaymentProof, verifyProofOnChain, verifySessionPaymentEvent, withSessionUserOpLock, buildPolicySnapshotHash,
     // On-chain
     checkAnchorExistsOnChain, publishTrustPublicationOnChain,
     publishJobLifecycleAnchorOnChain, readLatestAnchorIdOnChain,

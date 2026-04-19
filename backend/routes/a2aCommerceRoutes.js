@@ -61,6 +61,7 @@ export function registerA2aCommerceRoutes(app, deps) {
     ensureServiceCatalog,
     validatePaymentProof,
     verifyProofOnChain,
+    verifySessionPaymentEvent,
     appendNetworkAuditEvent,
     createTraceId,
     requireRole
@@ -181,6 +182,12 @@ export function registerA2aCommerceRoutes(app, deps) {
         if (typeof verifyProofOnChain === 'function') {
           try {
             onChainResult = await verifyProofOnChain(x402Req, paymentProof);
+            // Fallback: some testnets omit ERC20 Transfer logs from receipts;
+            // verify via SessionPaymentExecuted event instead
+            if (!onChainResult.ok && typeof verifySessionPaymentEvent === 'function') {
+              const sessionResult = await verifySessionPaymentEvent(x402Req, paymentProof);
+              if (sessionResult.ok) onChainResult = sessionResult;
+            }
           } catch (err) {
             // Transient RPC error — allow settlement with verification flag
             onChainResult = { ok: false, reason: `on-chain verification rpc error: ${err?.message || 'unknown'}`, transient: true };
