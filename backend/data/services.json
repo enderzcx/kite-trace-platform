@@ -1,0 +1,902 @@
+[
+  {
+    "id": "cap-dex-market",
+    "name": "DEX Market Data",
+    "description": "Real-time price, K-line charts and index prices via OKX DEX.",
+    "action": "dex-market",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "technical-agent-real",
+    "providerKey": "technical-agent-real",
+    "recipient": "0x09e116d198318eec9402893f00958123e980521b",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.0001",
+      "currency": "USDC"
+    },
+    "tags": [
+      "technical",
+      "market",
+      "kline"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "limit": 20
+    },
+    "inputSchema": {
+      "symbol": "string default BTCUSDT",
+      "interval": "string? 1m|5m|1h|1d default 1h",
+      "limit": "number? default 20"
+    },
+    "outputSchema": {
+      "price": "number",
+      "change24h": "number",
+      "volume24h": "number",
+      "klines": [
+        {
+          "open": "number",
+          "high": "number",
+          "low": "number",
+          "close": "number",
+          "volume": "number",
+          "ts": "string"
+        }
+      ]
+    },
+    "active": true,
+    "createdAt": "2026-03-16T04:52:44.896Z",
+    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-wallet-pnl",
+    "name": "Wallet PnL Analysis",
+    "description": "Wallet portfolio holdings and PnL analysis across 20+ chains.",
+    "action": "wallet-pnl",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "technical-agent-real",
+    "providerKey": "technical-agent-real",
+    "recipient": "0x09e116d198318eec9402893f00958123e980521b",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.0003",
+      "currency": "USDC"
+    },
+    "tags": [
+      "technical",
+      "wallet",
+      "pnl"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "wallet_address": "0x0000000000000000000000000000000000000000",
+      "chain": "eth"
+    },
+    "inputSchema": {
+      "wallet_address": "string",
+      "chain": "string? default eth"
+    },
+    "outputSchema": {
+      "totalValue": "number",
+      "pnl24h": "number",
+      "pnlPercent": "number",
+      "holdings": [
+        {
+          "token": "string",
+          "amount": "number",
+          "value": "number"
+        }
+      ]
+    },
+    "active": true,
+    "createdAt": "2026-03-16T04:52:44.896Z",
+    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-token-analysis",
+    "name": "Token Deep Analysis",
+    "description": "Full token analysis: holders, top traders, liquidity pools, market cap via OKX DEX.",
+    "action": "token-analysis",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "technical-agent-real",
+    "providerKey": "technical-agent-real",
+    "recipient": "0x09e116d198318eec9402893f00958123e980521b",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.0005",
+      "currency": "USDC"
+    },
+    "tags": [
+      "technical",
+      "token",
+      "analysis"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "symbol": "BTC"
+    },
+    "inputSchema": {
+      "symbol": "string? or token_address: string?"
+    },
+    "outputSchema": {
+      "marketCap": "number",
+      "holders": "number",
+      "topTraders": [],
+      "liquidityPools": [],
+      "priceChange24h": "number"
+    },
+    "active": true,
+    "createdAt": "2026-03-16T04:52:44.896Z",
+    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-trenches-scan",
+    "name": "Trenches Token Scan",
+    "description": "Meme token early detection: dev reputation, bundle detection, aped wallets via OKX DEX Trenches.",
+    "action": "trenches-scan",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "technical-agent-real",
+    "providerKey": "technical-agent-real",
+    "recipient": "0x09e116d198318eec9402893f00958123e980521b",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.0015",
+      "currency": "USDC"
+    },
+    "tags": [
+      "technical",
+      "meme",
+      "trenches",
+      "alpha"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "token_address": "0x0000000000000000000000000000000000000000"
+    },
+    "inputSchema": {
+      "token_address": "string"
+    },
+    "outputSchema": {
+      "devReputation": "string",
+      "bundleDetected": "boolean",
+      "apedWallets": [],
+      "riskScore": "0-100"
+    },
+    "active": true,
+    "createdAt": "2026-03-16T04:52:44.896Z",
+    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-smart-money-signal",
+    "name": "Smart Money Signal",
+    "description": "Track smart money, whale, and KOL on-chain DEX activity via OKX onchainos.",
+    "action": "smart-money-signal",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "technical-agent-real",
+    "providerKey": "technical-agent-real",
+    "recipient": "0x09e116d198318eec9402893f00958123e980521b",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.001",
+      "currency": "USDC"
+    },
+    "tags": [
+      "technical",
+      "onchain",
+      "smart-money"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "symbol": "BTC",
+      "signalType": "smart-money"
+    },
+    "inputSchema": {
+      "symbol": "string? default BTC",
+      "signalType": "string smart-money|whale|kol default smart-money"
+    },
+    "outputSchema": {
+      "signals": [
+        {
+          "walletAddress": "string",
+          "action": "string",
+          "amount": "number",
+          "token": "string",
+          "ts": "string",
+          "signalType": "string"
+        }
+      ]
+    },
+    "active": true,
+    "createdAt": "2026-03-16T04:52:44.896Z",
+    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-kol-monitor",
+    "name": "KOL Tweet Monitor",
+    "description": "Track KOL tweets, deleted tweets, and follower events.",
+    "action": "kol-monitor",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "fundamental-agent-real",
+    "providerKey": "fundamental-agent-real",
+    "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.0003",
+      "currency": "USDC"
+    },
+    "tags": [
+      "fundamental",
+      "kol",
+      "twitter"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "username": "elonmusk",
+      "includeDeleted": false,
+      "limit": 20
+    },
+    "inputSchema": {
+      "username": "string",
+      "includeDeleted": "boolean? default false",
+      "limit": "number? default 20"
+    },
+    "outputSchema": {
+      "tweets": [
+        {
+          "id": "string",
+          "text": "string",
+          "createdAt": "string",
+          "retweetCount": "number",
+          "favoriteCount": "number"
+        }
+      ],
+      "deletedTweets": []
+    },
+    "active": true,
+    "createdAt": "2026-03-16T04:52:44.896Z",
+    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-meme-sentiment",
+    "name": "Meme Coin Sentiment",
+    "description": "Twitter meme coin social sentiment and trending detection.",
+    "action": "meme-sentiment",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "fundamental-agent-real",
+    "providerKey": "fundamental-agent-real",
+    "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.0001",
+      "currency": "USDC"
+    },
+    "tags": [
+      "fundamental",
+      "meme",
+      "sentiment"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "limit": 20
+    },
+    "inputSchema": {
+      "limit": "number? default 20"
+    },
+    "outputSchema": {
+      "memes": [
+        {
+          "coin": "string",
+          "sentiment": "string",
+          "trendScore": "number",
+          "ts": "string"
+        }
+      ]
+    },
+    "active": true,
+    "createdAt": "2026-03-16T04:52:44.896Z",
+    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-news-signal",
+    "name": "AI News Signal",
+    "description": "AI-analyzed news signal (long/short/neutral) from Bloomberg, Reuters, CoinDesk and 50+ sources.",
+    "action": "news-signal",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "fundamental-agent-real",
+    "providerKey": "fundamental-agent-real",
+    "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.0005",
+      "currency": "USDC"
+    },
+    "tags": [
+      "fundamental",
+      "news",
+      "signal"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "coin": "BTC",
+      "signal": "long",
+      "minScore": 50,
+      "limit": 10
+    },
+    "inputSchema": {
+      "coin": "string?",
+      "signal": "string? long|short|neutral",
+      "minScore": "number? default 50",
+      "limit": "number? default 10"
+    },
+    "outputSchema": {
+      "articles": [
+        {
+          "title": "string",
+          "summary": "string",
+          "source": "string",
+          "aiScore": "number",
+          "signal": "string",
+          "coin": "string",
+          "ts": "string"
+        }
+      ]
+    },
+    "active": true,
+    "createdAt": "2026-03-16T04:52:44.896Z",
+    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-listing-alert",
+    "name": "Exchange Listing Alert",
+    "description": "Real-time listing announcements from Binance, OKX, Coinbase, Bybit, Hyperliquid and others. AI-scored with impact (0-100) and long/short signal.",
+    "action": "listing-alert",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "fundamental-agent-real",
+    "providerKey": "fundamental-agent-real",
+    "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.002",
+      "currency": "USDC"
+    },
+    "tags": [
+      "fundamental",
+      "listing",
+      "exchange",
+      "alpha"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "exchange": "all",
+      "coin": "BTC",
+      "limit": 10
+    },
+    "inputSchema": {
+      "exchange": "string? binance|okx|coinbase|bybit|all",
+      "coin": "string?",
+      "limit": "number? default 10"
+    },
+    "outputSchema": {
+      "listings": [
+        {
+          "exchange": "string",
+          "coin": "string",
+          "listingType": "string",
+          "aiScore": "number",
+          "signal": "string",
+          "summary": "string",
+          "ts": "string"
+        }
+      ]
+    },
+    "active": true,
+    "createdAt": "2026-03-16T04:52:44.896Z",
+    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "svc-fundamental-agent-real-btc",
+    "name": "Fundamental BTC Feed",
+    "description": "Real external fundamental BTC feed provider.",
+    "action": "btc-price-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "fundamental-agent-real",
+    "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "tags": [
+      "fundamental",
+      "real",
+      "btc"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "pair": "BTCUSDT",
+      "source": "hyperliquid"
+    },
+    "active": false,
+    "createdAt": "2026-03-15T15:37:38.558Z",
+    "updatedAt": "2026-03-22T17:03:26.339Z",
+    "publishedBy": "admin"
+  },
+  {
+    "id": "svc-technical-agent-real-btc",
+    "name": "Technical BTC Feed",
+    "description": "Real external technical BTC feed provider.",
+    "action": "btc-price-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "technical-agent-real",
+    "recipient": "0x09e116d198318eec9402893f00958123e980521b",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "tags": [
+      "technical",
+      "real",
+      "btc"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "pair": "BTCUSDT",
+      "source": "hyperliquid"
+    },
+    "active": false,
+    "createdAt": "2026-03-15T15:37:36.245Z",
+    "updatedAt": "2026-03-22T17:03:26.339Z",
+    "publishedBy": "admin"
+  },
+  {
+    "id": "svc-compare-btc",
+    "name": "Compare BTC Feed",
+    "description": "Second ranked BTC capability",
+    "action": "btc-price-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "compare-agent",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "tags": [
+      "compare",
+      "btc"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "pair": "BTCUSDT",
+      "source": "hyperliquid"
+    },
+    "active": false,
+    "createdAt": "2026-03-15T15:19:35.807Z",
+    "updatedAt": "2026-03-22T16:20:15.162Z",
+    "publishedBy": "admin"
+  },
+  {
+    "id": "svc-live-btc-feed",
+    "name": "Live External BTC Feed",
+    "description": "Live verified provider BTC feed for ranked discovery validation.",
+    "action": "btc-price-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "live-external-agent",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "tags": [
+      "atapi",
+      "x402",
+      "btc-price-feed"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "pair": "BTCUSDT",
+      "source": "hyperliquid"
+    },
+    "active": false,
+    "createdAt": "2026-03-15T14:53:09.622Z",
+    "updatedAt": "2026-03-22T16:20:15.162Z",
+    "publishedBy": "admin"
+  },
+  {
+    "id": "svc_btcusd_minute",
+    "name": "BTC Price Quote (Primary)",
+    "description": "Primary tool for the latest BTC/BTCUSDT price quote via Hyperliquid. Use this for a single BTC price request instead of the generic market-price-feed tool.",
+    "action": "btc-price-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "providerAgentId": "2",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "tags": [
+      "atapi",
+      "x402",
+      "btc",
+      "price-feed"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0.06,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "pair": "BTCUSDT",
+      "source": "hyperliquid"
+    },
+    "active": false,
+    "createdAt": "2026-03-14T05:39:11.822Z",
+    "updatedAt": "2026-03-22T16:20:15.162Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "svc_btc_risk_score",
+    "name": "BTC Risk Score (A2A)",
+    "description": "Agent-to-agent risk score derived from paid BTC quote and recent volatility.",
+    "action": "risk-score-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": 60,
+    "providerAgentId": "3",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "tags": [
+      "a2a",
+      "x402",
+      "risk"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 10,
+    "budgetPerDay": 0.08,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "symbol": "BTCUSDT",
+      "horizonMin": 60,
+      "source": "hyperliquid"
+    },
+    "active": false,
+    "createdAt": "2026-03-14T05:39:11.822Z",
+    "updatedAt": "2026-03-22T16:20:15.162Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "svc_technical_analysis",
+    "name": "Technical Analysis (A2A)",
+    "description": "Agent-to-agent technical analysis feed with strict x402 settlement evidence.",
+    "action": "technical-analysis-feed",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid",
+    "sourceRequested": "hyperliquid",
+    "horizonMin": 60,
+    "providerAgentId": "technical-agent",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "tags": [
+      "a2a",
+      "x402",
+      "technical-analysis"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 10,
+    "budgetPerDay": 0.08,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "symbol": "BTCUSDT",
+      "horizonMin": 60,
+      "source": "hyperliquid"
+    },
+    "active": false,
+    "createdAt": "2026-03-14T05:39:11.822Z",
+    "updatedAt": "2026-03-22T16:20:15.162Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "svc_info_analysis",
+    "name": "Message Info Analysis (A2A)",
+    "description": "Agent-to-agent message-side info analysis via market-data + x402 payment.",
+    "action": "info-analysis-feed",
+    "pair": "",
+    "source": "auto",
+    "sourceRequested": "auto",
+    "resourceUrl": "",
+    "maxChars": 1200,
+    "providerAgentId": "message-agent",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "tags": [
+      "a2a",
+      "x402",
+      "message",
+      "info-analysis"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 8,
+    "budgetPerDay": 0.05,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "topic": "BTC market sentiment today",
+      "mode": "auto",
+      "maxChars": 1200
+    },
+    "active": false,
+    "createdAt": "2026-03-14T05:39:11.822Z",
+    "updatedAt": "2026-03-22T16:20:15.162Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "svc_hyperliquid_order_testnet",
+    "name": "Hyperliquid Order (Testnet)",
+    "description": "Agent-to-API Hyperliquid testnet order execution via x402 payment.",
+    "action": "hyperliquid-order-testnet",
+    "pair": "BTCUSDT",
+    "source": "hyperliquid-testnet",
+    "sourceRequested": "hyperliquid-testnet",
+    "providerAgentId": "executor-agent",
+    "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00015",
+    "tags": [
+      "atapi",
+      "x402",
+      "hyperliquid",
+      "order"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 8,
+    "budgetPerDay": 0.08,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "symbol": "BTCUSDT",
+      "side": "buy",
+      "orderType": "limit",
+      "tif": "Gtc",
+      "size": 0.001
+    },
+    "active": false,
+    "createdAt": "2026-03-14T05:39:11.822Z",
+    "updatedAt": "2026-03-22T16:20:15.162Z",
+    "publishedBy": "system"
+  },
+  {
+    "id": "cap-weather-context",
+    "name": "Weather Context Data Node",
+    "description": "Low-cost weather context primitive via Open-Meteo + x402 payment.",
+    "action": "weather-context",
+    "pair": "",
+    "source": "open-meteo",
+    "sourceRequested": "open-meteo",
+    "providerAgentId": "data-node-real",
+    "providerKey": "data-node-real",
+    "recipient": "0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00005",
+    "tags": [
+      "atapi",
+      "x402",
+      "data-primitive",
+      "weather",
+      "open-meteo"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 20,
+    "budgetPerDay": 0.03,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "latitude": 40.7128,
+      "longitude": -74.006,
+      "forecastDays": 3,
+      "timezone": "auto"
+    },
+    "active": true,
+    "createdAt": "2026-03-17T04:42:21.644Z",
+    "updatedAt": "2026-03-22T17:02:47.787Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-tech-buzz-signal",
+    "name": "Tech Buzz Signal Data Node",
+    "description": "Low-cost Hacker News top-story primitive via x402 payment.",
+    "action": "tech-buzz-signal",
+    "pair": "",
+    "source": "hackernews",
+    "sourceRequested": "hackernews",
+    "providerAgentId": "data-node-real",
+    "providerKey": "data-node-real",
+    "recipient": "0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00005",
+    "tags": [
+      "atapi",
+      "x402",
+      "data-primitive",
+      "news",
+      "hackernews"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 20,
+    "budgetPerDay": 0.03,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "limit": 10
+    },
+    "active": true,
+    "createdAt": "2026-03-17T04:42:21.644Z",
+    "updatedAt": "2026-03-22T17:02:47.787Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "cap-market-price-feed",
+    "name": "Market Snapshot Data Node",
+    "description": "Generic CoinGecko market snapshot for baskets and ranked watchlists. Not the primary tool for a single BTC price quote; prefer the dedicated BTC price tool instead.",
+    "action": "market-price-feed",
+    "pair": "",
+    "source": "coingecko",
+    "sourceRequested": "coingecko",
+    "providerAgentId": "data-node-real",
+    "providerKey": "data-node-real",
+    "recipient": "0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
+    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "price": "0.00005",
+    "tags": [
+      "atapi",
+      "x402",
+      "data-primitive",
+      "market",
+      "coingecko"
+    ],
+    "slaMs": 12000,
+    "rateLimitPerMinute": 20,
+    "budgetPerDay": 0.03,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "vsCurrency": "usd",
+      "ids": "bitcoin,ethereum",
+      "limit": 10
+    },
+    "active": true,
+    "createdAt": "2026-03-17T04:42:21.644Z",
+    "updatedAt": "2026-03-22T17:02:47.787Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  }
+]

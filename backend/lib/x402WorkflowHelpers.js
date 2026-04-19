@@ -280,7 +280,7 @@ export function createX402WorkflowHelpers({
             tokenAddress: reqItem.tokenAddress,
             amount: reqItem.amount,
             recipient: reqItem.recipient,
-            decimals: 18,
+            decimals: Number(process.env.KITE_SETTLEMENT_TOKEN_DECIMALS) || 18,
             ...(signingCtx && { signingContext: signingCtx })
           }
         ]

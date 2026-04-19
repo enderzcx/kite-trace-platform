@@ -42,7 +42,7 @@ const HASHKEY_CONFIG = {
   accountImplementationAddress: '0x2DbBfCdAd28b3A2094BD634Cce4326B1b3D0595C',
   identityRegistry: '0x901A2b1c67daB5AC09A4e02bE9c1c8D52Cce650B',
   ktraceAccountV3Proxy: '0xFeDa86D7eEF86aCd127F2f517C064CF1eDdFdE8b',
-  settlementToken: '0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63',
+  settlementToken: '0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e',
   merchantAddress: '0x09e116d198318eec9402893f00958123e980521b',
   explorerUrl: 'https://testnet-explorer.hsk.xyz'
 };
@@ -391,7 +391,7 @@ async function main() {
       bundlerRpcRetries: 3
     });
 
-    const amountRaw = ethers.parseUnits(quote.amount, 18);
+    const amountRaw = ethers.parseUnits(quote.amount, quote.decimals || 6);
     const nowSec = Math.floor(Date.now() / 1000);
     const authPayload = {
       from: aaWalletA,
