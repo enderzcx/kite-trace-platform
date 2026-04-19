@@ -259,7 +259,7 @@ async function main() {
 
   let aaWalletB;
   if (!SKIP_WALLET_SETUP) {
-    aaWalletB = sdkB.ensureAccountAddress(ownerB.address);
+    aaWalletB = await sdkB.ensureAccountAddress(ownerB.address);
     const provider = new ethers.JsonRpcProvider(HASHKEY_CONFIG.rpcUrl);
     const signerB = new ethers.Wallet(ownerKeyB, provider);
     aaWalletB = await deployAAWallet(sdkB, signerB);
@@ -315,7 +315,7 @@ async function main() {
 
   let aaWalletA, sessionWalletA;
   if (!SKIP_WALLET_SETUP) {
-    aaWalletA = sdkA.ensureAccountAddress(ownerA.address);
+    aaWalletA = await sdkA.ensureAccountAddress(ownerA.address);
     const provider = new ethers.JsonRpcProvider(HASHKEY_CONFIG.rpcUrl);
     const signerA = new ethers.Wallet(ownerKeyA, provider);
     aaWalletA = await deployAAWallet(sdkA, signerA);

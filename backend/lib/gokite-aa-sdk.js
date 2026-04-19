@@ -197,10 +197,10 @@ export class GokiteAASDK {
     return this.computeAccountAddress(owner, salt);
   }
 
-  ensureAccountAddress(owner, salt = 0n) {
+  async ensureAccountAddress(owner, salt = 0n) {
     this.config.ownerAddress = owner;
     this.config.salt = salt;
-    const aaAddress = this.computeAccountAddress(owner, salt);
+    const aaAddress = await this.resolveAccountAddress(owner, salt);
     this.setProxyAddress(aaAddress);
     return aaAddress;
   }
