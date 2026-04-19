@@ -10,6 +10,7 @@ export function createPaymentPolicyHelpers(deps = {}) {
     PROOF_RPC_RETRIES,
     PROOF_RPC_TIMEOUT_MS,
     SETTLEMENT_TOKEN,
+    SETTLEMENT_TOKEN_DECIMALS = Number(process.env.KITE_SETTLEMENT_TOKEN_DECIMALS) || 18,
     X402_BTC_PRICE,
     X402_HYPERLIQUID_ORDER_PRICE,
     X402_INFO_PRICE,
@@ -348,7 +349,7 @@ export function createPaymentPolicyHelpers(deps = {}) {
 
       let expectedAmountRaw = null;
       try {
-        expectedAmountRaw = ethers.parseUnits(String(reqItem?.amount || '0'), 18);
+        expectedAmountRaw = ethers.parseUnits(String(reqItem?.amount || '0'), SETTLEMENT_TOKEN_DECIMALS);
       } catch {
         return { ok: false, reason: 'invalid expected amount' };
       }
