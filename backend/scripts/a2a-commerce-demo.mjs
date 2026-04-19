@@ -44,7 +44,10 @@ const HASHKEY_CONFIG = {
   ktraceAccountV3Proxy: '0xFeDa86D7eEF86aCd127F2f517C064CF1eDdFdE8b',
   settlementToken: '0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e',
   merchantAddress: '0x09e116d198318eec9402893f00958123e980521b',
-  explorerUrl: 'https://testnet-explorer.hsk.xyz'
+  explorerUrl: 'https://testnet-explorer.hsk.xyz',
+  // Pre-deployed AA wallets (factory has init signature mismatch, deployed directly)
+  preDeployedAA_A: '0xf9D24F2D1679564aCF289ab2D71C491658145e09',
+  preDeployedAA_B: '0xd16434844c215DcDDD653A11060D429f4Bd87661'
 };
 
 const SERVICE_CAPABILITY = 'cap-dex-market';
@@ -103,7 +106,7 @@ function createSessionWallet() {
   return ethers.Wallet.createRandom();
 }
 
-async function createSessionOnChain(sdk, ownerSigner, aaWallet, sessionWallet, sessionId, maxPerTx, dailyLimit) {
+async function createSessionOnChain(sdk, ownerSigner, aaWallet, sessionWallet, sessionId, maxPerTx, _dailyLimit) {
   log.step('SESSION', `Creating session ${sessionId.slice(0, 10)}... for ${sessionWallet.address}`);
   const account = new ethers.Contract(aaWallet, [
     'function createSession(bytes32 sessionId, address agent, tuple(uint256 timeWindow,uint160 budget,uint96 initialWindowStartTime,bytes32[] targetProviders)[] rules) external',
@@ -119,10 +122,12 @@ async function createSessionOnChain(sdk, ownerSigner, aaWallet, sessionWallet, s
     if (!e.message?.includes('already supported')) log.info('SESSION', `Token add skipped: ${e.message?.slice(0, 50)}`);
   }
 
-  const nowSec = Math.floor(Date.now() / 1000);
+  // Single rule: timeWindow=0 (per-tx cap, no time-window bug), large budget, empty targetProviders = match all
+  // Two-rule sessions hit a contract bug in checkSpendingRules where timeWindow>0 rule
+  // with initialWindowStartTime > block.timestamp causes early return false, vetoing rule 0.
+  // Budget uses 6 decimals to match MockUSDT (raw units comparison in contract)
   const rules = [
-    { timeWindow: 0n, budget: ethers.parseUnits(maxPerTx, 18), initialWindowStartTime: 0n, targetProviders: [] },
-    { timeWindow: 86400n, budget: ethers.parseUnits(dailyLimit, 18), initialWindowStartTime: BigInt(nowSec - 1), targetProviders: [] }
+    { timeWindow: 0n, budget: ethers.parseUnits(maxPerTx, 6), initialWindowStartTime: 0n, targetProviders: [] }
   ];
 
   const tx = await account.createSession(sessionId, sessionWallet.address, rules);
@@ -252,17 +257,18 @@ async function main() {
     entryPointAddress: HASHKEY_CONFIG.entryPointAddress,
     accountFactoryAddress: HASHKEY_CONFIG.accountFactoryAddress,
     accountImplementationAddress: HASHKEY_CONFIG.accountImplementationAddress,
-    proxyAddress: '', // will be set after ensureAccountAddress
+    proxyAddress: HASHKEY_CONFIG.preDeployedAA_B,
     bundlerRpcTimeoutMs: 35000,
     bundlerRpcRetries: 3
   });
 
   let aaWalletB;
   if (!SKIP_WALLET_SETUP) {
-    aaWalletB = await sdkB.ensureAccountAddress(ownerB.address);
+    aaWalletB = HASHKEY_CONFIG.preDeployedAA_B;
+    log.success('PHASE 1', `Agent B AA wallet (pre-deployed): ${aaWalletB}`);
+
     const provider = new ethers.JsonRpcProvider(HASHKEY_CONFIG.rpcUrl);
     const signerB = new ethers.Wallet(ownerKeyB, provider);
-    aaWalletB = await deployAAWallet(sdkB, signerB);
 
     // Create session key for B
     const sessionWalletB = createSessionWallet();
@@ -308,21 +314,22 @@ async function main() {
     entryPointAddress: HASHKEY_CONFIG.entryPointAddress,
     accountFactoryAddress: HASHKEY_CONFIG.accountFactoryAddress,
     accountImplementationAddress: HASHKEY_CONFIG.accountImplementationAddress,
-    proxyAddress: '',
+    proxyAddress: HASHKEY_CONFIG.preDeployedAA_A,
     bundlerRpcTimeoutMs: 35000,
     bundlerRpcRetries: 3
   });
 
-  let aaWalletA, sessionWalletA;
+  let aaWalletA, sessionWalletA, sessionIdA;
   if (!SKIP_WALLET_SETUP) {
-    aaWalletA = await sdkA.ensureAccountAddress(ownerA.address);
+    aaWalletA = HASHKEY_CONFIG.preDeployedAA_A;
+    log.success('PHASE 2', `Agent A AA wallet (pre-deployed): ${aaWalletA}`);
+
     const provider = new ethers.JsonRpcProvider(HASHKEY_CONFIG.rpcUrl);
     const signerA = new ethers.Wallet(ownerKeyA, provider);
-    aaWalletA = await deployAAWallet(sdkA, signerA);
 
     sessionWalletA = createSessionWallet();
-    const sessionIdA = ethers.keccak256(ethers.toUtf8Bytes(`a2a-demo-A-${Date.now()}`));
-    await createSessionOnChain(sdkA, signerA, aaWalletA, sessionWalletA, sessionIdA, '0.001', '0.01');
+    sessionIdA = ethers.keccak256(ethers.toUtf8Bytes(`a2a-demo-A-${Date.now()}`));
+    await createSessionOnChain(sdkA, signerA, aaWalletA, sessionWalletA, sessionIdA, '1000', '0.01');  // 1000 USDT per-tx cap
   } else {
     aaWalletA = ownerA.address;
     sessionWalletA = ownerA; // use owner as session wallet for demo simplicity
@@ -389,7 +396,7 @@ async function main() {
   log.info('PHASE 4', `Amount: ${quote?.amount} ${quote?.tokenAddress?.slice(0, 10)}... → ${quote?.recipient?.slice(0, 10)}...`);
 
   if (!SKIP_WALLET_SETUP && sessionWalletA && quote?.signingContext) {
-    // Step 4b: Sign UserOp and pay
+    // Step 4b: Direct on-chain call (bypass EntryPoint — handleOps reverts on HashKey testnet)
     const ctx = quote.signingContext;
     const paymentSdk = new GokiteAASDK({
       network: ctx.network || 'hashkey_testnet',
@@ -417,29 +424,46 @@ async function main() {
       nonce: ethers.hexlify(ethers.randomBytes(32))
     };
 
-    const sessionId = ethers.keccak256(ethers.toUtf8Bytes(`a2a-demo-A-${Date.now()}`));
     const serviceProvider = ethers.keccak256(ethers.toUtf8Bytes(`x402_payment:requester:${quoteToken}`));
 
     log.step('PHASE 4', 'Signing transfer authorization...');
     const authSignature = await paymentSdk.buildTransferAuthorizationSignature(sessionWalletA, authPayload);
 
-    const signFunction = async (userOpHash) => sessionWalletA.signMessage(ethers.getBytes(userOpHash));
+    // Direct call: executeTransferWithAuthorizationAndProvider is external nonReentrant
+    // (no onlyEntryPoint check) — can be called directly by anyone with valid auth signature
+    log.step('PHASE 4', 'Submitting direct on-chain transfer (bypassing EntryPoint)...');
+    let paymentTxHash = null;
+    try {
+      const provider = new ethers.JsonRpcProvider(HASHKEY_CONFIG.rpcUrl);
+      // Any wallet can call this — the auth is the session wallet's signature
+      // Use a random funded wallet or the owner wallet as the caller
+      const callerSigner = new ethers.Wallet(ownerKeyA, provider);
+      const aaContract = new ethers.Contract(aaWalletA, [
+        'function executeTransferWithAuthorizationAndProvider(bytes32 sessionId, (address from,address to,address token,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce) auth, bytes signature, bytes32 serviceProvider, bytes metadata) external'
+      ], callerSigner);
 
-    log.step('PHASE 4', 'Submitting UserOp to bundler...');
-    const paymentResult = await paymentSdk.sendSessionTransferWithAuthorizationAndProvider(
-      { sessionId, auth: authPayload, authSignature, serviceProvider, metadata: '0x' },
-      signFunction,
-      { callGasLimit: 320000n, verificationGasLimit: 450000n, preVerificationGas: 120000n }
-    );
-
-    if (paymentResult.status === 'success' && paymentResult.transactionHash) {
-      log.success('PHASE 4', `Payment confirmed: ${HASHKEY_CONFIG.explorerUrl}/tx/${paymentResult.transactionHash}`);
-    } else {
-      log.error('PHASE 4', `Payment failed: ${paymentResult.reason || paymentResult.status}`);
+      const tx = await aaContract.executeTransferWithAuthorizationAndProvider(
+        sessionIdA,
+        [authPayload.from, authPayload.to, authPayload.token, authPayload.value, authPayload.validAfter, authPayload.validBefore, authPayload.nonce],
+        authSignature,
+        serviceProvider,
+        '0x',
+        { gasLimit: 500000n }
+      );
+      log.step('PHASE 4', `TX sent: ${tx.hash}, waiting for confirmation...`);
+      const receipt = await tx.wait(1, 120000);
+      if (receipt.status === 1) {
+        paymentTxHash = tx.hash;
+        log.success('PHASE 4', `Payment confirmed: ${HASHKEY_CONFIG.explorerUrl}/tx/${tx.hash}`);
+      } else {
+        log.error('PHASE 4', `Payment TX reverted in block ${receipt.blockNumber}`);
+      }
+    } catch (err) {
+      log.error('PHASE 4', `Direct call failed: ${err.message?.slice(0, 200)}`);
     }
 
     // Step 4c: Retry with payment proof
-    if (paymentResult.transactionHash) {
+    if (paymentTxHash) {
       log.step('PHASE 4', 'Retrying commerce invoke with payment proof...');
       const resultResp = await fetchJSON(`${BACKEND_URL}/api/a2a/commerce/invoke`, {
         method: 'POST',
@@ -450,7 +474,7 @@ async function main() {
           task: { symbol: 'BTCUSDT', interval: '1h', limit: 20 },
           requestId,
           paymentProof: {
-            txHash: paymentResult.transactionHash,
+            txHash: paymentTxHash,
             requestId,
             tokenAddress: quoteToken,
             recipient: quoteRecipient,
@@ -468,7 +492,6 @@ async function main() {
     }
   } else {
     log.info('PHASE 4', 'Skipping on-chain payment (--skip-wallet-setup or no signing context)');
-    // Still try the payment-proof path with a mock
     log.info('PHASE 4', 'In production, Agent A would sign a UserOp and submit to bundler here');
   }
 
