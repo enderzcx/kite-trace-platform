@@ -489,8 +489,22 @@ export class GokiteAASDK {
     }
   ) {
     const network = await this.provider.getNetwork();
-    const domainName = await this.account.DOMAIN_NAME();
-    const domainVersion = await this.account.DOMAIN_VERSION();
+    let domainName, domainVersion;
+    try {
+      domainName = await this.account.DOMAIN_NAME();
+      domainVersion = await this.account.DOMAIN_VERSION();
+    } catch {
+      // Fallback: read from implementation contract (works when proxy not yet deployed)
+      const implAddr = this.config.accountImplementationAddress;
+      if (implAddr && ethers.isAddress(implAddr)) {
+        const impl = new ethers.Contract(implAddr, this.accountAbi, this.provider);
+        domainName = await impl.DOMAIN_NAME();
+        domainVersion = await impl.DOMAIN_VERSION();
+      } else {
+        domainName = 'KTraceAccount';
+        domainVersion = '3';
+      }
+    }
     const domain = {
       name: domainName,
       version: domainVersion,

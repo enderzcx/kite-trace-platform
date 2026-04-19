@@ -35,8 +35,8 @@ const SKIP_WALLET_SETUP = process.argv.includes('--skip-wallet-setup');
 
 const HASHKEY_CONFIG = {
   chainId: 133,
-  rpcUrl: 'https://testnet.hsk.xyz',
-  bundlerUrl: 'https://testnet.hsk.xyz/rpc',
+  rpcUrl: process.env.KITE_RPC_URL || 'https://testnet.hsk.xyz',
+  bundlerUrl: process.env.KITE_BUNDLER_URL || 'https://testnet.hsk.xyz/rpc',
   entryPointAddress: '0x0Cfe99621287c13533F6ebc3B93a9Ade6580a598',
   accountFactoryAddress: '0xF43E94E2163F14c4D62242D8DD45AbAacaa6DB5a',
   accountImplementationAddress: '0x2DbBfCdAd28b3A2094BD634Cce4326B1b3D0595C',
