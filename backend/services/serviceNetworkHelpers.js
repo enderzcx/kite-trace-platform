@@ -580,8 +580,11 @@
             updatedAt: new Date().toISOString()
           };
         }
+        // Only force-unify price for built-in default services; custom services keep their own pricing
+        const idLc = String(next?.id || '').trim().toLowerCase();
+        const isBuiltinDefault = defaultIds.has(idLc);
         const expectedPrice = resolveCatalogPrice(next, unifiedPrice);
-        if (String(next?.price || '').trim() !== expectedPrice) {
+        if (isBuiltinDefault && String(next?.price || '').trim() !== expectedPrice) {
           changed = true;
           next = {
             ...next,

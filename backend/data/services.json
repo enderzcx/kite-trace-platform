@@ -14,7 +14,7 @@
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
-    "price": "0.0001",
+    "price": "0.00015",
     "pricing": {
       "model": "per_call",
       "amount": "0.0001",
@@ -56,7 +56,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-19T11:27:15.127Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -75,7 +75,7 @@
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
-    "price": "0.0003",
+    "price": "0.00015",
     "pricing": {
       "model": "per_call",
       "amount": "0.0003",
@@ -112,7 +112,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-19T11:27:15.127Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -131,7 +131,7 @@
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
-    "price": "0.0005",
+    "price": "0.00015",
     "pricing": {
       "model": "per_call",
       "amount": "0.0005",
@@ -161,7 +161,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-19T11:27:15.127Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -180,7 +180,7 @@
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
-    "price": "0.0015",
+    "price": "0.00015",
     "pricing": {
       "model": "per_call",
       "amount": "0.0015",
@@ -210,7 +210,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-19T11:27:15.127Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -229,7 +229,7 @@
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
-    "price": "0.001",
+    "price": "0.00015",
     "pricing": {
       "model": "per_call",
       "amount": "0.001",
@@ -266,7 +266,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-19T11:27:15.127Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -285,7 +285,7 @@
     "providerKey": "fundamental-agent-real",
     "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
-    "price": "0.0003",
+    "price": "0.00015",
     "pricing": {
       "model": "per_call",
       "amount": "0.0003",
@@ -324,7 +324,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-19T11:27:15.127Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -343,7 +343,7 @@
     "providerKey": "fundamental-agent-real",
     "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
-    "price": "0.0001",
+    "price": "0.00015",
     "pricing": {
       "model": "per_call",
       "amount": "0.0001",
@@ -376,7 +376,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-19T11:27:15.127Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -395,7 +395,7 @@
     "providerKey": "fundamental-agent-real",
     "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
-    "price": "0.0005",
+    "price": "0.00015",
     "pricing": {
       "model": "per_call",
       "amount": "0.0005",
@@ -437,7 +437,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-19T11:27:15.127Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -456,7 +456,7 @@
     "providerKey": "fundamental-agent-real",
     "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
     "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
-    "price": "0.002",
+    "price": "0.00015",
     "pricing": {
       "model": "per_call",
       "amount": "0.002",
@@ -497,7 +497,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-19T11:27:15.127Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -953,7 +953,7 @@
     },
     "active": true,
     "createdAt": "2026-04-21T04:00:00.000Z",
-    "updatedAt": "2026-04-21T04:00:00.000Z",
+    "updatedAt": "2026-04-21T04:56:48.445Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   }

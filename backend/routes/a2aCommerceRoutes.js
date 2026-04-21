@@ -460,7 +460,7 @@ export function registerA2aCommerceRoutes(app, deps) {
             tags: s.tags || []
           }))
         };
-      });
+      }).filter(agent => !capability || agent.services.length > 0);
 
       res.json({
         ok: true,
