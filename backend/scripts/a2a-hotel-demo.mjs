@@ -22,6 +22,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { createHmac } from 'node:crypto';
+import { agentAChat, agentBChat, extractDecisionJSON } from '../lib/llmClient.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +33,13 @@ const BACKEND_API_KEY = process.env.KTRACE_API_KEY || 'viewer-local-dev-key';
 const BROKER_URL = process.env.SYNAPSE_BROKER_URL || 'ws://127.0.0.1:9100';
 const ROOM = 'a2a-demo';
 const SKIP_WALLET_SETUP = process.argv.includes('--skip-wallet-setup');
+// When set, Agent A's AA is deployed fresh via factory.createAccount instead of
+// using preDeployedAA_A. Proves the "any user can setup their own AA wallet"
+// narrative. Agent B stays on preDeployedAA since B only receives, doesn't pay.
+const USE_FACTORY = process.argv.includes('--use-factory');
+// When set, Phase 3 messages are generated live by two LLMs (A=Kimi K2.6 via Ollama Cloud,
+// B=gpt-5.4-mini via BEEF API) instead of scripted strings. Falls back to scripted on error.
+const USE_LLM = process.argv.includes('--llm');
 
 const HASHKEY_CONFIG = {
   chainId: 133,
@@ -104,6 +112,61 @@ async function deployAAWallet(sdk, signer) {
 
 function createSessionWallet() {
   return ethers.Wallet.createRandom();
+}
+
+// Return the owner's AA wallet address — deploy via factory only if not yet present.
+// AA is a stable identity per (owner, saltSeed) — first call deploys, subsequent calls
+// reuse the same address. This matches production behaviour: users setup their AA once,
+// then rotate session keys per-agent, never redeploy the AA.
+async function ensureAAForOwner(ownerSigner, saltSeed) {
+  const factory = new ethers.Contract(
+    HASHKEY_CONFIG.accountFactoryAddress,
+    [
+      'function createAccount(address owner, uint256 salt) returns (address)',
+      'function getAddress(address owner, uint256 salt) view returns (address)'
+    ],
+    ownerSigner
+  );
+  const salt = BigInt(ethers.id(saltSeed));
+  // Must use explicit signature — ethers.Contract.getAddress() shadows the
+  // contract's getAddress(address,uint256) view function.
+  const predicted = await factory['getAddress(address,uint256)'](ownerSigner.address, salt);
+  const code = await ownerSigner.provider.getCode(predicted);
+  if (code !== '0x') {
+    log.info('FACTORY', `AA already deployed at ${predicted}`);
+    return predicted;
+  }
+  log.step('FACTORY', `Deploying fresh AA via factory for ${ownerSigner.address}`);
+  const tx = await factory.createAccount(ownerSigner.address, salt, { gasLimit: 2_000_000n });
+  const rcpt = await tx.wait();
+  if (rcpt.status !== 1) throw new Error(`createAccount reverted ${tx.hash}`);
+  log.success('FACTORY', `New AA deployed: ${predicted} (tx: ${HASHKEY_CONFIG.explorerUrl}/tx/${tx.hash})`);
+  return predicted;
+}
+
+// Ensure the AA has at least `minAmountUsdt` MockUSDT balance. If not, top up from owner.
+async function ensureAAFunded(ownerSigner, aaAddress, minAmountUsdt) {
+  const token = new ethers.Contract(
+    HASHKEY_CONFIG.settlementToken,
+    [
+      'function balanceOf(address) view returns (uint256)',
+      'function transfer(address, uint256) returns (bool)',
+      'function decimals() view returns (uint8)'
+    ],
+    ownerSigner
+  );
+  const bal = await token.balanceOf(aaAddress);
+  const minUnits = ethers.parseUnits(minAmountUsdt, 6);
+  if (bal >= minUnits) {
+    log.info('FUND', `AA already has ${ethers.formatUnits(bal, 6)} USDT`);
+    return;
+  }
+  const needed = minUnits - bal;
+  log.step('FUND', `Topping up ${ethers.formatUnits(needed, 6)} USDT to ${aaAddress}`);
+  const tx = await token.transfer(aaAddress, needed, { gasLimit: 200_000n });
+  const rcpt = await tx.wait();
+  if (rcpt.status !== 1) throw new Error(`USDT transfer reverted ${tx.hash}`);
+  log.success('FUND', `AA funded (tx: ${tx.hash})`);
 }
 
 async function createSessionOnChain(sdk, ownerSigner, aaWallet, sessionWallet, sessionId, maxPerTx, _dailyLimit) {
@@ -263,7 +326,14 @@ async function main() {
   });
 
   let aaWalletB, sessionWalletB;
-  if (!SKIP_WALLET_SETUP) {
+  if (USE_FACTORY) {
+    // In factory-focused validation we only exercise the PAYER's path (Agent A).
+    // Agent B stays on its existing registration; skip on-chain session setup
+    // which would require B's real owner key (not available in single-key demos).
+    aaWalletB = HASHKEY_CONFIG.preDeployedAA_B;
+    sessionWalletB = ownerB;
+    log.info('PHASE 1', `USE_FACTORY mode: skipping B on-chain setup, using existing registration`);
+  } else if (!SKIP_WALLET_SETUP) {
     aaWalletB = HASHKEY_CONFIG.preDeployedAA_B;
     log.success('PHASE 1', `Agent B AA wallet (pre-deployed): ${aaWalletB}`);
 
@@ -321,11 +391,27 @@ async function main() {
 
   let aaWalletA, sessionWalletA, sessionIdA;
   if (!SKIP_WALLET_SETUP) {
-    aaWalletA = HASHKEY_CONFIG.preDeployedAA_A;
-    log.success('PHASE 2', `Agent A AA wallet (pre-deployed): ${aaWalletA}`);
-
     const provider = new ethers.JsonRpcProvider(HASHKEY_CONFIG.rpcUrl);
     const signerA = new ethers.Wallet(ownerKeyA, provider);
+
+    if (USE_FACTORY) {
+      // Factory path: ensure owner's AA exists (deploys once, reuses after), fund with USDT.
+      // Salt is STABLE — the AA is a persistent identity. Only sessionId/sessionKey rotate.
+      const explicitProvider = new ethers.JsonRpcProvider(
+        HASHKEY_CONFIG.rpcUrl,
+        { chainId: HASHKEY_CONFIG.chainId, name: 'hashkey-testnet' },
+        { staticNetwork: true }
+      );
+      const signerAExplicit = new ethers.Wallet(ownerKeyA, explicitProvider);
+      const STABLE_SALT = 'a2a-hotel-demo-user-v1';
+      aaWalletA = await ensureAAForOwner(signerAExplicit, STABLE_SALT);
+      if (sdkA.config) sdkA.config.proxyAddress = aaWalletA;
+      await ensureAAFunded(signerAExplicit, aaWalletA, '0.002');
+      log.success('PHASE 2', `Agent A AA wallet (factory V2, owner=${ownerA.address.slice(0,10)}): ${aaWalletA}`);
+    } else {
+      aaWalletA = HASHKEY_CONFIG.preDeployedAA_A;
+      log.success('PHASE 2', `Agent A AA wallet (pre-deployed): ${aaWalletA}`);
+    }
 
     sessionWalletA = createSessionWallet();
     sessionIdA = ethers.keccak256(ethers.toUtf8Bytes(`a2a-demo-A-${Date.now()}`));
@@ -352,15 +438,62 @@ async function main() {
     await channelA.join(ROOM);
     log.success('PHASE 3', `Agent A joined room "${ROOM}" as ${channelA.actor}`);
 
-    // A sends negotiation message
-    const negotiateMsg = `[NEGOTIATE] Need a king room in Beijing for 2026-04-22, 1 night. Budget ${SERVICE_PRICE} USDC.`;
+    // A sends negotiation message (LLM-generated if --llm, else scripted)
+    let negotiateMsg;
+    if (USE_LLM) {
+      log.info('PHASE 3', 'Agent A (Kimi K2.6) composing negotiation message...');
+      try {
+        negotiateMsg = await agentAChat([
+          {
+            role: 'system',
+            content: 'You are Agent A, a travel-booking AI working on behalf of a user. You negotiate hotel bookings with provider agents in a concise business tone. Keep replies to 2-3 sentences, plain prose — no JSON, no headers. Always open with "[NEGOTIATE]".'
+          },
+          {
+            role: 'user',
+            content: `Your user wants: a king-size room in Beijing for 2026-04-22, 1 night, budget up to ${SERVICE_PRICE} USDC. The provider is "${providerAgent.name}". Write your opening message to them.`
+          }
+        ], { maxTokens: 200, temperature: 0.7 });
+      } catch (err) {
+        log.error('PHASE 3', `LLM A failed, falling back to script: ${err.message.slice(0, 80)}`);
+        negotiateMsg = `[NEGOTIATE] Need a king room in Beijing for 2026-04-22, 1 night. Budget ${SERVICE_PRICE} USDC.`;
+      }
+    } else {
+      negotiateMsg = `[NEGOTIATE] Need a king room in Beijing for 2026-04-22, 1 night. Budget ${SERVICE_PRICE} USDC.`;
+    }
     await channelA.signAndPost(ROOM, negotiateMsg, sessionWalletA || ownerA);
-    log.step('PHASE 3', `A → ${negotiateMsg}`);
+    log.step('PHASE 3', `A → ${negotiateMsg.slice(0, 240)}`);
 
-    // B accepts
-    const acceptMsg = `[ACCEPT] hotel-booking, price ${SERVICE_PRICE} USDC, recipient ${HASHKEY_CONFIG.merchantAddress}`;
+    // B responds (LLM-generated if --llm, else scripted)
+    let acceptMsg;
+    if (USE_LLM) {
+      log.info('PHASE 3', 'Agent B (gpt-5.4-mini) composing response...');
+      try {
+        const rawB = await agentBChat([
+          {
+            role: 'system',
+            content: `You are Agent B, the autonomous front-desk agent for "Hilton Beijing Wangfujing". You negotiate room bookings with buyer agents and settle via on-chain USDC. Room policy: king room 2026-04-22 is available at exactly ${SERVICE_PRICE} USDC. You accept bookings within budget. Reply in 2-3 natural sentences, then on a NEW LINE append a JSON object: {"action":"accept|decline","price":"<amount>","currency":"USDC","recipient":"<eth-address>"}. Use recipient ${HASHKEY_CONFIG.merchantAddress}.`
+          },
+          {
+            role: 'user',
+            content: `Agent A just sent you: "${negotiateMsg}"\n\nRespond.`
+          }
+        ], { maxTokens: 300, temperature: 0.4 });
+        acceptMsg = rawB;
+        const decision = extractDecisionJSON(rawB);
+        if (decision) {
+          log.info('PHASE 3', `B decision parsed: action=${decision.action} price=${decision.price} recipient=${String(decision.recipient).slice(0, 14)}...`);
+        } else {
+          log.info('PHASE 3', `B decision JSON not extracted; payment will fall back to service config`);
+        }
+      } catch (err) {
+        log.error('PHASE 3', `LLM B failed, falling back to script: ${err.message.slice(0, 80)}`);
+        acceptMsg = `[ACCEPT] hotel-booking, price ${SERVICE_PRICE} USDC, recipient ${HASHKEY_CONFIG.merchantAddress}`;
+      }
+    } else {
+      acceptMsg = `[ACCEPT] hotel-booking, price ${SERVICE_PRICE} USDC, recipient ${HASHKEY_CONFIG.merchantAddress}`;
+    }
     await channelB.signAndPost(ROOM, acceptMsg, sessionWalletB || ownerB);
-    log.step('PHASE 3', `B → ${acceptMsg}`);
+    log.step('PHASE 3', `B → ${acceptMsg.slice(0, 240)}`);
   } catch (err) {
     log.error('PHASE 3', `Channel error: ${err.message}`);
     log.info('PHASE 3', 'Continuing without Synapse channel (broker may not be running)');
