@@ -230,18 +230,41 @@ export function registerA2aCommerceRoutes(app, deps) {
         };
 
         // Build service result (mock for demo — production calls the actual capability)
-        const serviceResult = {
+        const baseResult = {
           capability,
           status: 'delivered',
-          data: {
+          data: {},
+          receipt
+        };
+
+        if (capability === 'hotel-booking') {
+          const checkIn = task?.checkIn || '2026-04-22';
+          const nights = Number(task?.nights) || 1;
+          const checkOutDate = new Date(checkIn);
+          checkOutDate.setDate(checkOutDate.getDate() + nights);
+          baseResult.data = {
+            confirmationId: `HB-${Date.now().toString(36).toUpperCase()}`,
+            hotelName: 'Hilton Beijing Wangfujing',
+            roomType: task?.roomType || 'king',
+            checkIn,
+            checkOut: checkOutDate.toISOString().slice(0, 10),
+            price: service.price || '0.001',
+            currency: 'USDC',
+            status: 'confirmed',
+            guestNote: 'Breakfast included. Late check-out available on request.',
+            timestamp: Date.now()
+          };
+        } else {
+          baseResult.data = {
             symbol: task?.symbol || 'BTCUSDT',
             price: 94123.45,
             change24h: 2.34,
             volume24h: 42000000000,
             timestamp: Date.now()
-          },
-          receipt
-        };
+          };
+        }
+
+        const serviceResult = baseResult;
 
         // Cache result for idempotency
         x402Req.cachedResult = serviceResult;
