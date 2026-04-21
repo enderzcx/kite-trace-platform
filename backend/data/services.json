@@ -13,7 +13,7 @@
     "providerAgentId": "technical-agent-real",
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "pricing": {
       "model": "per_call",
@@ -56,7 +56,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -74,7 +74,7 @@
     "providerAgentId": "technical-agent-real",
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "pricing": {
       "model": "per_call",
@@ -112,7 +112,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -130,7 +130,7 @@
     "providerAgentId": "technical-agent-real",
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "pricing": {
       "model": "per_call",
@@ -161,7 +161,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -179,7 +179,7 @@
     "providerAgentId": "technical-agent-real",
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "pricing": {
       "model": "per_call",
@@ -210,7 +210,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -228,7 +228,7 @@
     "providerAgentId": "technical-agent-real",
     "providerKey": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "pricing": {
       "model": "per_call",
@@ -266,7 +266,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -284,7 +284,7 @@
     "providerAgentId": "fundamental-agent-real",
     "providerKey": "fundamental-agent-real",
     "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "pricing": {
       "model": "per_call",
@@ -324,7 +324,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -342,7 +342,7 @@
     "providerAgentId": "fundamental-agent-real",
     "providerKey": "fundamental-agent-real",
     "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "pricing": {
       "model": "per_call",
@@ -376,7 +376,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -394,7 +394,7 @@
     "providerAgentId": "fundamental-agent-real",
     "providerKey": "fundamental-agent-real",
     "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "pricing": {
       "model": "per_call",
@@ -437,7 +437,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -455,7 +455,7 @@
     "providerAgentId": "fundamental-agent-real",
     "providerKey": "fundamental-agent-real",
     "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "pricing": {
       "model": "per_call",
@@ -497,7 +497,7 @@
     },
     "active": true,
     "createdAt": "2026-03-16T04:52:44.896Z",
-    "updatedAt": "2026-04-18T18:52:06.226Z",
+    "updatedAt": "2026-04-21T04:38:19.967Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   },
@@ -514,7 +514,7 @@
     "maxChars": null,
     "providerAgentId": "fundamental-agent-real",
     "recipient": "0x4724f75bde8576f29f23b6b8a19fa52cc60c58f2",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
       "fundamental",
@@ -547,7 +547,7 @@
     "maxChars": null,
     "providerAgentId": "technical-agent-real",
     "recipient": "0x09e116d198318eec9402893f00958123e980521b",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
       "technical",
@@ -580,7 +580,7 @@
     "maxChars": null,
     "providerAgentId": "compare-agent",
     "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
       "compare",
@@ -612,7 +612,7 @@
     "maxChars": null,
     "providerAgentId": "live-external-agent",
     "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
       "atapi",
@@ -642,7 +642,7 @@
     "sourceRequested": "hyperliquid",
     "providerAgentId": "2",
     "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
       "atapi",
@@ -674,7 +674,7 @@
     "horizonMin": 60,
     "providerAgentId": "3",
     "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
       "a2a",
@@ -706,7 +706,7 @@
     "horizonMin": 60,
     "providerAgentId": "technical-agent",
     "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
       "a2a",
@@ -739,7 +739,7 @@
     "maxChars": 1200,
     "providerAgentId": "message-agent",
     "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
       "a2a",
@@ -771,7 +771,7 @@
     "sourceRequested": "hyperliquid-testnet",
     "providerAgentId": "executor-agent",
     "recipient": "0x6d705b93f0da7dc26e46cb39decc3baa4fb4dd29",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00015",
     "tags": [
       "atapi",
@@ -806,7 +806,7 @@
     "providerAgentId": "data-node-real",
     "providerKey": "data-node-real",
     "recipient": "0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00005",
     "tags": [
       "atapi",
@@ -842,7 +842,7 @@
     "providerAgentId": "data-node-real",
     "providerKey": "data-node-real",
     "recipient": "0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00005",
     "tags": [
       "atapi",
@@ -875,7 +875,7 @@
     "providerAgentId": "data-node-real",
     "providerKey": "data-node-real",
     "recipient": "0x443b4933447c12ce7c72d0e9c78d154a4578d2c2",
-    "tokenAddress": "0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
     "price": "0.00005",
     "tags": [
       "atapi",
@@ -896,6 +896,64 @@
     "active": true,
     "createdAt": "2026-03-17T04:42:21.644Z",
     "updatedAt": "2026-03-22T17:02:47.787Z",
+    "publishedBy": "system",
+    "paymentMode": "agent"
+  },
+  {
+    "id": "hotel-booking",
+    "name": "Hotel Room Booking",
+    "description": "Book hotel rooms via agent-to-agent commerce. No platform sign-up needed — just tell your agent what you need.",
+    "action": "hotel-booking",
+    "pair": "",
+    "source": "hotel-agent",
+    "sourceRequested": "hotel-agent",
+    "horizonMin": null,
+    "resourceUrl": "",
+    "maxChars": null,
+    "providerAgentId": "hotel-agent-real",
+    "providerKey": "hotel-agent-real",
+    "recipient": "0x09e116d198318eec9402893f00958123e980521b",
+    "tokenAddress": "0x0ff5393387ad2f9f691fd6fd28e07e3969e27e63",
+    "price": "0.001",
+    "pricing": {
+      "model": "per_call",
+      "amount": "0.001",
+      "currency": "USDC"
+    },
+    "tags": [
+      "hotel",
+      "booking",
+      "travel",
+      "agent-commerce"
+    ],
+    "slaMs": 15000,
+    "rateLimitPerMinute": 12,
+    "budgetPerDay": 0,
+    "allowlistPayers": [],
+    "exampleInput": {
+      "city": "Beijing",
+      "checkIn": "2026-04-22",
+      "nights": 1,
+      "roomType": "king"
+    },
+    "inputSchema": {
+      "city": "string",
+      "checkIn": "string? YYYY-MM-DD",
+      "nights": "number? default 1",
+      "roomType": "string? king|twin|suite default king"
+    },
+    "outputSchema": {
+      "confirmationId": "string",
+      "hotelName": "string",
+      "roomType": "string",
+      "checkIn": "string",
+      "checkOut": "string",
+      "price": "string",
+      "status": "string"
+    },
+    "active": true,
+    "createdAt": "2026-04-21T04:00:00.000Z",
+    "updatedAt": "2026-04-21T04:56:48.445Z",
     "publishedBy": "system",
     "paymentMode": "agent"
   }

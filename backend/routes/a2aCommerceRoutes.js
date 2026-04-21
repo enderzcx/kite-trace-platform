@@ -20,7 +20,7 @@ const HASHKEY_SIGNING_CONTEXT = {
   rpcUrl: 'https://testnet.hsk.xyz',
   bundlerUrl: 'https://testnet.hsk.xyz/rpc',
   entryPointAddress: '0x0Cfe99621287c13533F6ebc3B93a9Ade6580a598',
-  accountFactoryAddress: '0xF43E94E2163F14c4D62242D8DD45AbAacaa6DB5a',
+  accountFactoryAddress: process.env.HASHKEY_AA_FACTORY_ADDRESS || '0x452bf276B9c93DeF81B6087D78228E2980425D86',
   accountImplementationAddress: '0x2DbBfCdAd28b3A2094BD634Cce4326B1b3D0595C',
   chainId: 133
 };
@@ -230,18 +230,41 @@ export function registerA2aCommerceRoutes(app, deps) {
         };
 
         // Build service result (mock for demo — production calls the actual capability)
-        const serviceResult = {
+        const baseResult = {
           capability,
           status: 'delivered',
-          data: {
+          data: {},
+          receipt
+        };
+
+        if (capability === 'hotel-booking') {
+          const checkIn = task?.checkIn || '2026-04-22';
+          const nights = Number(task?.nights) || 1;
+          const checkOutDate = new Date(checkIn);
+          checkOutDate.setDate(checkOutDate.getDate() + nights);
+          baseResult.data = {
+            confirmationId: `HB-${Date.now().toString(36).toUpperCase()}`,
+            hotelName: 'Hilton Beijing Wangfujing',
+            roomType: task?.roomType || 'king',
+            checkIn,
+            checkOut: checkOutDate.toISOString().slice(0, 10),
+            price: service.price || '0.001',
+            currency: 'USDC',
+            status: 'confirmed',
+            guestNote: 'Breakfast included. Late check-out available on request.',
+            timestamp: Date.now()
+          };
+        } else {
+          baseResult.data = {
             symbol: task?.symbol || 'BTCUSDT',
             price: 94123.45,
             change24h: 2.34,
             volume24h: 42000000000,
             timestamp: Date.now()
-          },
-          receipt
-        };
+          };
+        }
+
+        const serviceResult = baseResult;
 
         // Cache result for idempotency
         x402Req.cachedResult = serviceResult;
@@ -437,7 +460,7 @@ export function registerA2aCommerceRoutes(app, deps) {
             tags: s.tags || []
           }))
         };
-      });
+      }).filter(agent => !capability || agent.services.length > 0);
 
       res.json({
         ok: true,

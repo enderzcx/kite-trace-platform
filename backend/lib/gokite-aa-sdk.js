@@ -29,7 +29,7 @@ const NETWORKS = {
   hashkey_testnet: {
     chainId: 133,
     entryPoint: process.env.KITE_ENTRYPOINT_ADDRESS || '0x0Cfe99621287c13533F6ebc3B93a9Ade6580a598',
-    accountFactory: process.env.KITE_AA_FACTORY_ADDRESS || '0xF43E94E2163F14c4D62242D8DD45AbAacaa6DB5a',
+    accountFactory: process.env.HASHKEY_AA_FACTORY_ADDRESS || process.env.KITE_AA_FACTORY_ADDRESS || '0x452bf276B9c93DeF81B6087D78228E2980425D86',
     accountImplementation: process.env.KITE_AA_ACCOUNT_IMPLEMENTATION || '0x2DbBfCdAd28b3A2094BD634Cce4326B1b3D0595C'
   }
 };
