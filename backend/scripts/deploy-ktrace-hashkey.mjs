@@ -36,6 +36,13 @@ const ENTRY_POINT = '0x0Cfe99621287c13533F6ebc3B93a9Ade6580a598';
 const SETTLEMENT_TOKEN = '0xDC52db3E9e17d9BE1A457d3fA455f68b52c38e2e';
 const GAS_LIMIT_MULTIPLIER = 1.3; // 30% buffer on estimated gas
 
+// CLI flags
+const FACTORY_ONLY = process.argv.includes('--factory-only');
+// When --factory-only is used, deploy only KTraceAccountFactoryV2 against an
+// already-deployed account implementation (reuses existing on-chain contracts).
+const EXISTING_IMPL = process.env.KITE_AA_ACCOUNT_IMPLEMENTATION
+  || '0x2DbBfCdAd28b3A2094BD634Cce4326B1b3D0595C';
+
 const CONTRACT_DIR = path.resolve(__dirname, '..', 'contracts');
 const NODE_MODULES = path.resolve(__dirname, '..', 'node_modules');
 const DATA_DIR = path.resolve(__dirname, '..', 'data');
@@ -186,13 +193,18 @@ async function main() {
   const deployerAddr = await signer.getAddress();
 
   console.log('='.repeat(60));
-  console.log('KTrace Full Deployment to HashKey Chain Testnet');
+  console.log(FACTORY_ONLY
+    ? 'KTrace FACTORY-ONLY Deployment (V2 factory against existing impl)'
+    : 'KTrace Full Deployment to HashKey Chain Testnet');
   console.log('='.repeat(60));
   console.log(`Deployer: ${deployerAddr}`);
   console.log(`Chain ID: ${CHAIN_ID}`);
   console.log(`RPC: ${RPC_URL}`);
   console.log(`EntryPoint: ${ENTRY_POINT}`);
   console.log(`Settlement Token: ${SETTLEMENT_TOKEN}`);
+  if (FACTORY_ONLY) {
+    console.log(`Existing Account Impl: ${EXISTING_IMPL}`);
+  }
 
   const balance = await provider.getBalance(deployerAddr);
   console.log(`HSK Balance: ${ethers.formatEther(balance)}`);
@@ -203,6 +215,112 @@ async function main() {
 
   const deployed = {};
   const txHashes = {};
+
+  if (FACTORY_ONLY) {
+    // Verify existing impl has code
+    const implCode = await provider.getCode(EXISTING_IMPL);
+    if (implCode === '0x') {
+      console.error(`ERROR: No code at existing implementation address ${EXISTING_IMPL}`);
+      process.exit(1);
+    }
+    console.log(`Verified existing impl has ${(implCode.length - 2) / 2} bytes of code`);
+    deployed.accountImplementation = EXISTING_IMPL;
+
+    // Compile only the V2 factory
+    console.log('\nCompiling KTraceAccountFactoryV2...');
+    const factoryCompiled = compileContract('KTraceAccountFactoryV2.sol', 'KTraceAccountFactoryV2', {});
+    console.log(`  OK - ${factoryCompiled.abi.length} ABI items`);
+
+    const result = await deployContract(signer, provider, factoryCompiled, [
+      deployerAddr,
+      EXISTING_IMPL,
+      ENTRY_POINT
+    ], 'KTraceAccountFactoryV2');
+    deployed.accountFactory = result.address;
+    txHashes.accountFactory = result.txHash;
+
+    // Smoke test: factory can actually deploy an AA wallet
+    // NOTE: ethers.Contract.getAddress() is a built-in method returning the contract's
+    // own address — it shadows the contract's getAddress(address,uint256) view function.
+    // Use explicit signature to disambiguate, or parse the AccountCreated event.
+    const factory = new ethers.Contract(result.address, factoryCompiled.abi, signer);
+    const testSalt = BigInt(`0x${Buffer.from(String(Date.now())).toString('hex')}`);
+    const predicted = await factory['getAddress(address,uint256)'](deployerAddr, testSalt);
+    console.log(`\n--- Factory Smoke Test ---`);
+    console.log(`  Predicted AA address: ${predicted}`);
+    const createTx = await factory.createAccount(deployerAddr, testSalt, { gasLimit: 2_000_000 });
+    console.log(`  createAccount tx: ${createTx.hash}`);
+    const createReceipt = await createTx.wait();
+    if (createReceipt.status === 0) {
+      throw new Error(`Factory smoke test FAILED: createAccount reverted`);
+    }
+    // Extract actual deployed AA address from the AccountCreated event for belt-and-suspenders
+    const accountCreatedTopic = ethers.id('AccountCreated(address,uint256,address)');
+    const evt = createReceipt.logs.find(l =>
+      l.address.toLowerCase() === result.address.toLowerCase()
+      && l.topics[0] === accountCreatedTopic
+    );
+    if (!evt) {
+      throw new Error('Factory smoke test FAILED: AccountCreated event not found in receipt');
+    }
+    const emittedAccount = ethers.getAddress('0x' + evt.topics[3].slice(26));
+    if (emittedAccount.toLowerCase() !== predicted.toLowerCase()) {
+      throw new Error(`CREATE2 prediction mismatch: predicted ${predicted}, emitted ${emittedAccount}`);
+    }
+    const createdCode = await provider.getCode(predicted);
+    if (createdCode === '0x') {
+      throw new Error(`Factory smoke test FAILED: no code at predicted address ${predicted}`);
+    }
+    console.log(`  ✅ AA wallet deployed: ${predicted} (${(createdCode.length - 2) / 2} bytes)`);
+
+    // Verify owner() and entryPoint() on the new AA
+    const aaAbi = [
+      'function owner() view returns (address)',
+      'function entryPoint() view returns (address)'
+    ];
+    const aa = new ethers.Contract(predicted, aaAbi, provider);
+    const aaOwner = await aa.owner();
+    const aaEp = await aa.entryPoint();
+    console.log(`  AA owner: ${aaOwner} (expected ${deployerAddr})`);
+    console.log(`  AA entryPoint: ${aaEp} (expected ${ENTRY_POINT})`);
+    if (aaOwner.toLowerCase() !== deployerAddr.toLowerCase()) {
+      throw new Error(`Owner mismatch: got ${aaOwner}, expected ${deployerAddr}`);
+    }
+    if (aaEp.toLowerCase() !== ENTRY_POINT.toLowerCase()) {
+      throw new Error(`EntryPoint mismatch: got ${aaEp}, expected ${ENTRY_POINT}`);
+    }
+
+    // Save deployment data
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const outPath = path.resolve(DATA_DIR, 'ktrace-hashkey-factoryV2.json');
+    fs.writeFileSync(outPath, JSON.stringify({
+      network: 'hashkey-testnet',
+      chainId: CHAIN_ID,
+      deployedAt: new Date().toISOString(),
+      deployer: deployerAddr,
+      accountFactoryV2: deployed.accountFactory,
+      accountImplementation: EXISTING_IMPL,
+      entryPoint: ENTRY_POINT,
+      txHash: result.txHash,
+      smokeTest: {
+        aaAddress: predicted,
+        aaOwner,
+        aaEntryPoint: aaEp,
+        createTxHash: createTx.hash
+      }
+    }, null, 2));
+    console.log(`\nDeployment saved to: ${outPath}`);
+
+    console.log('\n' + '='.repeat(60));
+    console.log('Factory V2 Deployment Summary');
+    console.log('='.repeat(60));
+    console.log(`KTraceAccountFactoryV2: ${deployed.accountFactory}`);
+    console.log('\n=== NEXT STEPS ===');
+    console.log(`Set env var to pick up the new factory in all demo code:`);
+    console.log(`  export HASHKEY_AA_FACTORY_ADDRESS=${deployed.accountFactory}`);
+    console.log('\nDone!');
+    return;
+  }
 
   // ============================================================
   // Step 1: Compile all contracts
@@ -219,7 +337,7 @@ async function main() {
     ['TraceAnchorGuard.sol', 'TraceAnchorGuard', { viaIR: true }],
     ['JobEscrowV4.sol', 'JobEscrowV4', { viaIR: true }],
     ['KTraceAccountV3SessionExecute.sol', 'KTraceAccountV3SessionExecute', {}],
-    ['KTraceAccountFactory.sol', 'KTraceAccountFactory', {}]
+    ['KTraceAccountFactoryV2.sol', 'KTraceAccountFactoryV2', {}]
   ];
 
   for (const [filename, contractName, opts] of compileTargets) {
@@ -411,15 +529,35 @@ async function main() {
     }
   }
 
-  // --- 8. KTraceAccountFactory ---
+  // --- 8. KTraceAccountFactoryV2 ---
+  // V2 fixes the init signature mismatch: passes (owner, entryPoint) to impl.initialize
   {
-    const c = compilations.KTraceAccountFactory;
+    const c = compilations.KTraceAccountFactoryV2;
     const result = await deployContract(signer, provider, c, [
-      deployerAddr,              // initialOwner
-      deployed.accountImplementation  // initialImplementation
-    ], 'KTraceAccountFactory');
+      deployerAddr,                   // initialOwner
+      deployed.accountImplementation, // initialImplementation
+      ENTRY_POINT                     // entryPoint (immutable — cannot change later)
+    ], 'KTraceAccountFactoryV2');
     deployed.accountFactory = result.address;
     txHashes.accountFactory = result.txHash;
+
+    // Smoke test: verify factory.getAddress() works and factory.createAccount() succeeds
+    // ethers.Contract.getAddress() shadows the contract's function — use explicit signature
+    const factoryAbi = c.abi;
+    const factory = new ethers.Contract(result.address, factoryAbi, signer);
+    const testSalt = 0n;
+    const predicted = await factory['getAddress(address,uint256)'](deployerAddr, testSalt);
+    console.log(`  Smoke test: factory.getAddress(${deployerAddr}, 0) = ${predicted}`);
+    const createTx = await factory.createAccount(deployerAddr, testSalt, { gasLimit: 2_000_000 });
+    const createReceipt = await createTx.wait();
+    if (createReceipt.status === 0) {
+      throw new Error(`Factory smoke test failed: createAccount reverted ${createTx.hash}`);
+    }
+    const createdCode = await provider.getCode(predicted);
+    if (createdCode === '0x') {
+      throw new Error(`Factory smoke test failed: no code at predicted address ${predicted}`);
+    }
+    console.log(`  Smoke test PASS: AA wallet deployed at ${predicted} (${createdCode.length / 2 - 1} bytes code)`);
   }
 
   // ============================================================

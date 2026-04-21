@@ -20,7 +20,7 @@ const HASHKEY_SIGNING_CONTEXT = {
   rpcUrl: 'https://testnet.hsk.xyz',
   bundlerUrl: 'https://testnet.hsk.xyz/rpc',
   entryPointAddress: '0x0Cfe99621287c13533F6ebc3B93a9Ade6580a598',
-  accountFactoryAddress: '0xF43E94E2163F14c4D62242D8DD45AbAacaa6DB5a',
+  accountFactoryAddress: process.env.HASHKEY_AA_FACTORY_ADDRESS || '0x452bf276B9c93DeF81B6087D78228E2980425D86',
   accountImplementationAddress: '0x2DbBfCdAd28b3A2094BD634Cce4326B1b3D0595C',
   chainId: 133
 };
